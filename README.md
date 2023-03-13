@@ -12,7 +12,8 @@ The addon is written in Python and the project is Open Source, everyone can cont
 **Supported File**
 
 - MTN2 (Animation) (Only Export)
-- XPCK (3D Model Archive) (Only Export and need armarture)
+- PRM (Mesh) (Only Export)
+- XPCK (Model Archive) (Only Export)
 
 **Special Thanks**  
 
