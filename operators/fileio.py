@@ -212,7 +212,7 @@ def write_xpck(context, filepath):
             for m in mesh.modifiers:
                 if (m.type == "ARMATURE"):
                     bone_names = list(get_bone_names(m.object))
-                xmprs.append(xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, material_name))
+            xmprs.append(xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, material_name))
     
     # Create res
     library = {}
@@ -237,9 +237,35 @@ def write_xpck(context, filepath):
     xpck.pack(files, filepath)
      
     return {'FINISHED'}
+    
+def write_prm(context, filepath, mesh_name):
+    # Get Mesh
+    mesh = bpy.data.objects[mesh_name]
+    
+    indices = list(get_indices(mesh.data.polygons))
+    vertices = dict(get_vertices(mesh.data.vertices))
+    uvs = dict(get_uvs(mesh.data.uv_layers))
+    normals = dict(get_normals(mesh.data.vertices))
+    colors = dict(get_colours(mesh.data.vertex_colors))
+    weights = dict(get_weights(mesh))
+            
+    for mat_slot in mesh.material_slots:
+        if mat_slot.material:
+            material_name = mat_slot.name
+            
+    bone_names = []
+    for m in mesh.modifiers:
+        if (m.type == "ARMATURE"):
+            bone_names = list(get_bone_names(m.object))
+    
+    # Write file
+    with open(filepath, "wb") as f:
+        f.write(xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, material_name))
+                
+    return {'FINISHED'}
 
-class ExportPRM(bpy.types.Operator, ExportHelper):
-    bl_idname = "export.prm"
+class ExportXC(bpy.types.Operator, ExportHelper):
+    bl_idname = "export.xc"
     bl_label = "Export to xc"
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".xc"
@@ -247,6 +273,34 @@ class ExportPRM(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         return write_xpck(context, self.filepath)
+        
+class ExportPRM(bpy.types.Operator, ExportHelper):
+    bl_idname = "export.prm"
+    bl_label = "Export to prm"
+    bl_options = {'PRESET', 'UNDO'}
+    filename_ext = ".prm"
+    filter_glob: StringProperty(default="*.prm", options={'HIDDEN'})
+    
+    def item_callback(self, context):
+        items = []
+        for o in bpy.context.scene.objects:
+            if o.type == "MESH":
+                items.append((o.name, o.name, ""))
+        return items
+        
+    mesh_name: EnumProperty(
+        name="Meshes",
+        description="Choose mesh",
+        items=item_callback,
+        default=0,
+    )
+
+    def execute(self, context):
+        if (self.mesh_name == ""):
+            self.report({'ERROR'}, "No mesh found")
+            return {'FINISHED'}
+        else:
+            return write_prm(context, self.filepath, self.mesh_name)   
             
             
 ##########################################

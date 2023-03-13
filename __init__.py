@@ -34,14 +34,16 @@ class Level5_Menu(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(ExportMTN2.bl_idname, text="Animation", icon="POSE_HLT")
-        layout.operator(ExportPRM.bl_idname, text="Model", icon="POSE_HLT")
+        layout.operator(ExportMTN2.bl_idname, text="Animation (MTN2 File)", icon="POSE_HLT")
+        layout.operator(ExportPRM.bl_idname, text="Mesh (PRM File)", icon="POSE_HLT")
+        layout.operator(ExportXC.bl_idname, text="Model (XPCK Archive)", icon="POSE_HLT")
     
 def draw_menu(self, context):
     self.layout.menu(Level5_Menu.bl_idname)
 
 def register():
     bpy.utils.register_class(ExportMTN2)
+    bpy.utils.register_class(ExportXC)
     bpy.utils.register_class(ExportPRM)
     bpy.utils.register_class(Level5_Menu)
     bpy.types.TOPBAR_MT_file_export.append(draw_menu)
@@ -49,6 +51,7 @@ def register():
 
 def unregister():
     bpy.utils.unregister_class(ExportMTN2)
+    bpy.utils.unregister_class(ExportXC)
     bpy.utils.unregister_class(ExportPRM)
     bpy.utils.unregister_class(Level5_Menu)
     bpy.types.TOPBAR_MT_file_export.remove(draw_menu)    
