@@ -62,7 +62,7 @@ def get_mesh_information(mesh):
             vn_indices.append(normal_dict[normal])
             
             if mesh.data.vertex_colors.active != None:
-                color = tuple(mesh.data.vertex_colors.data[loop_index].color)
+                color = tuple(mesh.data.vertex_colors.active.data[loop_index].color)
                 if color not in color_dict:
                     color_dict[color] = len(color_dict)
                     color_info[color_dict[color]] = color
