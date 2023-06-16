@@ -116,14 +116,21 @@ def pack(files, output_file):
         sorted_by_crc32 = sorted(list(files.keys()), key=lambda x: zlib.crc32(x.encode("utf-8")))
         for filename in sorted_by_crc32:
             name_crc = zlib.crc32(filename.encode("utf-8"))
-            file_size = len(files[filename]["data"])
 
+            shifted_offset = files[filename]["offset"] >> 2
+            offset_higher = shifted_offset & 0xFFFF
+            offset_lower = shifted_offset >> 16
+            
+            file_size = len(files[filename]["data"])
+            size_higher = file_size & 0xFFFF
+            size_lower = file_size >> 16
+            
             file.write(struct.pack("<I", name_crc))
             file.write(struct.pack("<H", files[filename]["name_offset"]))
-            file.write(struct.pack("<H", (files[filename]["offset"] // 4) & 0xFFFF))
-            file.write(struct.pack("<H", file_size & 0xFFFF))
-            file.write(struct.pack("<B", 0))
-            file.write(struct.pack("<B", 0))
+            file.write(struct.pack("<H", offset_higher))
+            file.write(struct.pack("<H", size_higher))
+            file.write(struct.pack("<B", offset_lower))
+            file.write(struct.pack("<B", size_lower))
 
         # Écrit la table de noms
         file.write(compressed_name_table)
