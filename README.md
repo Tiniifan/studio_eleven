@@ -15,6 +15,10 @@ The addon is written in Python and the project is Open Source, everyone can cont
 - PRM (Mesh) (Only Export)
 - XPCK (Model Archive) (Only Export)
 
+**Supported Game**
+
+- Yo-Kai Watch 1
+
 **Special Thanks**  
 
 My addon uses LZ10 compression code by RoadrunnerWMC and the triangle strop code by RuneBlade,  
