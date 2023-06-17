@@ -2,10 +2,11 @@ import zlib
 import struct
 from ..compression import lz10
 
-def write(library):
+def write(resources):
     out = bytes()
     
-    library_data = write_library(library)
+    # Generate library data
+    library_data, string_table = write_library(resources)
     
     # Header
     out += struct.pack("6s", "CHRC00".encode('utf-8'))
@@ -17,72 +18,131 @@ def write(library):
     out += struct.pack("<H", 13)
     out += struct.pack("<H", 2)
     out += library_data
-    
-    # Write the name of each element of library
-    for key, value in library.items():
-        if key is not "materialconfig":
-            for name in value:
-                out += name.encode("utf-8")
-                out += struct.pack("B", 0)
+    out += string_table
 
     return lz10.compress(out)
     
-def write_library(library):
-    size = 0
+def get_string_table(resources):
+    string_table = bytes()
+    string_table_dict = {}
     
-    table = bytes()
+    # Process library names
+    for key in resources['libraries'].keys():
+        string_table_dict[key] = len(string_table)
+        string_table += key.encode("utf-8") + struct.pack("B", 0)
+        
+    # Process texture names
+    for key in resources['textures']:
+        string_table_dict[key] = len(string_table)
+        string_table += key.encode("utf-8") + struct.pack("B", 0)
+        
+    # Process mesh names
+    for key in resources['meshes']:
+        string_table_dict[key] = len(string_table)
+        string_table += key.encode("utf-8") + struct.pack("B", 0)
+        
+    # Process bone names
+    for key in resources['bones']:
+        string_table_dict[key] = len(string_table)
+        string_table += key.encode("utf-8") + struct.pack("B", 0)
+
+    # Return the string table and the dictionary mapping names to string table indices
+    return string_table, string_table_dict
+
+def write_library(resources):
+    # Initialize header table and data
+    header_table = bytes()
     data = bytes()
+    string_table, string_table_dict = get_string_table(resources)
     
-    material_offset = {}
-    element_type = {"material": 220, "material2": 230, "texture": 240, "materialconfig": 290, "mesh": 100, "bone": 110}
-    element_size = {"material": 8, "material2": 8, "texture": 20, "materialconfig": 224, "mesh": 8, "bone": 8}
-    
-    for key, value in library.items(): 
-        # header 
-        table += struct.pack("<H", (20 + len(library) * 8 + len(data))//4)
-        table += struct.pack("<H", len(value))
-        table += struct.pack("<H", element_type[key])
-        table += struct.pack("<H", element_size[key])
+    data_offset = 68
+
+    # Add libraries header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['libraries'].keys()))  # Number of libraries
+    header_table += struct.pack("<H", 220)  # Header type
+    header_table += struct.pack("<H", 8)  # Header size
+    for library_name in resources['libraries'].keys():
+        # Add library data
+        data += zlib.crc32(library_name.encode("utf-8")).to_bytes(4, 'little')  # Library name CRC32
+        data += int(string_table_dict[library_name]).to_bytes(4, 'little')  # Library name string table index
+        data_offset += 8
+
+    # Add another libraries header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['libraries'].keys()))  # Number of libraries
+    header_table += struct.pack("<H", 230)  # Header type
+    header_table += struct.pack("<H", 8)  # Header size
+    for library_name in resources['libraries'].keys():
+        # Add library data
+        data += zlib.crc32(library_name.encode("utf-8")).to_bytes(4, 'little')  # Library name CRC32
+        data += int(string_table_dict[library_name]).to_bytes(4, 'little')  # Library name string table index
+        data_offset += 8
+
+    # Add textures header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['textures']))  # Number of textures
+    header_table += struct.pack("<H", 240)  # Header type
+    header_table += struct.pack("<H", 20)  # Header size
+    for texture_name in resources['textures']:
+        # Add texture data
+        data += zlib.crc32(texture_name.encode("utf-8")).to_bytes(4, 'little')  # Texture name CRC32
+        data += int(string_table_dict[texture_name]).to_bytes(4, 'little')  # Texture name string table index
+        data += bytes.fromhex("030500000000000000000000")  # Additional data
+        data_offset += 20
+
+    # Find the library with the maximum number of elements
+    key_max = max(resources['libraries'].keys(), key=lambda k: len(resources['libraries'][k]))
+    max_number_element = len(resources['libraries'][key_max])
+    data_library_length = 16 + 52 * max_number_element
+
+    # Add libraries data header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['libraries'].items()))  # Number of libraries
+    header_table += struct.pack("<H", 290)  # Header type
+    header_table += struct.pack("<H", data_library_length)  # Header size
+    for key, value in resources['libraries'].items():
+        # Add library data
+        data += zlib.crc32(key.encode("utf-8")).to_bytes(4, 'little')  # Library name CRC32
+        data += int(string_table_dict[key]).to_bytes(4, 'little')  # Library name string table index
+        data += zlib.crc32(key.encode("utf-8")).to_bytes(4, 'little')  # Additional CRC32
+        data += zlib.crc32(key.encode("utf-8")).to_bytes(4, 'little')  # Additional CRC32
         
-        # data
-        for v in value:
-            if key is "material":
-                material_offset[v] = size
-            
-            # crc32 name
-            data += zlib.crc32(v.encode("utf-8")).to_bytes(4, 'little')
-            
-            # String table offset
-            if key is "material2":
-                data += int(material_offset[v]).to_bytes(4, 'little')
-            elif key is "materialconfig":
-                data += int(material_offset[v]).to_bytes(4, 'little')
-            elif key is not "bone":
-                data += size.to_bytes(4, 'little')
+        value.reverse()
+        for i in range(max_number_element):
+            if i < len(value):
+                # Add element data
+                data += zlib.crc32(value[i].encode("utf-8")).to_bytes(4, 'little')  # Element name CRC32
+                data += int(1).to_bytes(4, 'little')  # Element value
             else:
-                data += int(0).to_bytes(4, 'little')
+                data += int(0).to_bytes(4, 'little')  # Element name CRC32 (empty)
+                data += int(0).to_bytes(4, 'little')  # Element value (empty)
             
-            # Extend data
-            if key == "texture":
-                data += bytes.fromhex("030500000000000000000000")
-            elif key == "materialconfig":
-                data += zlib.crc32(v.encode("utf-8")).to_bytes(4, 'little')
-                data += zlib.crc32(v.encode("utf-8")).to_bytes(4, 'little')
-                
-                texture_linked = library[key][v]
-                
-                # One mesh can have a maximum of 4 textures linked
-                for i in range(4):
-                    if len(texture_linked) > i:
-                        data += zlib.crc32(texture_linked[i].encode("utf-8")).to_bytes(4, 'little')
-                        data += int(1).to_bytes(4, 'little')
-                    else:
-                        data += int(0).to_bytes(4, 'little')
-                        data += int(0).to_bytes(4, 'little')     
-                    data += bytes.fromhex("0000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")      
+            data += bytes.fromhex("0000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")  # Additional data
             
-            if key is not "materialconfig":
-                size += len(v) + 1
-    
-    return table + data
-        
+        data_offset += data_library_length    
+
+    # Add meshes header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['meshes']))  # Number of meshes
+    header_table += struct.pack("<H", 100)  # Header type
+    header_table += struct.pack("<H", 8)  # Header size
+    for mesh_name in resources['meshes']:
+        # Add mesh data
+        data += zlib.crc32(mesh_name.encode("utf-8")).to_bytes(4, 'little')  # Mesh name CRC32
+        data += int(string_table_dict[mesh_name]).to_bytes(4, 'little')  # Mesh name string table index
+        data_offset += 8
+
+    # Add bones header
+    header_table += struct.pack("<H", data_offset >> 2)  # Data offset
+    header_table += struct.pack("<H", len(resources['bones']))  # Number of bones
+    header_table += struct.pack("<H", 110)  # Header type
+    header_table += struct.pack("<H", 8)  # Header size
+    for bone_name in resources['bones']:
+        # Add bone data
+        data += zlib.crc32(bone_name.encode("utf-8")).to_bytes(4, 'little')  # Bone name CRC32
+        data += int(0).to_bytes(4, 'little')  # Bone name string table index
+        data_offset += 8
+
+    # Return the concatenated header table, data, and string table
+    return header_table + data, string_table

@@ -123,7 +123,7 @@ def write_geometrie(indices, vertices, uvs, normals, colors, weights):
         
         for c in range(4):
             if len(colors) > 0:
-                out += bytearray(struct.pack("f", colors[indice['color']][c]))
+                out += bytearray(struct.pack("f", colors[indice['vc']][c]))
             else:
                 out += int(0).to_bytes(4, 'little')
                 
@@ -141,7 +141,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_names, material_name):
+def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, template):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -168,7 +168,7 @@ def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_name
     # Material-------------------------------------------
     material = zlib.crc32(mesh_name.encode("utf-8")).to_bytes(4, 'little')
     material += zlib.crc32(material_name.encode("utf-8")).to_bytes(4, 'little')
-    material += bytes.fromhex("E093029A0000000000000000000000000000000000000000000000000000000000000000000000000000000001000000")
+    material += bytes.fromhex(template.material)
     material += int(len(bone_names)).to_bytes(4, 'little')
 
     # Node ------------------------------------------
