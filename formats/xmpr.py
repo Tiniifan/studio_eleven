@@ -10,7 +10,7 @@ def used_bones(weights, bone_names):
         for sub_key in list(weights[key].keys()):
             if sub_key not in used:
                 used[sub_key] = bone_names[sub_key]
-                
+     
     return list(used.values())
 
 def used_weights(weights):

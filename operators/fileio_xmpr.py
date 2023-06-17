@@ -14,13 +14,13 @@ def get_bone_names(armature):
     for bone in armature.pose.bones:
         yield(bone.name)
 
-def get_weights(ob):
-    for i, v in enumerate(ob.data.vertices):
+def get_weights(mesh, bone_names):
+    for i, v in enumerate(mesh.data.vertices):
         weight = {}
         for g in v.groups:
             if g.weight != 0:
-                weight[g.group] = g.weight       
-        yield(i, weight)
+                weight[bone_names.index(mesh.vertex_groups[g.group].name)] = g.weight
+        yield i, weight
             
 def get_mesh_information(mesh):
     vertices_dict = {}
@@ -83,13 +83,14 @@ def fileio_write_xmpr(context, mesh_name, library_name, template):
     mesh = bpy.data.objects[mesh_name]
     
     indices, vertices, uvs, normals, colors = get_mesh_information(mesh)
-    weights = dict(get_weights(mesh))
             
     bone_names = []
-    for m in mesh.modifiers:
-        if m.type == "ARMATURE":
-            bone_names = list(get_bone_names(m.object))
-    
+    if mesh.parent:
+        if mesh.parent.type == 'ARMATURE':
+            bone_names = list(get_bone_names(mesh.parent))
+            
+    weights = dict(get_weights(mesh, bone_names))  
+            
     return xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, template)
 
 
