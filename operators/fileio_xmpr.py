@@ -15,12 +15,27 @@ def get_bone_names(armature):
         yield(bone.name)
 
 def get_weights(mesh, bone_names):
-    for i, v in enumerate(mesh.data.vertices):
-        weight = {}
-        for g in v.groups:
-            if g.weight != 0:
-                weight[bone_names.index(mesh.vertex_groups[g.group].name)] = g.weight
-        yield i, weight
+    bone_indices = {name: i for i, name in enumerate(bone_names)}
+    vertices_dict = {}  # Dictionnaire pour stocker les indices de boucle par vertex
+
+    for face in mesh.data.polygons:
+        for loop_index in face.loop_indices:
+            vertex_index = mesh.data.loops[loop_index].vertex_index
+            if vertex_index not in vertices_dict:
+                vertices_dict[vertex_index] = len(vertices_dict)
+
+    weights = {}  # Dictionnaire pour stocker les poids par vertex
+    for vertex_index, vertex_dict_index in vertices_dict.items():
+        vertex = mesh.data.vertices[vertex_index]
+        weights[vertex_dict_index] = {}
+        for group in vertex.groups:
+            if group.weight != 0:
+                bone_name = mesh.vertex_groups[group.group].name
+                bone_index = bone_indices.get(bone_name)
+                if bone_index is not None:
+                    weights[vertex_dict_index][bone_index] = group.weight
+
+    return weights
             
 def get_mesh_information(mesh):
     vertices_dict = {}

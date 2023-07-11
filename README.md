@@ -12,7 +12,16 @@ The addon is written in Python and the project is Open Source, everyone can cont
 **Supported File**
 
 - MTN2 (Animation) (Only Export)
-- XPCK (3D Model Archive) (Only Export and need armarture)
+- PRM (Mesh) (Only Export)
+- XPCK (3D Model Archive) (Only Export)
+
+**Available Template**
+
+- Yo-Kai Watch 1
+- Yo-Kai Watch 2
+- Yo-Kai Watch 3
+- Inazuma Eleven Go Chrono Stone
+- Inazuma Eleven Go Galaxy
 
 **Special Thanks**  
 
@@ -24,10 +33,8 @@ also the project couldn't have been done without the logic that I could learn by
 
 **How to Install**
 
-This project hasn't release yet. The project is still in BETA, 
-so please don't complain if the tool can't convert your model or if your model doesn't work in game.  
-To install it you have to:  
-- click on "Code" -> "Download zip", 
+To install it you have to do:  
+- click on "Code" -> "Download zip"
 - wait the downkoad process
 - now open Blender and on Blender click on "edit", "Preference", "Add-on", "install" and select the .zip you have downloaded
 - don't forget to enable the addon!
