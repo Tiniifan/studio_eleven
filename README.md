@@ -34,7 +34,7 @@ also the project couldn't have been done without the logic that I could learn by
 **How to Install**
 
 To install it you have to do:  
-- click on "Code" -> "Download zip"
-- wait the downkoad process
+- download the latest version [here](https://github.com/Tiniifan/Level-5-blender-addon/releases/latest)
+- wait the download process
 - now open Blender and on Blender click on "edit", "Preference", "Add-on", "install" and select the .zip you have downloaded
 - don't forget to enable the addon!
