@@ -11,15 +11,16 @@ The addon is written in Python and the project is Open Source, everyone can cont
 
 **Supported File**
 
-- MTN2 (Animation) (Only Export)
-- PRM (Mesh) (Only Export)
-- XPCK (3D Model Archive) (Only Export)
+- XMTN (Animation)
+- XPRM (Mesh)
+- XPCK (Model Archive)
 
 **Available Template**
 
 - Yo-Kai Watch 1
 - Yo-Kai Watch 2
 - Yo-Kai Watch 3
+- Inazuma Eleven Go 
 - Inazuma Eleven Go Chrono Stone
 - Inazuma Eleven Go Galaxy
 
