@@ -1,7 +1,12 @@
 import os
+
 import bpy
-from bpy_extras.io_utils import ExportHelper
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty
+
+import bmesh
+
+from math import radians
 
 from ..formats import xmpr
 from ..templates import templates
@@ -92,6 +97,65 @@ def get_mesh_information(mesh):
         face_indices.append(face_index)
 
     return face_indices, vertices_info, uv_info, normal_info, color_info
+
+def make_mesh(mesh, model_data, armature=None, texture=None):
+    # Initialize lists to store vertex data
+    positions = []
+    normals = []
+    uv_data = []
+    weights = []
+    bone_indices = []
+    color_data = []
+
+    # Fill the lists with data from model_data['vertices']
+    for vertex_data in model_data['vertices']:
+        positions.append(vertex_data['positions'])
+        normals.append(vertex_data['normals'])
+        uv_data.append(vertex_data['uv_data'])
+        weights.append(vertex_data['weights'])
+        bone_indices.append(vertex_data['bone_indices'])
+        color_data.append(vertex_data['color_data'])
+                
+    bm = bmesh.from_edit_mesh(mesh)
+
+    # Create vertices
+    vertices = [bm.verts.new(pos) for pos in positions]
+            
+    # Update normals
+    bm.normal_update()            
+            
+    # Create UV layers
+    uv_layer = bm.loops.layers.uv.verify()
+            
+    # Create colors layer
+    colors_layer = bm.loops.layers.color.new('Color')            
+
+    # Create faces using triangle indices
+    for face_indices in model_data['triangles']:
+        v1_idx, v2_idx, v3_idx = face_indices
+        v1 = vertices[v1_idx]
+        v2 = vertices[v2_idx]
+        v3 = vertices[v3_idx]
+
+        # Create the face with normals associated with vertices
+        face = bm.faces.new((v1, v2, v3))  
+
+        # Assign normals to vertices
+        for i, vert in enumerate(face.verts):
+            vert.normal = normals[face_indices[i]]
+                    
+        # Assign UV coordinates to vertices
+        for i, loop in enumerate(face.loops):
+            loop[uv_layer].uv = uv_data[face_indices[i]]
+                    
+        # Assign colors to vertices
+        for i, loop in enumerate(face.loops):
+            loop[colors_layer] = color_data[face_indices[i]]                  
+            
+    # Update the mesh
+    bmesh.update_edit_mesh(mesh)
+            
+    bm.free()
   
 def fileio_write_xmpr(context, mesh_name, library_name, template):
     # Get Mesh
@@ -108,12 +172,44 @@ def fileio_write_xmpr(context, mesh_name, library_name, template):
             
     return xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, template)
 
+def fileio_open_xmpr(context, filepath):
+    # Extract the file name without extension
+    file_name = os.path.splitext(os.path.basename(filepath))[0]
+
+    with open(filepath, 'rb') as file:
+        # Open the XMPr file and read model data
+        model_data = xmpr.open(file.read())
+
+        # Create a new mesh object for each .prm file
+        mesh = bpy.data.meshes.new(name=model_data['name'])
+        mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
+
+        # Add the new mesh object to the scene
+        bpy.context.collection.objects.link(mesh_obj)
+
+        # Select the object and make it active
+        bpy.context.view_layer.objects.active = mesh_obj
+        mesh_obj.select_set(True)
+
+        # Switch to edit mode
+        bpy.ops.object.mode_set(mode='EDIT')
+
+        # Create the mesh using the model data
+        make_mesh(mesh, model_data)
+
+        # Switch back to object mode
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        # Rotate the object 90 degrees around the X axis
+        mesh_obj.rotation_euler = (radians(90), 0, 0)
+
+    return {'FINISHED'}
 
 ##########################################
 # Register class
 ##########################################     
     
-class ExportPRM(bpy.types.Operator, ExportHelper):
+class ExportXPRM(bpy.types.Operator, ExportHelper):
     bl_idname = "export.prm"
     bl_label = "Export to prm"
     bl_options = {'PRESET', 'UNDO'}
@@ -168,3 +264,13 @@ class ExportPRM(bpy.types.Operator, ExportHelper):
         with open(self.filepath, "wb") as f:
             f.write(fileio_write_xmpr(context, self.mesh_name, self.library_name, templates.get_template_by_name(self.template_name)))
             return {'FINISHED'}  
+
+class ImportXMPR(bpy.types.Operator, ImportHelper):
+    bl_idname = "import.prm"
+    bl_label = "Import a .prm"
+    bl_options = {'PRESET', 'UNDO'}
+    filename_ext = ".prm"
+    filter_glob: StringProperty(default="*.prm", options={'HIDDEN'})
+    
+    def execute(self, context):
+            return fileio_open_xmpr(context, self.filepath)            

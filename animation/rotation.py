@@ -1,4 +1,4 @@
-from math import sin, cos
+from math import sin, cos, atan2, asin
 
 class Rotation:
     def __init__(self, rotation_x, rotation_y, rotation_z, rotation_w=0):
@@ -8,10 +8,10 @@ class Rotation:
         self.rotation_w = rotation_w
         
     def to_quaternion(self):
-        qx = sin(self.rotation_x / 2) * cos(self.rotation_y / 2) * cos(self.rotation_z / 2) - cos(self.rotation_x / 2) * sin(self.rotation_y / 2) * sin(self.rotation_z / 2);
-        qy = cos(self.rotation_x / 2) * sin(self.rotation_y / 2) * cos(self.rotation_z / 2) + sin(self.rotation_x / 2) * cos(self.rotation_y / 2) * sin(self.rotation_z / 2);
-        qz = cos(self.rotation_x / 2) * cos(self.rotation_y / 2) * sin(self.rotation_z / 2) - sin(self.rotation_x / 2) * sin(self.rotation_y / 2) * cos(self.rotation_z / 2);
-        qw = cos(self.rotation_x / 2) * cos(self.rotation_y / 2) * cos(self.rotation_z / 2) + sin(self.rotation_x / 2) * sin(self.rotation_y / 2) * sin(self.rotation_z / 2); 
+        qx = sin(self.rotation_x / 2) * cos(self.rotation_y / 2) * cos(self.rotation_z / 2) - cos(self.rotation_x / 2) * sin(self.rotation_y / 2) * sin(self.rotation_z / 2)
+        qy = cos(self.rotation_x / 2) * sin(self.rotation_y / 2) * cos(self.rotation_z / 2) + sin(self.rotation_x / 2) * cos(self.rotation_y / 2) * sin(self.rotation_z / 2)
+        qz = cos(self.rotation_x / 2) * cos(self.rotation_y / 2) * sin(self.rotation_z / 2) - sin(self.rotation_x / 2) * sin(self.rotation_y / 2) * cos(self.rotation_z / 2)
+        qw = cos(self.rotation_x / 2) * cos(self.rotation_y / 2) * cos(self.rotation_z / 2) + sin(self.rotation_x / 2) * sin(self.rotation_y / 2) * sin(self.rotation_z / 2) 
         return [qx, qy, qz, qw]
 
     def __repr__(self):
@@ -24,7 +24,7 @@ class Rotation:
         same_x = self.get_x() == rotation2.get_x()
         same_y = self.get_y() == rotation2.get_y()
         same_z = self.get_z() == rotation2.get_z()
-        if (same_x == False or same_y == False or same_z == False):
+        if not (same_x and same_y and same_z):
             return False
         else:
             return True
@@ -36,4 +36,4 @@ class Rotation:
         return "{:.6f}".format(float(self.rotation_y))
         
     def get_z(self):
-        return "{:.6f}".format(float(self.rotation_z))        
+        return "{:.6f}".format(float(self.rotation_z))

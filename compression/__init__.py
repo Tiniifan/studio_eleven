@@ -1,3 +1,6 @@
+from .rle import *
 from .lz10 import *
 from .lzss import *
-from .zlib import *
+from .huffman import *
+from .compressor import *
+from .zlib_level5 import *

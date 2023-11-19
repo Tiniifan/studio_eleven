@@ -1,7 +1,10 @@
 import os
+
 import bpy
-from bpy_extras.io_utils import ExportHelper
+from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty, CollectionProperty
+
+import bmesh
 
 from ..formats import xmpr, xpck, mbn, imgc, res
 from .fileio_xmpr import *
@@ -88,7 +91,99 @@ def fileio_write_xpck(context, filepath, template, library_dict):
      
     return {'FINISHED'}
 
+def fileio_open_xpck(context, filepath):
+    file_name = os.path.splitext(os.path.basename(filepath))[0]
+    obj = bpy.data.objects.new(name=file_name, object_data=None)
+    
+    archive = xpck.open_file(filepath)
+    for file_name in archive:
+        if file_name.endswith('.prm'):
+            print(file_name)
+            model_data = xmpr.open(archive[file_name])
 
+            # Créer un nouvel objet mesh pour chaque fichier .prm
+            mesh = bpy.data.meshes.new(name=model_data['name'])
+            mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
+
+            # Ajouter le nouvel objet mesh à la scène
+            bpy.context.collection.objects.link(mesh_obj)
+
+            # Définir l'objet principal comme parent du nouvel objet mesh
+            mesh_obj.parent = obj
+
+            # Initialiser les listes pour stocker les données des sommets
+            positions = []
+            normals = []
+            uv_data = []
+            weights = []
+            bone_indices = []
+            color_data = []
+
+            # Remplir les listes avec les données de model_data['vertices']
+            for vertex_data in model_data['vertices']:
+                positions.append(vertex_data['positions'])
+                normals.append(vertex_data['normals'])
+                uv_data.append(vertex_data['uv_data'])
+                weights.append(vertex_data['weights'])
+                bone_indices.append(vertex_data['bone_indices'])
+                color_data.append(vertex_data['color_data'])
+
+            # Select the object and make it active
+            bpy.context.view_layer.objects.active = mesh_obj
+            mesh_obj.select_set(True)
+
+            bpy.ops.object.mode_set(mode='EDIT')
+            
+            bm = bmesh.from_edit_mesh(mesh)
+
+            # Create vertices
+            vertices = [bm.verts.new(pos) for pos in positions]
+            
+            # Update normals
+            bm.normal_update()            
+            
+            # Create uv layers
+            uv_layer = bm.loops.layers.uv.verify()
+            
+            # Create colors layer
+            colors_layer = bm.loops.layers.color.new('Color')            
+
+            # Create faces using triangle indices
+            for face_indices in model_data['triangles']:
+                v1_idx, v2_idx, v3_idx = face_indices
+                v1 = vertices[v1_idx]
+                v2 = vertices[v2_idx]
+                v3 = vertices[v3_idx]
+
+                # Créer la face avec les normales associées aux sommets
+                face = bm.faces.new((v1, v2, v3))  
+
+                # Affecter les normales aux sommets
+                for i, vert in enumerate(face.verts):
+                    vert.normal = normals[face_indices[i]]
+                    
+                # Affecter les coordonnées UV aux sommets
+                for i, loop in enumerate(face.loops):
+                    loop[uv_layer].uv = uv_data[face_indices[i]]
+                    
+                # Affecter les couleurs aux sommets
+                for i, loop in enumerate(face.loops):
+                    loop[colors_layer] = color_data[face_indices[i]]                  
+            
+            # Update the mesh
+            bmesh.update_edit_mesh(mesh)
+            
+            bm.free()
+
+            # Switch back to object mode
+            bpy.ops.object.mode_set(mode='OBJECT')
+                
+    # Ajouter l'objet principal à la scène
+    bpy.context.collection.objects.link(obj)
+    
+    return {'FINISHED'}
+
+       
 ##########################################
 # Register class
 ##########################################
@@ -155,3 +250,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         
         library_dict = {prop.mesh_name: prop.library_name for prop in self.prop_collection}
         return fileio_write_xpck(context, self.filepath, templates.get_template_by_name(self.template_name), library_dict)
+        
+class ImportXC(bpy.types.Operator, ImportHelper):
+    bl_idname = "import.xc"
+    bl_label = "Import a .xc"
+    bl_options = {'PRESET', 'UNDO'}
+    filename_ext = ".xc"
+    filter_glob: StringProperty(default="*.xc", options={'HIDDEN'})
+    
+    def execute(self, context):
+            return fileio_open_xpck(context, self.filepath)

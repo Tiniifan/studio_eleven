@@ -1,6 +1,7 @@
-import bpy
+import io
 import struct
-import zlib
+import numpy as np
+import math
 import mathutils
 import zlib
 import struct
@@ -25,150 +26,133 @@ def node_modified(node, frames):
 def frame_modified(frame_key):
     return int(frame_key).to_bytes(2, 'little')
 
-def to_euler_angles(q):
-    x = -q[0]
-    y = -q[1]
-    z = -q[2]
-    w = q[3]
+def read_string(byte_io):
+    bytes_list = []
+    
+    while True:
+        byte = byte_io.read(1)
+        if byte == b'\x00':
+            break
+        bytes_list.append(byte)
+    
+    name = b''.join(bytes_list).decode('utf-8')
+    return name
 
-    ysqr = y * y
+def open_mtn2(data):
+    node = {}
+    anim_name = ""
+    frame_count = 0
+    bone_name_hashes = []
 
-    t0 = 2.0 * (w * x + y * z)
-    t1 = 1.0 - 2.0 * (x * x + ysqr)
-    X = math.atan2(t0, t1)
+    reader = io.BytesIO(data)
+    size = len(reader.getbuffer())
+    
+    reader.seek(0x08)
+    
+    decom_size = struct.unpack("<I", reader.read(4))[0]
+    name_offset = struct.unpack("<I", reader.read(4))[0]
+    comp_data_offset = struct.unpack("<I", reader.read(4))[0]
+    position_count = struct.unpack("<I", reader.read(4))[0]
+    rotation_count = struct.unpack("<I", reader.read(4))[0]
+    scale_count = struct.unpack("<I", reader.read(4))[0]
+    unknown_count = struct.unpack("<I", reader.read(4))[0]
+    bone_count = struct.unpack("<I", reader.read(4))[0]
 
-    t2 = 2.0 * (w * y - z * x)
-    t2 = 1.0 if t2 > 1.0 else t2
-    t2 = -1.0 if t2 < -1.0 else t2
-    Y = math.asin(t2)
+    reader.seek(0x54)
+    frame_count = struct.unpack("<I", reader.read(4))[0]
 
-    t3 = 2.0 * (w * z + x * y)
-    t4 = 1.0 - 2.0 * (ysqr + z * z)
-    Z = math.atan2(t3, t4)
+    reader.seek(name_offset)
+    anim_hash = struct.unpack("<I", reader.read(4))[0]
+    anim_name = read_string(reader)
 
-    return X, Y, Z
+    reader.seek(comp_data_offset)
+    compressed_data = compressor.decompress(reader.read(size - comp_data_offset))
+    data = io.BytesIO(compressed_data)
+        
+    bone_hash_table_offset = struct.unpack("<I", data.read(4))[0]
+    track_info_offset = struct.unpack("<I", data.read(4))[0]
+    data_offset = struct.unpack("<I", data.read(4))[0]
 
-def create_bone(bone_name):
-    armature = bpy.context.active_object.data
-    bone = armature.edit_bones.new(bone_name)
-    bone.head = (0, 0, 0)
-    bone.tail = (0, 0, 1)
-    return bone
+    # Bone Hashes
+    data.seek(bone_hash_table_offset)
+    while data.tell() < track_info_offset:
+        bone_name_hashes.append(struct.unpack("<I", data.read(4))[0])
 
-def open_xmtn(file_path):
-    with open(file_path, "rb") as f:
-        # read header
-        f.seek(0x08)
-        decom_size = struct.unpack("<i", f.read(4))[0]
-        name_offset = struct.unpack("<I", f.read(4))[0]
-        comp_data_offset = struct.unpack("<I", f.read(4))[0]
-        position_count = struct.unpack("<i", f.read(4))[0]
-        rotation_count = struct.unpack("<i", f.read(4))[0]
-        scale_count = struct.unpack("<i", f.read(4))[0]
-        unknown_count = struct.unpack("<i", f.read(4))[0]
-        bone_count = struct.unpack("<i", f.read(4))[0]
+    # Track Information
+    tracks = []
+    for i in range(4):
+        data.seek(track_info_offset + 2 * i)
+        data.seek(struct.unpack("<H", data.read(2))[0])
 
-        f.seek(0x54)
-        frame_count = struct.unpack("<i", f.read(4))[0]
+        track = {}
+        track["type"] = struct.unpack("<B", data.read(1))[0]
+        track["data_type"] = struct.unpack("<B", data.read(1))[0]
+        track["unk"] = struct.unpack("<B", data.read(1))[0]
+        track["data_count"] = struct.unpack("<B", data.read(1))[0]
+        track["start"] = struct.unpack("<H", data.read(2))[0]
+        track["end"] = struct.unpack("<H", data.read(2))[0]
+        tracks.append(track)
 
-        anim_name_hash = struct.unpack("<I", f.read(4))[0]
-		
-        f.seek(name_offset)
-        anim_name = f.read(comp_data_offset - name_offset).decode("utf-8")
+    offset = 0 
+    read_frame_data(data, offset, position_count, data_offset, bone_name_hashes, tracks[0], node)
+    offset += position_count
+    read_frame_data(data, offset, rotation_count, data_offset, bone_name_hashes, tracks[1], node)
+    offset += rotation_count
+    read_frame_data(data, offset, scale_count, data_offset, bone_name_hashes, tracks[2],node)
+    offset += scale_count
+        
+    return anim_name, frame_count, bone_name_hashes, node
+        
+def read_frame_data(data, offset, count, data_offset, bone_name_hashes, track, node):
+    for i in range(offset, offset + count):
+        data.seek(data_offset + 4 * 4 * i)
+        flag_offset = struct.unpack("<I", data.read(4))[0]
+        key_frame_offset = struct.unpack("<I", data.read(4))[0]
+        key_data_offset = struct.unpack("<I", data.read(4))[0]
 
-        # read compressed data
-        f.seek(comp_data_offset)
-        data = lz10.decompress(f.read())
+        data.seek(flag_offset)
+        bone_index = struct.unpack("<h", data.read(2))[0]
+        low_frame_count = struct.unpack("<B", data.read(1))[0]
+        high_frame_count = struct.unpack("<B", data.read(1))[0] - 32
 
-        # read decompressed data
-        bone_hash_table_offset = struct.unpack("<I", data.read(4))[0]
-        track_info_offset = struct.unpack("<I", data.read(4))[0]
-        data_offset = struct.unpack("<I", data.read(4))[0]
+        key_frame_count = (high_frame_count << 8) | low_frame_count
 
-        # read bone hashes
-        bone_name_hashes = []
-        for i in range((track_info_offset - bone_hash_table_offset) // 4):
-            bone_name_hashes.append(struct.unpack("<I", data.read(4))[0])
+        bone_name_hash = bone_name_hashes[bone_index]
+        
+        data.seek(key_data_offset)
+        for k in range(key_frame_count):
+            temp = data.tell()
+            data.seek(key_frame_offset + k * 2)
+            frame = struct.unpack("<h", data.read(2))[0]
+            data.seek(temp)
 
-        # create bones
-        armature = bpy.data.armatures.new(name=anim_name)
-        armature_obj = bpy.data.objects.new(name=anim_name, object_data=armature)
-        bpy.context.scene.collection.objects.link(armature_obj)
-        bpy.context.view_layer.objects.active = armature_obj
-        bpy.ops.object.mode_set(mode="EDIT")
-
-        bones = {}
-        for i in range(bone_count):
-            f.seek(bone_hash_table_offset + struct.unpack("<I", data.read(4))[0] - data_offset)
-            bone_name = f.read(0x100).decode("utf-8")
-            bone = create_bone(bone_name)
-            bones[bone_name] = bone
-
-        # read keyframes
-        for i in range(frame_count):
-            for j in range(bone_count):
-                fcurves = []
-                bone_name_hash = struct.unpack("<I", data.read(4))[0]
-                bone_name = None
-                for k in range(len(bone_name_hashes)):
-                    if bone_name_hashes[k] == bone_name_hash:
-                        f.seek(bone_hash_table_offset + k * 4 - data_offset)
-                        bone_name = f.read(0x100).decode("utf-8")
-                        break
-
-                if bone_name is None:
-                    continue
-
-                if bone_name not in bones:
-                    bone = create_bone(bone_name)
-                    bones[bone_name] = bone
+            anim_data = [0] * track["data_count"]
+            for j in range(track["data_count"]):
+                if track["data_type"] == 1:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0] / float(0x7FFF)
+                elif track["data_type"] == 2:
+                    anim_data[j] = struct.unpack("<f", data.read(4))[0]
+                elif track["data_type"] == 4:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0]
                 else:
-                    bone = bones[bone_name]
+                    raise NotImplementedError(f"Data Type {track['data_type']} not implemented")
 
-                position_keys = []
-                rotation_keys = []
-                scale_keys = []
-                for k in range(position_count):
-                    position_keys.append((struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0]))
-                for k in range(rotation_count):
-                    rotation_keys.append((struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0]))
-                for k in range(scale_count):
-                    scale_keys.append((struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0], struct.unpack("<f", data.read(4))[0]))
+            if frame not in node:
+                node[frame] = {}
 
-                # create fcurves for position keys
-                if position_count > 0:
-                    fcurves.append(bone.pose.bones[bone_name].location_x.animation_data_create().action.fcurves[0])
-                    fcurves.append(bone.pose.bones[bone_name].location_y.animation_data_create().action.fcurves[1])
-                    fcurves.append(bone.pose.bones[bone_name].location_z.animation_data_create().action.fcurves[2])
+            if bone_name_hash not in node[frame]:
+                node[frame][bone_name_hash] = {}
 
-                    for k in range(position_count):
-                        for l in range(3):
-                            fcurves[l].keyframe_points.insert(frame=i, value=position_keys[k][l], options={"FAST"})
+            if track["type"] == 1:
+                node[frame][bone_name_hash]['location'] = Location(anim_data[0], anim_data[1], anim_data[2])
+                location = Location(anim_data[0], anim_data[1], anim_data[2])
+            elif track["type"] == 2:
+                node[frame][bone_name_hash]['rotation'] = Rotation(anim_data[0], anim_data[1], anim_data[2], anim_data[3])
+            elif track["type"] == 3:
+                node[frame][bone_name_hash]['scale'] = Scale(anim_data[0], anim_data[1], anim_data[2])
 
-                # create fcurves for rotation keys
-                if rotation_count > 0:
-                    fcurves.append(bone.pose.bones[bone_name].rotation_euler_x.animation_data_create().action.fcurves[0])
-                    fcurves.append(bone.pose.bones[bone_name].rotation_euler_y.animation_data_create().action.fcurves[1])
-                    fcurves.append(bone.pose.bones[bone_name].rotation_euler_z.animation_data_create().action.fcurves[2])
-
-                    for k in range(rotation_count):
-                        q = rotation_keys[k]
-                        euler_angles = to_euler_angles(q)
-                        for l in range(3):
-                            fcurves[l + 3].keyframe_points.insert(frame=i, value=euler_angles[l], options={"FAST"})
-
-                # create fcurves for scale keys
-                if scale_count > 0:
-                    fcurves.append(bone.pose.bones[bone_name].scale.animation_data_create().action.fcurves[0])
-                    fcurves.append(bone.pose.bones[bone_name].scale.animation_data_create().action.fcurves[1])
-                    fcurves.append(bone.pose.bones[bone_name].scale.animation_data_create().action.fcurves[2])
-
-                    for k in range(scale_count):
-                        for l in range(3):
-                            fcurves[l].keyframe_points.insert(k, k + i * scale_count, scale_keys[k][l])
-
-        bpy.ops.object.mode_set(mode="OBJECT")
-
+    return node
+                
 def write(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
     out = bytes()
 
