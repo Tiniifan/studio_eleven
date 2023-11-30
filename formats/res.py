@@ -1,6 +1,169 @@
+import io
 import zlib
 import struct
-from ..compression import lz10
+
+from enum import Enum
+from ..compression import *
+
+##########################################
+# RESType
+##########################################
+
+class RESType(Enum):
+    Bone = 110
+    Textproj = 140
+    BoundingBoxParameter = 200
+    Shading = 120
+    Material1 = 220
+    Material2 = 230
+    Mesh = 100
+    Texture = 240
+    MaterialData = 290
+    Animation1 = 300
+    Animation2 = 310
+    AnimationSplit1 = 400
+    AnimationSplit2 = 410
+    Null = 9999
+    MaterialTypeUnk1 = 0
+    MaterialTypeUnk2 = 1
+    NodeTypeUnk1 = 2
+    NodeTypeUnk2 = 3
+    NodeTypeUnk3 = 4
+    NodeTypeUnk4 = 460
+    NodeTypeUnk5 = 320
+    NodeTypeUnk6 = 420
+    NodeTypeUnk7 = 20
+
+##########################################
+# Read String
+##########################################
+    
+def read_string(byte_io):
+    bytes_list = []
+    
+    while True:
+        byte = byte_io.read(1)
+        if byte == b'\x00':
+            break
+        bytes_list.append(byte)
+    
+    name = b''.join(bytes_list).decode('shift-jis')
+    return name    
+
+##########################################
+# RES Open Function
+##########################################
+
+def open_res(stream=None, data=None, string_table=None, items=None):
+    string_table = string_table or {}
+    items = items or {}
+
+    if stream:
+        with io.BytesIO(compressor.decompress(stream.read())) as reader:
+            _read_data(reader, string_table, items)
+
+    elif data:
+        with io.BytesIO(compressor.decompress(data)) as reader:
+            _read_data(reader, string_table, items)
+
+    elif string_table and items:
+        pass  # Already provided, no need to read data
+
+    return items
+
+def _read_data(reader, string_table, items):
+    header = struct.unpack("<qhhhhhh", reader.read(20))
+    string_offset = header[1] << 2
+    material_table_offset = header[3] << 2
+    material_table_count = header[4]
+    node_offset = header[5] << 2
+    node_count = header[6]
+
+    reader.seek(string_offset)
+    text_section = reader.read()
+
+    text_reader = io.BytesIO(text_section)
+    while text_reader.tell() < len(text_section):
+        name = read_string(text_reader)
+        
+        if name == '':
+            break
+        else:
+            name_crc = zlib.crc32(name.encode("shift-jis"))
+            string_table[name_crc] = name
+
+    _read_section_table(reader, material_table_offset, material_table_count, items, string_table, text_reader)
+    _read_section_table(reader, node_offset, node_count, items, string_table, text_reader)
+    
+def get_object_name(type_reader, text_reader, string_table):
+    material_crc32 = struct.unpack("<I", type_reader.read(4))[0]
+                
+    if material_crc32 in string_table:
+        return string_table[material_crc32]
+    else:
+        text_reader.seek(struct.unpack("<I", type_reader.read(4))[0])
+        name = read_string(text_reader)
+        return name    
+
+def _read_section_table(reader, table_offset, table_count, items, string_table, text_reader):
+    for i in range(table_count):
+        reader.seek(table_offset + i * 8)
+        header_table = struct.unpack("<hhhh", reader.read(8))
+
+        data_offset = header_table[0] << 2
+        count = header_table[1]
+        _type = header_table[2]
+        length = header_table[3]
+        
+        if RESType(_type) == RESType.Null:
+            continue
+
+        if RESType(_type) not in items:
+            items[RESType(_type)] = {}
+
+        for j in range(count):
+            reader.seek(data_offset + j * length)
+            type_reader = io.BytesIO(reader.read(length))
+            
+            object_name = get_object_name(type_reader, text_reader, string_table)
+            object_crc32 = zlib.crc32(object_name.encode("shift-jis"))
+            
+            if length == 8:
+                items[RESType(_type)][object_crc32] = object_name
+            elif RESType(_type) == RESType.Texture:
+                type_reader.seek(8)
+                texture_unk = struct.unpack("<b", type_reader.read(1))[0]
+                next_facial_expression = struct.unpack("<b", type_reader.read(1))[0]
+                
+                texture_dict = {}
+                texture_dict['name'] = object_name
+                texture_dict['texture_unk'] = texture_unk
+                texture_dict['next_facial_expression'] = next_facial_expression
+                
+                items[RESType(_type)][object_crc32] = texture_dict
+            elif RESType(_type) == RESType.MaterialData:
+                type_reader.seek(16)
+                linked_textures = []
+                
+                max_texture = (length-16) // 52
+                for k in range(max_texture):
+                    texture_crc32 = struct.unpack("<I", type_reader.read(4))[0]
+                    
+                    if texture_crc32 != 0:    
+                        linked_textures.append(hex(texture_crc32))
+                                        
+                    type_reader.seek(type_reader.tell() + 48)        
+                
+                material_dict = {}
+                material_dict['name'] = object_name
+                material_dict['textures'] = linked_textures
+                
+                items[RESType(_type)][object_crc32] = material_dict               
+                
+
+##########################################
+# RES Write Function
+##########################################
 
 def write(resources):
     out = bytes()
@@ -146,3 +309,8 @@ def write_library(resources):
 
     # Return the concatenated header table, data, and string table
     return header_table + data, string_table
+
+##########################################
+# RES Open Function
+##########################################
+

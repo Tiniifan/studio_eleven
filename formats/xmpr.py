@@ -370,18 +370,18 @@ def open(data):
     node_table = []
     offset = no_offset
     for _ in range(no_size):
-        node_table.append(struct.unpack("<f", data[offset:offset + 4])[0])
+        node_table.append(struct.unpack("<I", data[offset:offset + 4])[0])
         offset += 4
 
     # Name and Material
     offset = 0x30
     name_position, name_length = struct.unpack("<II", data[offset:offset + 8])
     offset += 8
-    name = data[name_position: name_position + name_length].decode('utf-8')
+    name = data[name_position: name_position + name_length-1].decode('utf-8')
 
     material_position, material_length = struct.unpack("<II", data[offset:offset + 8])
     offset += 8
-    material_name = data[material_position:material_position + material_length].decode('utf-8')
+    material_name = data[material_position:material_position + material_length-1].decode('utf-8')
 
     return {
         "vertices": parse_buffer(polygon_vertex_buffer, node_table),

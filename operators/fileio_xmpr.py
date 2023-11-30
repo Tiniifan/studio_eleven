@@ -98,8 +98,22 @@ def get_mesh_information(mesh):
 
     return face_indices, vertices_info, uv_info, normal_info, color_info
 
-def make_mesh(mesh, model_data, armature=None, texture=None):
-    # Initialize lists to store vertex data
+def make_mesh(model_data, armature=None, bones=None, lib=None):
+    # Create a new mesh object
+    mesh = bpy.data.meshes.new(name=model_data['name'])
+    mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
+
+    # Add the new mesh object to the scene
+    bpy.context.collection.objects.link(mesh_obj)
+
+    # Select the object and make it active
+    bpy.context.view_layer.objects.active = mesh_obj
+    mesh_obj.select_set(True)
+
+    # Switch to edit mode
+    bpy.ops.object.mode_set(mode='EDIT')
+
+    # Initialize array to store vertex data
     positions = []
     normals = []
     uv_data = []
@@ -107,55 +121,137 @@ def make_mesh(mesh, model_data, armature=None, texture=None):
     bone_indices = []
     color_data = []
 
-    # Fill the lists with data from model_data['vertices']
+    # Fill the array with data from model_data['vertices']
     for vertex_data in model_data['vertices']:
-        positions.append(vertex_data['positions'])
-        normals.append(vertex_data['normals'])
-        uv_data.append(vertex_data['uv_data'])
-        weights.append(vertex_data['weights'])
-        bone_indices.append(vertex_data['bone_indices'])
-        color_data.append(vertex_data['color_data'])
-                
+        if 'positions' in vertex_data:
+            positions.append(vertex_data['positions'])
+      
+        if 'normals' in vertex_data:
+            normals.append(vertex_data['normals'])
+            
+        if 'uv_data' in vertex_data:    
+            uv_data.append(vertex_data['uv_data'])
+            
+        if 'weights' in vertex_data:
+            weights.append(vertex_data['weights'])
+            
+        if 'bone_indices' in vertex_data:    
+            bone_indices.append(vertex_data['bone_indices'])
+            
+        if 'color_data' in vertex_data:
+            color_data.append(vertex_data['color_data'])        
+    
     bm = bmesh.from_edit_mesh(mesh)
 
     # Create vertices
     vertices = [bm.verts.new(pos) for pos in positions]
-            
+                        
     # Update normals
     bm.normal_update()            
             
-    # Create UV layers
+    # Create uv layers
     uv_layer = bm.loops.layers.uv.verify()
-            
+    
+    vertex_group_mapping = {}
+                    
     # Create colors layer
     colors_layer = bm.loops.layers.color.new('Color')            
 
     # Create faces using triangle indices
     for face_indices in model_data['triangles']:
-        v1_idx, v2_idx, v3_idx = face_indices
+        if isinstance(face_indices, int):
+            continue
+        else:
+            v1_idx, v2_idx, v3_idx = face_indices
+
         v1 = vertices[v1_idx]
         v2 = vertices[v2_idx]
         v3 = vertices[v3_idx]
 
-        # Create the face with normals associated with vertices
-        face = bm.faces.new((v1, v2, v3))  
+        # Check if the face already exists
+        existing_face = None
+        for existing_face in bm.faces:
+            if (existing_face.verts[0] == v1 and
+                existing_face.verts[1] == v2 and
+                existing_face.verts[2] == v3):
+                break
+        else:
+            # Face doesn't exist, create a new one
+            face = bm.faces.new((v1, v2, v3))
 
-        # Assign normals to vertices
-        for i, vert in enumerate(face.verts):
-            vert.normal = normals[face_indices[i]]
-                    
-        # Assign UV coordinates to vertices
-        for i, loop in enumerate(face.loops):
-            loop[uv_layer].uv = uv_data[face_indices[i]]
-                    
-        # Assign colors to vertices
-        for i, loop in enumerate(face.loops):
-            loop[colors_layer] = color_data[face_indices[i]]                  
-            
+            # Assign normals to vertices
+            for i, vert in enumerate(face.verts):
+                vert.normal = normals[face_indices[i]]
+
+            # Assign UV coordinates to vertices
+            for i, loop in enumerate(face.loops):
+                loop[uv_layer].uv = uv_data[face_indices[i]]
+
+            # Assign colors to vertices
+            for i, loop in enumerate(face.loops):
+                loop[colors_layer] = color_data[face_indices[i]]
+
+            # Collect vertex and bone index mapping
+            for i, vert in enumerate(face.verts):
+                vert_weights = weights[face_indices[i]]
+
+                for j, weight in enumerate(vert_weights):
+                    if face_indices[i] < len(bone_indices):
+                        bone_crc32 = bone_indices[face_indices[i]][j]
+
+                        if bone_crc32 in bones:
+                            bone_name = bones[bone_crc32]
+                            if vert.index not in vertex_group_mapping:
+                                vertex_group_mapping[vert.index] = []
+                            vertex_group_mapping[vert.index].append((bone_name, weight))
+           
     # Update the mesh
     bmesh.update_edit_mesh(mesh)
-            
+    
+    # Memory free
     bm.free()
+    
+    # Switch back to object mode
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Assign weights to vertex groups
+    for vert_index, group_data in vertex_group_mapping.items():
+        for bone_name, weight in group_data:
+            vertex_group = mesh_obj.vertex_groups.get(bone_name)
+
+            if not vertex_group:
+                vertex_group = mesh_obj.vertex_groups.new(name=bone_name)
+
+            # Assign weight to the vertex group
+            if weight > 0:
+                vertex_group.add([vert_index], weight, 'REPLACE')    
+
+    # Rotate the mesh 90 degrees around the X axis
+    mesh_obj.rotation_euler = (radians(90), 0, 0)
+    
+    # Link mesh to armature
+    if armature:
+        bpy.ops.object.select_all(action='DESELECT')
+        mesh_obj.select_set(True)
+        armature.select_set(True)
+        bpy.context.view_layer.objects.active = armature
+        bpy.ops.object.parent_set(type='ARMATURE', keep_transform=True)
+        
+    # Link textures to mesh
+    if lib:
+        # Create a new material for the mesh
+        mat = bpy.data.materials.new(name=model_data['material_name'])
+        mat.use_nodes=True 
+        
+        material_output = mat.node_tree.nodes.get('Material Output')
+        principled_BSDF = mat.node_tree.nodes.get('Principled BSDF')
+
+        for texture in lib:
+            tex_node = mat.node_tree.nodes.new('ShaderNodeTexImage')
+            tex_node.image = texture
+            mat.node_tree.links.new(tex_node.outputs[0], principled_BSDF.inputs[0])
+            
+        mesh_obj.data.materials.append(mat)
   
 def fileio_write_xmpr(context, mesh_name, library_name, template):
     # Get Mesh
@@ -178,30 +274,10 @@ def fileio_open_xmpr(context, filepath):
 
     with open(filepath, 'rb') as file:
         # Open the XMPr file and read model data
-        model_data = xmpr.open(file.read())
-
-        # Create a new mesh object for each .prm file
-        mesh = bpy.data.meshes.new(name=model_data['name'])
-        mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
-
-        # Add the new mesh object to the scene
-        bpy.context.collection.objects.link(mesh_obj)
-
-        # Select the object and make it active
-        bpy.context.view_layer.objects.active = mesh_obj
-        mesh_obj.select_set(True)
-
-        # Switch to edit mode
-        bpy.ops.object.mode_set(mode='EDIT')
+        mesh_data = xmpr.open(file.read())
 
         # Create the mesh using the model data
-        make_mesh(mesh, model_data)
-
-        # Switch back to object mode
-        bpy.ops.object.mode_set(mode='OBJECT')
-        
-        # Rotate the object 90 degrees around the X axis
-        mesh_obj.rotation_euler = (radians(90), 0, 0)
+        make_mesh(mesh_data)
 
     return {'FINISHED'}
 

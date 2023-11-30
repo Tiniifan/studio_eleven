@@ -48,7 +48,6 @@ def calculate_transformed_location(pose_bone, location):
         pose_matrix = parent_matrix.inverted() @ pose_matrix
 
     return pose_matrix.inverted() @ location
-
     
 def calculate_transformed_rotation(pose_bone, rotation):
     parent = pose_bone.parent
@@ -97,7 +96,6 @@ def calculate_transformed_scale(pose_bone, scale):
 
     return transformed_scale
   
-
 def create_animation(animation_name, frame_count, armature_obj, animation_data):
     scene = bpy.context.scene
     armature = armature_obj.data
@@ -187,9 +185,12 @@ def fileio_open_xmtn(context, filepath):
     
     return {'FINISHED'}
 
-def fileio_write_mtn2(context, filepath, armature_name, animation_name):   
+def fileio_write_xmtn(context, armature_name, animation_name, animation_format):   
     scene = context.scene
+    
     armature = bpy.data.objects[armature_name]
+    bpy.context.view_layer.objects.active = armature
+    
     bpy.ops.object.mode_set(mode='POSE')
 
     # initialise transform data
@@ -245,13 +246,7 @@ def fileio_write_mtn2(context, filepath, armature_name, animation_name):
                 transform_scale[bone_index] = {}
             transform_scale[bone_index][frame] = scale             
     
-    # Save file
-    new_xmtn = xmtn.write(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
-    f = open(filepath, 'wb')
-    f.write(new_xmtn)
-    f.close()
-    
-    return {'FINISHED'}
+    return xmtn.write(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
 
 ##########################################
 # Register class
@@ -330,5 +325,7 @@ class ExportXMTN(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, "No animation armature found")
             return {'FINISHED'}
         else:
-            return fileio_write_mtn(context, self.filepath, self.armature_name, self.animation_name)
+            with open(self.filepath, "wb") as f:
+                f.write(fileio_write_xmtn(context, self.armature_name, self.animation_name, 'MTN2'))
+                return {'FINISHED'} 
 

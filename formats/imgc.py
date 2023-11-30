@@ -1,8 +1,13 @@
-import numpy as np
 import zlib
 import struct
+import numpy as np
+
 from ..utils import *
-from ..compression import lz10
+from ..compression import *
+
+##########################################
+# IMGC Write Function
+##########################################
 
 def flip_vertically(pixels, height, width):
     transposed_pixels = []
@@ -50,3 +55,54 @@ def write(img, img_format):
         out += bytes.fromhex("".zfill(missing_bytes*2))
     
     return out;
+
+##########################################
+# IMGCSupport
+##########################################
+
+class IMGCSupport:
+    class Header:
+        def __init__(self, header_bytes):
+            self.Magic = header_bytes[0]
+            self.ImageFormat = header_bytes[1]
+            self.CombineFormat = header_bytes[2]
+            self.BitDepth = header_bytes[3]
+            self.BytesPerTile = header_bytes[4]
+            self.Width = header_bytes[5]
+            self.Height = header_bytes[6]
+            self.TileOffset = header_bytes[7]
+            self.TileSize1 = header_bytes[8]
+            self.TileSize2 = header_bytes[9]
+            self.ImageSize = header_bytes[10]
+            self.ImageFormats = {
+                0: img_format.RGBA8(),
+                1: img_format.RGBA4(),
+                3: img_format.RBGR888(),
+                4: img_format.RGB565(),
+                14: img_format.L4(),
+                27: img_format.ETC1(),
+                28: img_format.ETC1A4(),
+            }
+
+##########################################
+# IMGC Open Function
+##########################################
+
+def open(file_content):
+    data = BytesIO(file_content)
+
+    # Reading and unpacking the header data
+    header_data = data.read(struct.calcsize('I6xbxbbhhh8xi20xiii8x'))
+    header = IMGCSupport.Header(struct.unpack('I6xbxbbhhh8xi20xiii8x', header_data))
+
+    # Decompressing tile and image data
+    data.seek(header.TileOffset)
+    tile_data = compressor.decompress(data.read(header.TileSize1))
+
+    data.seek(header.TileOffset + header.TileSize2)
+    image_data = compressor.decompress(data.read(header.ImageSize))
+
+    if header.ImageFormat in header.ImageFormats:
+        return img_tool.decode_image(tile_data, image_data, header.ImageFormats[header.ImageFormat], header.Width, header.Height, header.BitDepth)
+    else:
+        return None

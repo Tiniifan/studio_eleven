@@ -1,6 +1,8 @@
+import io
+import math
 import zlib
 import struct
-import mathutils
+from mathutils import Quaternion, Matrix
 
 def matrix_to_bytes(matrix):
     out = bytes()
@@ -23,6 +25,37 @@ def matrix_to_bytes(matrix):
         out += bytearray(struct.pack("f", scale[i]))
         
     return out    
+    
+def open(data):
+    if len(data) == 0:
+        return None
+
+    bone = {}
+    with io.BytesIO(data) as stream:
+        bone_id, parent_index = struct.unpack('<II', stream.read(8))
+        stream.seek(4)
+
+        stream.seek(0xC)
+        location = struct.unpack('<fff', stream.read(12))
+
+        rotation_matrix = [
+            struct.unpack('<fff', stream.read(12)),
+            struct.unpack('<fff', stream.read(12)),
+            struct.unpack('<fff', stream.read(12))
+        ]
+        rotation_matrix = Matrix(rotation_matrix)
+        quaternion_rotation = rotation_matrix.to_quaternion().inverted()
+
+        scale = struct.unpack('<fff', stream.read(12))
+
+        # Remplissage du dictionnaire bone
+        bone['crc32'] = bone_id
+        bone['parent_crc32'] = parent_index
+        bone['location'] = location
+        bone['quaternion_rotation'] = quaternion_rotation
+        bone['scale'] = scale
+
+    return bone
 
 def write(bone):
     out = bytes()
@@ -51,9 +84,9 @@ def write(bone):
     
     tail = bone.tail
     head = bone.head
-    relative_transform = mathutils.Matrix.Translation(head - tail)
+    relative_transform = Matrix.Translation(head - tail)
     head_transform = pose_matrix @ relative_transform
-    tail_transform = mathutils.Matrix.Translation(tail)
+    tail_transform = Matrix.Translation(tail)
     tail_to_head_transform = tail_transform.inverted() @ head_transform
 
     out += b''.join([struct.pack('f', item) for sublist in head_transform.to_3x3() for item in sublist])
