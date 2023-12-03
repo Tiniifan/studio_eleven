@@ -1,7 +1,7 @@
 import os
 import zlib
 
-from mathutils import Vector, Euler, Matrix
+from mathutils import Vector, Euler, Matrix, Quaternion
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -158,7 +158,7 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
                             fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
                         fcurve.keyframe_points.insert(frame, scale[i])
               
-def fileio_open_xmtn(context, filepath):
+def fileio_open_xmtn(operator, context, filepath):
     animation_name = ""
     frame_count = 0
     bone_name_hashes = []
@@ -167,6 +167,14 @@ def fileio_open_xmtn(context, filepath):
     file_name = os.path.splitext(os.path.basename(filepath))[0]
     file_extension = os.path.splitext(filepath)[1]
     
+    # Check if there is an active object and if it's an armature
+    active_obj = bpy.context.active_object
+    if not active_obj or active_obj.type != 'ARMATURE':
+        operator.report({'ERROR'}, 'No armature selected or active.')
+        return {'CANCELLED'}
+
+    armature_obj = bpy.context.active_object    
+    
     if file_extension == ".mtn2":
         with open(filepath, 'rb') as file:
             animation_name, frame_count, bone_name_hashes, animation_data = xmtn.open_mtn2(file.read())
@@ -174,14 +182,10 @@ def fileio_open_xmtn(context, filepath):
         with open(filepath, 'rb') as file:
             animation_name, frame_count, bone_name_hashes, animation_data = xmtn.open_mtn3(file.read())
     else:
-        raise RuntimeError(f"Unsupported file format '{file_extension}'. Please use .mtn2 or .mtn3.")
+        operator.report({'ERROR'}, f"Unsupported file format '{file_extension}'. Please use .mtn2 or .mtn3.")
+        return {'FINISHED'}
 
-    # Find armatures with specified bones
-    armatures = find_armatures_with_bones(bone_name_hashes)
-    print(armatures)
-
-    for armature_obj in armatures:
-        create_animation(animation_name, frame_count, armature_obj, animation_data)
+    create_animation(animation_name, frame_count, armature_obj, animation_data)
     
     return {'FINISHED'}
 
@@ -260,7 +264,7 @@ class ImportXMTN(bpy.types.Operator, ImportHelper):
     filter_glob: StringProperty(default="*.mtn*", options={'HIDDEN'})
     
     def execute(self, context):
-            return fileio_open_xmtn(context, self.filepath)
+            return fileio_open_xmtn(self, context, self.filepath)
 
 class ExportXMTN(bpy.types.Operator, ExportHelper):
     bl_idname = "export.xmtn"

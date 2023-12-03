@@ -8,6 +8,10 @@ import struct
 from ..animation import *
 from ..compression import *
 
+##########################################
+# XMTN Utils Function
+##########################################
+
 def table_offset(frame_offset, frame_transform):
     out = bytes()
     out += int(frame_offset).to_bytes(4, 'little')
@@ -37,6 +41,103 @@ def read_string(byte_io):
     
     name = b''.join(bytes_list).decode('utf-8')
     return name
+
+def read_frame_data(data, offset, count, data_offset, bone_name_hashes, track, node):
+    for i in range(offset, offset + count):
+        data.seek(data_offset + 4 * 4 * i)
+        flag_offset = struct.unpack("<I", data.read(4))[0]
+        key_frame_offset = struct.unpack("<I", data.read(4))[0]
+        key_data_offset = struct.unpack("<I", data.read(4))[0]
+
+        data.seek(flag_offset)
+        bone_index = struct.unpack("<h", data.read(2))[0]
+        low_frame_count = struct.unpack("<B", data.read(1))[0]
+        high_frame_count = struct.unpack("<B", data.read(1))[0] - 32
+
+        key_frame_count = (high_frame_count << 8) | low_frame_count
+
+        bone_name_hash = bone_name_hashes[bone_index]
+        
+        data.seek(key_data_offset)
+        for k in range(key_frame_count):
+            temp = data.tell()
+            data.seek(key_frame_offset + k * 2)
+            frame = struct.unpack("<h", data.read(2))[0]
+            data.seek(temp)
+
+            anim_data = [0] * track["data_count"]
+            for j in range(track["data_count"]):
+                if track["data_type"] == 1:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0] / float(0x7FFF)
+                elif track["data_type"] == 2:
+                    anim_data[j] = struct.unpack("<f", data.read(4))[0]
+                elif track["data_type"] == 4:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0]
+                else:
+                    raise NotImplementedError(f"Data Type {track['data_type']} not implemented")
+
+            if frame not in node:
+                node[frame] = {}
+
+            if bone_name_hash not in node[frame]:
+                node[frame][bone_name_hash] = {}
+
+            if track["type"] == 1:
+                node[frame][bone_name_hash]['location'] = Location(anim_data[0], anim_data[1], anim_data[2])
+                location = Location(anim_data[0], anim_data[1], anim_data[2])
+            elif track["type"] == 2:
+                node[frame][bone_name_hash]['rotation'] = Rotation(anim_data[0], anim_data[1], anim_data[2], anim_data[3])
+            elif track["type"] == 3:
+                node[frame][bone_name_hash]['scale'] = Scale(anim_data[0], anim_data[1], anim_data[2])
+
+    return node
+
+def read_frame_data2(data, anim_table_offset, bone_name_hashes, track, node):
+    for i in range(len(anim_table_offset)):
+        data.seek(anim_table_offset[i]['flag_offset'])
+        bone_index = struct.unpack('<h', data.read(2))[0]
+        low_frame_count = struct.unpack('B', data.read(1))[0]
+        high_frame_count = struct.unpack('B', data.read(1))[0] - 32
+
+        key_frame_count = (high_frame_count << 8) | low_frame_count
+
+        bone_name_hash = bone_name_hashes[bone_index]
+        
+        data.seek(anim_table_offset[i]['key_data_offset'])
+        for k in range(key_frame_count):
+            temp = data.tell()
+            data.seek(anim_table_offset[i]['key_frame_offset'] + k * 2)
+            frame = struct.unpack("<h", data.read(2))[0]
+            data.seek(temp)
+
+            anim_data = [0] * track["data_count"]
+            for j in range(track["data_count"]):
+                if track["data_type"] == 1:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0] / float(0x7FFF)
+                elif track["data_type"] == 2:
+                    anim_data[j] = struct.unpack("<f", data.read(4))[0]
+                elif track["data_type"] == 4:
+                    anim_data[j] = struct.unpack("<h", data.read(2))[0]
+                else:
+                    raise NotImplementedError(f"Data Type {track['data_type']} not implemented")
+
+            if frame not in node:
+                node[frame] = {}
+
+            if bone_name_hash not in node[frame]:
+                node[frame][bone_name_hash] = {}
+
+            if track["type"] == 1:
+                node[frame][bone_name_hash]['location'] = Location(anim_data[0], anim_data[1], anim_data[2])
+                location = Location(anim_data[0], anim_data[1], anim_data[2])
+            elif track["type"] == 2:
+                node[frame][bone_name_hash]['rotation'] = Rotation(anim_data[0], anim_data[1], anim_data[2], anim_data[3])
+            elif track["type"] == 3:
+                node[frame][bone_name_hash]['scale'] = Scale(anim_data[0], anim_data[1], anim_data[2])
+
+##########################################
+# XMTN2
+##########################################
 
 def open_mtn2(data):
     node = {}
@@ -102,57 +203,7 @@ def open_mtn2(data):
     offset += scale_count
         
     return anim_name, frame_count, bone_name_hashes, node
-        
-def read_frame_data(data, offset, count, data_offset, bone_name_hashes, track, node):
-    for i in range(offset, offset + count):
-        data.seek(data_offset + 4 * 4 * i)
-        flag_offset = struct.unpack("<I", data.read(4))[0]
-        key_frame_offset = struct.unpack("<I", data.read(4))[0]
-        key_data_offset = struct.unpack("<I", data.read(4))[0]
-
-        data.seek(flag_offset)
-        bone_index = struct.unpack("<h", data.read(2))[0]
-        low_frame_count = struct.unpack("<B", data.read(1))[0]
-        high_frame_count = struct.unpack("<B", data.read(1))[0] - 32
-
-        key_frame_count = (high_frame_count << 8) | low_frame_count
-
-        bone_name_hash = bone_name_hashes[bone_index]
-        
-        data.seek(key_data_offset)
-        for k in range(key_frame_count):
-            temp = data.tell()
-            data.seek(key_frame_offset + k * 2)
-            frame = struct.unpack("<h", data.read(2))[0]
-            data.seek(temp)
-
-            anim_data = [0] * track["data_count"]
-            for j in range(track["data_count"]):
-                if track["data_type"] == 1:
-                    anim_data[j] = struct.unpack("<h", data.read(2))[0] / float(0x7FFF)
-                elif track["data_type"] == 2:
-                    anim_data[j] = struct.unpack("<f", data.read(4))[0]
-                elif track["data_type"] == 4:
-                    anim_data[j] = struct.unpack("<h", data.read(2))[0]
-                else:
-                    raise NotImplementedError(f"Data Type {track['data_type']} not implemented")
-
-            if frame not in node:
-                node[frame] = {}
-
-            if bone_name_hash not in node[frame]:
-                node[frame][bone_name_hash] = {}
-
-            if track["type"] == 1:
-                node[frame][bone_name_hash]['location'] = Location(anim_data[0], anim_data[1], anim_data[2])
-                location = Location(anim_data[0], anim_data[1], anim_data[2])
-            elif track["type"] == 2:
-                node[frame][bone_name_hash]['rotation'] = Rotation(anim_data[0], anim_data[1], anim_data[2], anim_data[3])
-            elif track["type"] == 3:
-                node[frame][bone_name_hash]['scale'] = Scale(anim_data[0], anim_data[1], anim_data[2])
-
-    return node
-                
+    
 def write(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
     out = bytes()
 
@@ -265,3 +316,78 @@ def write(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
     out += data_compress
     
     return out
+    
+##########################################
+# XMTN3
+##########################################
+
+def open_mtn3(data):
+    node = {}
+    anim_name = ""
+    frame_count = 0
+    bone_name_hashes = []
+
+    reader = io.BytesIO(data)
+    size = len(reader.getbuffer())
+    
+    reader.seek(0x04)    
+    hash_offset = struct.unpack('<H', reader.read(2))[0] - 4
+    name_offset = struct.unpack('<H', reader.read(2))[0] - 4
+    unk_offset = struct.unpack('<H', reader.read(2))[0]
+    reader.seek(reader.tell() + 0x06)
+    comp_data_length = struct.unpack('<I', reader.read(4))[0]
+    reader.seek(reader.tell() + 0x04)
+    position_count = struct.unpack('<I', reader.read(4))[0]
+    rotation_count = struct.unpack('<I', reader.read(4))[0]
+    scale_count = struct.unpack('<I', reader.read(4))[0]
+    unknown_count = struct.unpack('<I', reader.read(4))[0]
+    bone_count = struct.unpack('<I', reader.read(4))[0]    
+    
+    reader.seek(hash_offset)
+    hash_value = struct.unpack('<I', reader.read(4))[0]
+    anim_name = read_string(reader)
+
+    reader.seek(0x58)
+    frame_count = struct.unpack('<I', reader.read(4))[0]
+    position_track_offset = struct.unpack('<H', reader.read(2))[0]
+    rotation_track_offset = struct.unpack('<H', reader.read(2))[0]
+    scale_track_offset = struct.unpack('<H', reader.read(2))[0]
+    unknown_track_offset = struct.unpack('<H', reader.read(2))[0]
+
+    anim_table_offsets = []
+    for i in range(position_count + rotation_count + scale_count + unknown_count):
+        anim_table_offset = {}
+        anim_table_offset['flag_offset'] = struct.unpack('<I', reader.read(4))[0]
+        anim_table_offset['key_frame_offset'] = struct.unpack('<I', reader.read(4))[0]
+        anim_table_offset['key_data_offset'] = struct.unpack('<I', reader.read(4))[0]
+        anim_table_offsets.append(anim_table_offset)
+        reader.read(0x04)  # Skip 4 bytes
+
+    compressed_data = compressor.decompress(reader.read(size - reader.tell()))
+    data = io.BytesIO(compressed_data)
+    data_size = len(data.getbuffer())
+    
+    # Bone Hashes
+    bone_name_hashes = []
+    for i in range(bone_count):
+        bone_name_hashes.append(struct.unpack('<I', data.read(4))[0])
+
+    # Track Information
+    tracks = []
+    data.seek(position_track_offset)
+    for i in range(4):
+        track = {}
+        track["type"] = struct.unpack("<B", data.read(1))[0]
+        track["data_type"] = struct.unpack("<B", data.read(1))[0]
+        track["unk"] = struct.unpack("<B", data.read(1))[0]
+        track["data_count"] = struct.unpack("<B", data.read(1))[0]
+        track["start"] = struct.unpack("<H", data.read(2))[0]
+        track["end"] = struct.unpack("<H", data.read(2))[0]
+        tracks.append(track)
+
+    anim_data = io.BytesIO(data.read(data_size - data.tell()))
+    read_frame_data2(anim_data, anim_table_offsets[:position_count], bone_name_hashes, tracks[0], node)
+    read_frame_data2(anim_data, anim_table_offsets[position_count:position_count+rotation_count], bone_name_hashes, tracks[1], node)
+    read_frame_data2(anim_data, anim_table_offsets[position_count+rotation_count:position_count+rotation_count+scale_count], bone_name_hashes, tracks[2], node)
+    
+    return anim_name, frame_count, bone_name_hashes, node

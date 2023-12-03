@@ -193,6 +193,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
 
             # Collect vertex and bone index mapping
             for i, vert in enumerate(face.verts):
+                index = face_indices[i]
                 vert_weights = weights[face_indices[i]]
 
                 for j, weight in enumerate(vert_weights):
@@ -201,9 +202,9 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
 
                         if bone_crc32 in bones:
                             bone_name = bones[bone_crc32]
-                            if vert.index not in vertex_group_mapping:
-                                vertex_group_mapping[vert.index] = []
-                            vertex_group_mapping[vert.index].append((bone_name, weight))
+                            if index not in vertex_group_mapping:
+                                vertex_group_mapping[index] = []
+                            vertex_group_mapping[index].append((bone_name, weight))
            
     # Update the mesh
     bmesh.update_edit_mesh(mesh)
