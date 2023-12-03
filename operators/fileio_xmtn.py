@@ -249,9 +249,12 @@ def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
             if bone_index not in transform_scale:
                 transform_scale[bone_index] = {}
             transform_scale[bone_index][frame] = scale             
-    
-    return xmtn.write(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
 
+    if animation_format == '.mtn2':
+        return xmtn.write_mtn2(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
+    elif animation_format == '.mtn3':
+        return xmtn.write_mtn3(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)
+        
 ##########################################
 # Register class
 ##########################################
@@ -326,10 +329,10 @@ class ExportXMTN(bpy.types.Operator, ExportHelper):
 
     def execute(self, context):
         if (self.armature_name == ""):
-            self.report({'ERROR'}, "No animation armature found")
+            self.report({'ERROR'}, "No animation found in the armature")
             return {'FINISHED'}
         else:
             with open(self.filepath, "wb") as f:
-                f.write(fileio_write_xmtn(context, self.armature_name, self.animation_name, 'MTN2'))
+                f.write(fileio_write_xmtn(context, self.armature_name, self.animation_name, self.extension))
                 return {'FINISHED'} 
 

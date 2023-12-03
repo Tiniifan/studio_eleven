@@ -21,10 +21,15 @@ def table_offset(frame_offset, frame_transform):
     return out
 
 def node_modified(node, frames):
+    frames_count = len(frames)
+    low_frame_count = frames_count & 0xFF
+    high_frame_count = (32 + (frames_count >> 8)) & 0xFF
+
     out = bytes()
     out += int(node).to_bytes(2, 'little')
-    out += int(len(frames)).to_bytes(1, 'little')
-    out += int(32).to_bytes(1, 'little')
+    out += int(low_frame_count).to_bytes(1, 'little')
+    out += int(high_frame_count).to_bytes(1, 'little')
+    
     return out
 
 def frame_modified(frame_key):
@@ -204,7 +209,7 @@ def open_mtn2(data):
         
     return anim_name, frame_count, bone_name_hashes, node
     
-def write(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
+def write_mtn2(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
     out = bytes()
 
     # for each node write the crc32 of node name
@@ -391,3 +396,121 @@ def open_mtn3(data):
     read_frame_data2(anim_data, anim_table_offsets[position_count+rotation_count:position_count+rotation_count+scale_count], bone_name_hashes, tracks[2], node)
     
     return anim_name, frame_count, bone_name_hashes, node
+    
+def write_mtn3(name, nodes, frame_location, frame_rotation, frame_scale, frame_end):
+    data_decomp = bytes()
+    header_table = bytes()
+    
+    # Bone hashes
+    for node in nodes:
+        crc32 = zlib.crc32(node.encode("shift-jis"))
+        data_decomp += crc32.to_bytes(4, 'little')
+
+    # Track information
+    position_track_offset = len(data_decomp)
+    for i in range(3):
+        if i == 0:
+            data_decomp += int("0x03000201", 16).to_bytes(4, 'little')
+        elif i == 1:
+            data_decomp += int("0x04000102", 16).to_bytes(4, 'little')
+        elif i == 2: 
+            data_decomp += int("0x03000203", 16).to_bytes(4, 'little')            
+        data_decomp += int(0).to_bytes(2, 'little')
+        data_decomp += frame_end.to_bytes(2, 'little')
+    
+    # write empty block
+    data_decomp += int(0).to_bytes(8, 'little')
+
+    # initialise bytes object to save frame data and frame_offset to save each offset of frame
+    data_location = bytes()
+    data_rotation = bytes()
+    data_scale = bytes()
+    frame_offset = 0
+    
+    # write data_location for each frame
+    for node, frames in frame_location.items():
+        # table
+        header_table += table_offset(frame_offset, frames)
+        frame_offset += len(frames) * 14 + 4;
+        # node data
+        data_location += node_modified(node, frames)
+        # frame edited
+        data_transform = bytes()
+        for frame_key, frame_transform in frames.items():
+            data_location += frame_modified(frame_key)
+            data_transform += bytearray(struct.pack("f", frame_transform.location_x))
+            data_transform += bytearray(struct.pack("f", frame_transform.location_y))
+            data_transform += bytearray(struct.pack("f", frame_transform.location_z))
+        data_location += data_transform
+
+    # write data_rotation for each frame
+    for node, frames in frame_rotation.items():
+        # table
+        header_table += table_offset(frame_offset, frames)
+        frame_offset += len(frames) * 10 + 4;
+        # node data
+        data_rotation += node_modified(node, frames)
+        # frame edited
+        data_transform = bytes()
+        for frame_key, frame_transform in frames.items():
+            data_rotation += frame_modified(frame_key)
+            quaternion = frame_transform.to_quaternion()
+            for i in range(4):
+                data_transform += int(quaternion[i] * 32767).to_bytes(2, 'little', signed=True)
+        data_rotation += data_transform
+
+    # write data_scale for each frame
+    for node, frames in frame_scale.items():
+        # table
+        header_table += table_offset(frame_offset, frames)
+        frame_offset += len(frames) * 14 + 4;
+        # node data
+        data_scale += node_modified(node, frames)
+        # frame edited
+        data_transform = bytes()
+        for frame_key, frame_transform in frames.items():
+            data_scale += frame_modified(frame_key)
+            data_transform += bytearray(struct.pack("f", frame_transform.scale_x))
+            data_transform += bytearray(struct.pack("f", frame_transform.scale_y))
+            data_transform += bytearray(struct.pack("f", frame_transform.scale_z))
+        data_scale += data_transform  
+
+    # compress
+    data_decomp += data_location + data_rotation + data_scale
+    data_compress = compress(data_decomp)   
+            
+    out = bytes()
+    
+    out = int("0x4e544d58", 16).to_bytes(4, 'little')   
+    out += int(48).to_bytes(2, 'little')
+    out += int(48 + len(name) - 2).to_bytes(2, 'little')
+    out += int(104).to_bytes(2, 'little')    
+    out += int(0).to_bytes(2, 'little')
+    out += int(0).to_bytes(2, 'little')
+    out += int(0).to_bytes(2, 'little')
+    out += int(len(data_compress)).to_bytes(4, 'little') # comp_data_length
+    out += int(0).to_bytes(4, 'little')
+    out += int(len(frame_location)).to_bytes(4, 'little')
+    out += int(len(frame_rotation)).to_bytes(4, 'little')
+    out += int(len(frame_scale)).to_bytes(4, 'little')
+    out += int(0).to_bytes(4, 'little')
+    out += int(len(nodes)).to_bytes(4, 'little')
+    
+    name = name[:40]
+    encoded_name = name.encode('shift-jis')
+    encoded_name_crc32 = zlib.crc32(encoded_name)
+    out += encoded_name_crc32.to_bytes(4, 'little')
+    out += encoded_name
+
+    if len(encoded_name) < 40:
+        out += b'\x00' * (40 - len(encoded_name))
+    
+    out += int(frame_end).to_bytes(4, 'little')
+    out += int(position_track_offset).to_bytes(2, 'little')
+    out += int(position_track_offset + 8 * 1).to_bytes(2, 'little')
+    out += int(position_track_offset + 8 * 2).to_bytes(2, 'little')
+    out += int(position_track_offset + 8 * 3).to_bytes(2, 'little')
+    out += header_table
+    out += data_compress
+    
+    return out
