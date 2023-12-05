@@ -19,9 +19,11 @@ class RESType(Enum):
     Mesh = 100
     Texture = 240
     MaterialData = 290
-    Animation1 = 300
+    animation_mtn2 = 300
+    animation_mtn3 = 301
     Animation2 = 310
-    AnimationSplit1 = 400
+    mtninf = 400
+    mtninf2 = 401
     AnimationSplit2 = 410
     Null = 9999
     MaterialTypeUnk1 = 0
@@ -33,6 +35,7 @@ class RESType(Enum):
     NodeTypeUnk5 = 320
     NodeTypeUnk6 = 420
     NodeTypeUnk7 = 20
+    
 
 ##########################################
 # Read String
@@ -311,6 +314,6 @@ def write_library(resources):
     return header_table + data, string_table
 
 ##########################################
-# RES Open Function
+# XRES Open Function
 ##########################################
 

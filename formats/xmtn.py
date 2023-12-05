@@ -9,7 +9,7 @@ from ..animation import *
 from ..compression import *
 
 ##########################################
-# XMTN Utils Function
+# XMTN Function
 ##########################################
 
 def table_offset(frame_offset, frame_transform):

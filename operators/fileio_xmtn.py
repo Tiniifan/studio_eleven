@@ -114,6 +114,10 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
     scene.frame_start = 0
     scene.frame_end = frame_count
     
+    bpy.context.scene.frame_set(0)
+    bpy.ops.pose.select_all(action='SELECT')
+    bpy.ops.pose.transforms_clear()    
+    
     for frame in range(frame_count):
         if frame in animation_data:
             for bone_hash, transformation in animation_data[frame].items():

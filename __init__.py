@@ -22,6 +22,7 @@ if "fileio_xpck" in locals():
     importlib.reload(imgc)
     importlib.reload(mbn)
     importlib.reload(res)
+    importlib.reload(minf)
 
 bl_info = {
     "name": "Level 5 Lib For Blender",

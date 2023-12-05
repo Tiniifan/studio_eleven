@@ -1,4 +1,5 @@
 import os
+import copy
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -65,6 +66,8 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     bpy.ops.object.mode_set(mode='OBJECT')
 
 def fileio_open_xpck(context, filepath):
+    scene = bpy.context.scene
+    
     archive = xpck.open_file(filepath)
     archive_name = os.path.splitext(os.path.basename(filepath))[0]
     
@@ -75,6 +78,8 @@ def fileio_open_xpck(context, filepath):
     bones_data = []
     meshes_data = []
     textures_data = []
+    animations_data = []
+    animations_split_data = []
     
     for file_name in archive:
         if file_name.endswith('.prm'):
@@ -82,7 +87,40 @@ def fileio_open_xpck(context, filepath):
         elif file_name.endswith('.mbn'):
             bones_data.append(mbn.open(archive[file_name]))    
         elif file_name.endswith('.xi'):
-            textures_data.append(imgc.open(archive[file_name]))             
+            textures_data.append(imgc.open(archive[file_name]))
+        elif file_name.endswith('.mtn2'):
+            animation_data = {}
+            
+            name, frame_count, bone_name_hashes, data = xmtn.open_mtn2(archive[file_name])
+            animation_data['name'] = name
+            animation_data['frame_count'] = frame_count
+            animation_data['bone_name_hashes'] = bone_name_hashes
+            animation_data['data'] = data
+            
+            animations_data.append(animation_data)
+        elif file_name.endswith('.mtn3'):
+            animation_data = {}
+            
+            name, frame_count, bone_name_hashes, data = xmtn.open_mtn3(archive[file_name])
+            animation_data['name'] = name
+            animation_data['frame_count'] = frame_count
+            animation_data['bone_name_hashes'] = bone_name_hashes
+            animation_data['data'] = data
+            
+            animations_data.append(animation_data)  
+        elif file_name.endswith('.mtninf') and not file_name.endswith('.mtninf2'):
+            split_animation_data = {}
+            
+            split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end = minf.open_minf1(archive[file_name])
+            split_animation_data['split_anim_crc32'] = split_anim_crc32
+            split_animation_data['split_anim_name'] = split_anim_name
+            split_animation_data['anim_crc32'] = anim_crc32
+            split_animation_data['frame_start'] = frame_start
+            split_animation_data['frame_end'] = frame_end
+            
+            animations_split_data.append(split_animation_data)
+        elif file_name.endswith('.mtninf2'):
+            animations_split_data.extend(minf.open_minf2(archive[file_name]))         
         elif file_name == 'RES.bin':
             res_data = res.open_res(data=archive[file_name])
           
@@ -185,7 +223,70 @@ def fileio_open_xpck(context, filepath):
             
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib) 
+
+    # Check if there is an active object and if it's an armature
+    if armature == None and len(animations_data) > 0:
+        active_obj = bpy.context.active_object
+        if not active_obj or active_obj.type != 'ARMATURE':
+            operator.report({'ERROR'}, 'No armature selected or active.')
+            return {'CANCELLED'}
+            
+        armature = active_obj
+
+    # Link animation to armature
+    if len(animations_data) > 0:
+        animations = []
+        max_frames = 0
         
+        for animation_data in animations_data:
+            animation = {}
+            animation['main'] = animation_data
+            animation['split'] = []
+            
+            for animation_split_data in animations_split_data:
+                for animation_data in animations_data:
+                    animation_crc32 = zlib.crc32(animation_data['name'].encode("shift-jis"))
+                    if animation_crc32 == animation_split_data['anim_crc32']:
+                        split_animation = {}
+                        
+                        split_animation['name'] = animation_data['name'] + '_' + animation_split_data['split_anim_name']
+                        split_animation['frame_start'] = animation_split_data['frame_start']
+                        split_animation['frame_end'] = animation_split_data['frame_end']
+                        
+                        animation['split'].append(split_animation)
+
+            animations.append(animation)
+                        
+        # Add all animations to the armature
+        for animation in animations:
+            # Add main animation           
+            name = animation['main']['name']
+            frame_count = animation['main']['frame_count']
+            data = animation['main']['data']
+            
+            if frame_count > max_frames:
+                max_frames = frame_count
+            
+            create_animation(name, frame_count, armature, data)
+            
+            # Split animations
+            for split_animation in animation['split']:
+                new_animation = bpy.data.actions.new(name=split_animation['name'])
+
+                # Spécifiez le début et la fin de la nouvelle animation
+                start_frame = split_animation['frame_start']
+                end_frame = split_animation['frame_end']
+
+                # Copiez les keyframes de l'action existante dans la nouvelle action
+                for fcurve in bpy.data.actions.get(name).fcurves:
+                    new_fcurve = new_animation.fcurves.new(data_path=fcurve.data_path, index=fcurve.array_index)
+                    for keyframe in fcurve.keyframe_points:
+                        if start_frame <= keyframe.co.x <= end_frame:
+                            new_keyframe = new_fcurve.keyframe_points.insert(keyframe.co.x - start_frame, keyframe.co.y)
+                            new_keyframe.interpolation = keyframe.interpolation            
+                       
+        scene.frame_end = max_frames
+                
     return {'FINISHED'}
 
 def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = [], animation = {}, split_animations = []):
