@@ -68,9 +68,10 @@ def draw_menu_import(self, context):
 def register():
     bpy.utils.register_class(ExportXC_AddAnimationItem)
     bpy.utils.register_class(ExportXC_RemoveAnimationItem)
-    bpy.utils.register_class(MeshPropertyGroup)
     bpy.utils.register_class(AnimationItem)
     bpy.utils.register_class(TexturePropertyGroup)
+    bpy.utils.register_class(LibPropertyGroup)
+    bpy.utils.register_class(MeshPropertyGroup)
     bpy.types.Scene.export_xc_animations_items = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.utils.register_class(ExportXMTN)
     bpy.utils.register_class(ExportXC)
@@ -93,9 +94,10 @@ def unregister():
     bpy.utils.unregister_class(ExportXPRM)
     bpy.utils.unregister_class(ExportXCMA)
     bpy.utils.unregister_class(Level5_Menu_Export)
-    bpy.utils.unregister_class(MeshPropertyGroup)
     bpy.utils.unregister_class(AnimationItem)
     bpy.utils.unregister_class(TexturePropertyGroup)
+    bpy.utils.unregister_class(LibPropertyGroup)
+    bpy.utils.unregister_class(MeshPropertyGroup)
     del bpy.types.Scene.export_xc_animations_items
     bpy.utils.unregister_class(ExportXC_AddAnimationItem)
     bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)    

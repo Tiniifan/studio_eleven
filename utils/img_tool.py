@@ -57,12 +57,18 @@ def image_to_tile(px, height, width):
                 tiles.append(tile)
                 out += int(len(tiles)-1).to_bytes(2, 'little')
             else:
-                out += int(tiles.index(tile)).to_bytes(2, 'little')
-                
+                out += int(tiles.index(tile)).to_bytes(2, 'little')          
     return out
 
 def decode_image(tile, image_data, image_format, width, height, bit_depth):
     table_value = BytesIO(tile).getvalue()
+    
+    table_value_len = len(table_value)
+
+    if table_value_len % 2 != 0 or table_value_len % 4 != 0:
+        new_table_value_len = (table_value_len // 2) * 2
+        table_value = table_value[:new_table_value_len]   
+    
     tex_value = BytesIO(image_data).getvalue()
 
     table_length = len(table_value)
@@ -105,4 +111,4 @@ def decode_image(tile, image_data, image_format, width, height, bit_depth):
     # Convertir les valeurs de pixels en float et les aplatir
     pixels = [chan / 255.0 for px in pixels for chan in px]
 
-    return pixels, width, height
+    return pixels, width, height, image_format.has_alpha

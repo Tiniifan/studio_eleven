@@ -170,22 +170,22 @@ def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_name
     xpvi += compress_triangle
 
     # Material-------------------------------------------
-    material = zlib.crc32(mesh_name.encode("utf-8")).to_bytes(4, 'little')
-    material += zlib.crc32(material_name.encode("utf-8")).to_bytes(4, 'little')
+    material = zlib.crc32(mesh_name.encode("shift-jis")).to_bytes(4, 'little')
+    material += zlib.crc32(material_name.encode("shift-jis")).to_bytes(4, 'little')
     material += bytes.fromhex(template.material)
     material += int(len(bone_names)).to_bytes(4, 'little')
 
     # Node ------------------------------------------
     node = bytes()
     for name in bone_names:
-        name_bytes = name.encode("utf-8")
+        name_bytes = name.encode("shift-jis")
         node += zlib.crc32(name_bytes).to_bytes(4, 'little')
 
     # Name ------------------------------------------
     xmpr_name = bytes()
-    xmpr_name += mesh_name.encode('utf_8')
+    xmpr_name += mesh_name.encode('shift-jis')
     xmpr_name += int(0).to_bytes(4, 'little')
-    xmpr_name += material_name.encode('utf_8')
+    xmpr_name += material_name.encode('shift-jis')
     xmpr_name += int(0).to_bytes(4, 'little')
 
     # XMPR ------------------------------------------
@@ -201,7 +201,7 @@ def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_name
     xmpr += int(len(node)).to_bytes(4, 'little')
     xmpr += int(84 + len(xpvb) + len(xpvi) + len(material) + len(node)).to_bytes(4, 'little')
     xmpr += int(len(mesh_name) + 1).to_bytes(4, 'little')
-    xmpr += int(84 + len(xpvb) + len(xpvi) + len(material) + len(node) + len(mesh_name) + 2).to_bytes(4, 'little')
+    xmpr += int(84 + len(xpvb) + len(xpvi) + len(material) + len(node) + len(mesh_name) + 4).to_bytes(4, 'little')
     xmpr += int(len(material_name) + 1).to_bytes(4, 'little')
     xmpr += bytes([int(x,0) for x in ["0x58", "0x50", "0x52", "0x4D"] ])
     xmpr += int(20).to_bytes(4, 'little')

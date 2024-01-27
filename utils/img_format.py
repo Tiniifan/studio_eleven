@@ -120,14 +120,11 @@ class RGBA8:
     name = "RGBA8"
     size = 4
     type = 0
+    has_alpha = True
     
     def encode(self, color):
-        return bytes([
-            ((color.a >> 24) & 0xFF),
-            ((color.r >> 16) & 0xFF),
-            ((color.g >> 8) & 0xFF),
-            ((color.b) & 0xFF),
-        ])
+        argb = (color.a << 24) | (color.r << 16) | (color.g << 8) | color.b
+        return bytes([(argb >> 24) & 0xFF, argb & 0xFF, (argb >> 8) & 0xFF, (argb >> 16) & 0xFF])       
        
     def decode(self, data):
         if len(data) < 4:
@@ -140,6 +137,7 @@ class RBGR888:
     name = "RBGR888"
     size = 3
     type = 3
+    has_alpha = False
 
     def encode(self, color):
         return bytes([(color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF])
@@ -159,6 +157,7 @@ class RGB8:
 
 class RGBA4444:
     name = "RGBA4444"
+    has_alpha = True
     
     def encode(self, color):
         val = (((color >> 24) & 0xFF) / 0x11)
@@ -182,6 +181,7 @@ class RGB565:
     name = "RGB565"
     size = 2
     type = 4
+    has_alpha = False
     
     def encode(self, color):
         r = int(color.r >> 3)
@@ -249,6 +249,7 @@ class L4:
     name = "L4"
     size = 1
     type = 14
+    has_alpha = True
     
     def encode(self, color_a, color_b):
         return bytes([(L8().encode(color_a)[0] / 0x11) & 0xF  | (L8().encode(color_b)[0] / 0x11) << 4])
@@ -271,6 +272,7 @@ class ETC1:
     name = "ETC1"
     size = 3
     type = 27
+    has_alpha = False
 
     def decode(self, data):
         r, g, b = data[0], data[1], data[2]
@@ -280,6 +282,7 @@ class ETC1A4:
     name = "ETC1A4"
     size = 4
     type = 28
+    has_alpha = True
 
     def decode(self, data):
         r, g, b, a = data[0], data[1], data[2], data[3]

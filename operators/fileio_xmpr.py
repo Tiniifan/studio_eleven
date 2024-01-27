@@ -7,6 +7,7 @@ from bpy.props import StringProperty, EnumProperty
 import bmesh
 
 from math import radians
+from mathutils import Matrix, Quaternion, Vector
 
 from ..formats import xmpr
 from ..templates import templates
@@ -53,6 +54,11 @@ def get_mesh_information(mesh):
     uv_info = {}
     normal_info = {}
     color_info = {}
+    
+    obj_matrix = mesh.matrix_world
+    
+    rotation_angles = (radians(270), radians(0), radians(0))
+    rotation_matrix = Matrix.Rotation(rotation_angles[2], 4, 'Z') @ Matrix.Rotation(rotation_angles[1], 4, 'Y') @ Matrix.Rotation(rotation_angles[0], 4, 'X')
 
     if mesh.data.vertex_colors.active is not None:
         vertex_colors = mesh.data.vertex_colors.active.data
@@ -66,9 +72,21 @@ def get_mesh_information(mesh):
 
         for loop_index in face.loop_indices:
             vertex_index = mesh.data.loops[loop_index].vertex_index
+            
             if vertex_index not in vertices_dict:
                 vertices_dict[vertex_index] = len(vertices_dict)
-                vertices_info[vertices_dict[vertex_index]] = mesh.data.vertices[vertex_index].co
+                
+                co = mesh.data.vertices[vertex_index].co              
+                #co_world = obj_matrix @ co
+                
+                #vertex_matrix = Matrix.Translation(co_world)
+        
+                # Apply the rotation to the vertex
+                #rotated_matrix = rotation_matrix @ vertex_matrix
+        
+                #vertices_info[vertices_dict[vertex_index]] = rotated_matrix.to_translation()
+                vertices_info[vertices_dict[vertex_index]] = co
+                
             indices.append(vertices_dict[vertex_index])
 
             uv = tuple(mesh.data.uv_layers.active.data[loop_index].uv)
@@ -250,6 +268,19 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
         for texture in lib:
             tex_node = mat.node_tree.nodes.new('ShaderNodeTexImage')
             tex_node.image = texture
+            
+            # Check if the texture has an alpha channel
+            if texture.alpha_mode != "NONE":
+                # Enable the use of the alpha channel in the material
+                principled_BSDF.inputs["Alpha"].default_value = 1.0
+
+                # Set the material blend mode to 'BLEND' for alpha blending
+                mat.blend_method = 'BLEND'
+
+                # Connect the alpha output of the texture to the Alpha input of Principled BSDF
+                mat.node_tree.links.new(tex_node.outputs["Alpha"], principled_BSDF.inputs["Alpha"])
+            
+            # Connect the color output of the texture to the Base Color input of Principled BSDF
             mat.node_tree.links.new(tex_node.outputs[0], principled_BSDF.inputs[0])
             
         mesh_obj.data.materials.append(mat)

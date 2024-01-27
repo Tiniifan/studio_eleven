@@ -177,13 +177,15 @@ def fileio_open_xpck(context, filepath):
         # Make images
         for i in range(len(textures_data)):
             if textures_data[i] != None:
-                texture_data, width, height = textures_data[i]
+                texture_data, width, height, has_alpha = textures_data[i]
                 texture_crc32 = res_textures_key[i]
                 texture_name = res_data[res.RESType.Texture][texture_crc32]['name']
 
                 # Create a new image
-                bpy.ops.image.new(name=texture_name, width=width, height=height, alpha=True)
+                bpy.ops.image.new(name=texture_name, width=width, height=height, alpha=has_alpha)
                 image = bpy.data.images[texture_name]
+                if has_alpha == False:
+                    image.alpha_mode = 'NONE'
 
                 # Assign pixel data to the image
                 image.pixels = texture_data
@@ -204,7 +206,7 @@ def fileio_open_xpck(context, filepath):
                     material_textures.append(images[int(material_texture_crc32, 16)])
                                 
             libs[material_name] = material_textures
-            
+       
     # Make meshes
     if len(meshes_data) > 0:
         for i in range(len(meshes_data)):
@@ -219,8 +221,8 @@ def fileio_open_xpck(context, filepath):
             # Get bones
             bones = None
             if res.RESType.Bone in res_data:
-                bones = res_data[res.RESType.Bone]           
-            
+                bones = res_data[res.RESType.Bone]
+                
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib) 
 
@@ -289,49 +291,111 @@ def fileio_open_xpck(context, filepath):
                 
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = [], animation = {}, split_animations = []):
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = []):
     # Make meshes
     xmprs = []
-    if meshes is not []:
+    atrs = []
+    mtrs = []
+    if meshes:
         for mesh in meshes:
             xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.library_name, template))
+            atrs.append(bytes.fromhex("41545243303100000C000000E3010000054080FF0000C0C13C80BF0137F72F406005FFFFF0FFFF56"))
+            mtrs.append(bytes.fromhex("4D545243303000001800000000000000000000000000000041070000350000F001501301801C0340037E04800B5013F043F055F0673079F819FEFE3E5003B08B803F5003F0F023F0B5F0C770D9E8891DA70000004C555443"))
 
     # Make bones
     mbns = []
-    if armature is not []:
+    if armature:
         for bone in armature.pose.bones:
-            mbns.append(mbn.write(bone))
+            mbns.append(mbn.write(armature, bone))
             
     # Make images
     imgcs = []
-    if textures is not []:
-        for texture in textures:
+    if textures:
+        linked_textures = []
+        
+        for texture in textures.values():
+            linked_textures.extend(texture)
+            
+        for texture in linked_textures:
             get_image_format = globals().get(texture.format)
             if get_image_format:
-                imgc.write(bpy.data.images.get(texture.name), get_image_format())
+                imgcs.append(imgc.write(bpy.data.images.get(texture.name), get_image_format()))
             else:
                 operator.report({'ERROR'}, f"Class {texture.format} not found in img_format.")
                 return {'FINISHED'}
                 
     # Make animations
-    mtn = None
+    mtns = []
     minfs = []
-    if animation is not []:
+    if animation:
         animation_name = animation[0]
         animation_format = animation[1]
         
-        mtn = fileio_write_xmtn(context, armature.name, animation_name, animation_format)
+        mtns.append(fileio_write_xmtn(context, armature.name, animation_name, animation_format))
         
         for split_animation in split_animations:
-            minfs.append(minf.write(animation_name, split_animation.name, split_animation.frame_start, split_animation.frame_end))
+            minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.frame_start, split_animation.frame_end))
+
+    files = {}
     
     if mode == "MESH":
-        pass
+        if xmprs:
+            files.update(create_files_dict(".prm", xmprs))
+            
+        if atrs:
+            files.update(create_files_dict(".atr", atrs))
+
+        if mtrs:
+            files.update(create_files_dict(".mtr", mtrs))            
+                        
+        if imgcs:
+            files.update(create_files_dict(".xi", imgcs))            
     elif mode == "ARMATURE":
-        pass
+        if xmprs:
+            files.update(create_files_dict(".prm", xmprs))
+            
+        if atrs:
+            files.update(create_files_dict(".atr", atrs))
+
+        if mtrs:
+            files.update(create_files_dict(".mtr", mtrs)) 
+            
+        if mbns:
+            files.update(create_files_dict(".mbn", mbns))
+            
+        if imgcs:
+            files.update(create_files_dict(".xi", imgcs))
+
+        if mtns:
+            if animation[1] == 'MTN2':
+                files.update(create_files_dict(".mtn2", mtns))
+            elif animation[1] == 'MTN3':
+                files.update(create_files_dict(".mtn3", mtns))
+
+        if minfs:
+            if animation[2] == 'MTNINF':
+                files.update(create_files_dict(".mtninf", minfs))
+            elif animation[2] == 'MTNINF2':
+                files.update(create_files_dict(".mtninf2", minfs))                 
     elif  mode == "ANIMATION":
-        pass
-        
+        if mtns:
+            if animation[1] == 'MTN2':
+                files.update(create_files_dict(".mtn2", mtns))
+            elif animation[1] == 'MTN3':
+                files.update(create_files_dict(".mtn3", mtns))
+
+        if minfs:
+            if animation[2] == 'MTNINF':
+                files.update(create_files_dict(".mtninf", minfs))
+            elif animation[2] == 'MTNINF2':
+                files.update(create_files_dict(".mtninf2", minfs))    
+
+    items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations)
+    files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
+    
+    # Create xpck
+    xpck.pack(files, filepath)
+    
     return {'FINISHED'}
 
 ##########################################
@@ -381,12 +445,6 @@ class AnimationItem(bpy.types.PropertyGroup):
     frame_start: bpy.props.IntProperty()
     frame_end: bpy.props.IntProperty()
     private_index: bpy.props.IntProperty()
-
-# Define a Property Group to store mesh information
-class MeshPropertyGroup(bpy.types.PropertyGroup):
-    checked: bpy.props.BoolProperty(default=False, description="Mesh name")
-    name: bpy.props.StringProperty()
-    library_name: bpy.props.StringProperty()
     
 # Define a Property Group to store texture information
 class TexturePropertyGroup(bpy.types.PropertyGroup):
@@ -403,6 +461,17 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
         ],
         default='RGBA8'
     )
+
+class LibPropertyGroup(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty()
+    textures: bpy.props.CollectionProperty(type=TexturePropertyGroup)
+
+# Define a Property Group to store mesh information
+class MeshPropertyGroup(bpy.types.PropertyGroup):
+    checked: bpy.props.BoolProperty(default=False, description="Mesh name")
+    name: bpy.props.StringProperty()
+    library_index: bpy.props.IntProperty()
+    library_name: bpy.props.StringProperty()
 
 # Define a Property Group to store armature information
 class ExportXC(bpy.types.Operator, ExportHelper):
@@ -431,7 +500,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     )  
 
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
-    texture_properties: bpy.props.CollectionProperty(type=TexturePropertyGroup) 
+    libs: bpy.props.CollectionProperty(type=LibPropertyGroup) 
     
     include_animation: bpy.props.BoolProperty(
         name="Include Animation",
@@ -446,7 +515,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             ('MTN3', "MTN3", "Make MTN3 Animation"),
         ],
         default='MTN2'
-    )    
+    )
+
+    split_animation_format: bpy.props.EnumProperty(
+        name="Format",
+        items=[
+            ('MTNINF', "MTNINF", "Make MTNINF Split Animation"),
+            ('MTNINF2', "MTNINF2", "Make MTNINF2 Split Animation"),
+        ],
+        default='MTNINF'
+    )     
     
     def armature_items_callback(self, context):
         # Get armatures
@@ -481,12 +559,14 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         description="Choose a template",
         items=template_items_callback,
         default=0,
-    )        
+    )
     
     def invoke(self, context, event):
         wm = context.window_manager  
 
+        libs = []
         self.mesh_properties.clear()
+        self.libs.clear()
         context.scene.export_xc_animations_items.clear()
 
         # Get meshes
@@ -495,8 +575,11 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             item = self.mesh_properties.add()
             item.checked = True
             item.name = mesh.name
-            item.library_name = "DefaultLib." + mesh.name
-            
+
+            lib = {}
+            lib['texture_name'] = []
+            lib['mesh_name'] = [mesh.name]
+
             # Get textures from materials
             for material_slot in mesh.material_slots:
                 material = material_slot.material
@@ -505,14 +588,40 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     for node in material.node_tree.nodes:
                         if node.type == 'TEX_IMAGE' and node.image:
                             texture_name = node.image.name
-                            self.texture_properties.add().name = texture_name
+                            lib['texture_name'].append(texture_name)
                 else:
                     # If material doesn't use nodes, try to access the texture from the diffuse shader
                     if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
                         texture = material.texture_slots[0].texture
                         texture_name = texture.name
-                        self.texture_properties.add().name = texture_name
- 
+                        lib['texture_name'].append(texture_name)
+
+            found = False
+            for key, value in enumerate(libs):
+                if value['texture_name'] == lib['texture_name']:
+                    found = True
+                    break
+            
+            if found:
+                libs[key]['mesh_name'].append(mesh.name)
+            else:
+                libs.append(lib)
+
+        for index, value in enumerate(libs):
+            item = self.libs.add()
+            item.name = 'DefaultLib.' + str(index)
+            
+            for texture_name in value['texture_name']:
+                texture = item.textures.add()
+                texture.name = texture_name           
+
+        for mesh_prop in self.mesh_properties:
+            for index, value in enumerate(libs):
+                for mesh_name in value['mesh_name']:
+                    if mesh_prop.name == mesh_name:
+                        mesh_prop.library_index = index
+                        break          
+
         wm.fileselect_add(self)    
         return {'RUNNING_MODAL'}
 
@@ -537,7 +646,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 for mesh_prop in self.mesh_properties:
                     row = mesh_group.row(align=True)
                     row.prop(mesh_prop, "checked", text=mesh_prop.name)
-                    row.prop(mesh_prop, "library_name", text="")
+                    row.prop(self.libs[mesh_prop.library_index], "name", text="", emboss=False)
             elif self.export_option == 'ARMATURE':
                 box.prop(self, "armature_enum", text="Available armatures")
 
@@ -549,58 +658,36 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         if child.type == 'MESH':
                             row = mesh_group.row(align=True)
                             row.prop(self.mesh_properties[child.name], "checked", text=child.name)
-                            row.prop(self.mesh_properties[child.name], "library_name", text="")
+                            row.prop(self.libs[self.mesh_properties[child.name].library_index], "name", text="", emboss=False)
         elif self.export_tab_control == 'TEXTURE':
-            texture_box = layout.box()
-
+            meshes_props =[]
+            lib_indexes = []
+ 
             if self.export_option == 'MESH':
-                # Display textures for selected mesh objects
+                meshes_props = [mesh_prop for mesh_prop in self.mesh_properties if mesh_prop.checked]
+            elif self.export_option == 'ARMATURE':
+                armature = bpy.data.objects.get(self.armature_enum)
+                armature_meshes = [child for child in armature.children if child.type == 'MESH']
                 for mesh_prop in self.mesh_properties:
                     if mesh_prop.checked:
                         mesh = bpy.data.objects.get(mesh_prop.name)
-                        if mesh and mesh.type == 'MESH':
-                            for material_slot in mesh.material_slots:
-                                material = material_slot.material
-                                if material.use_nodes:
-                                    # If material uses nodes, iterate over the material nodes
-                                    for node in material.node_tree.nodes:
-                                        if node.type == 'TEX_IMAGE' and node.image:
-                                            texture_name = node.image.name
-                                            row = texture_box.row(align=True)
-                                            row.label(text=self.texture_properties[texture_name].name)
-                                            row.prop(self.texture_properties[texture_name], "format")
-                                else:
-                                    # If material doesn't use nodes, try to access the texture from the diffuse shader
-                                    if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                                        texture_name = material.texture_slots[0].texture.name
-                                        row = texture_box.row(align=True)
-                                        row.label(text=self.texture_properties[texture_name].name)
-                                        row.prop(self.texture_properties[texture_name], "format")
-
-            elif self.export_option == 'ARMATURE':
-                armature = bpy.data.objects.get(self.armature_enum)
-                if armature and armature.type == 'ARMATURE':
-                    # Display textures for meshes associated with the selected armature
-                    for child in armature.children:
-                        if child.type == 'MESH':
-                            for material_slot in child.material_slots:
-                                material = material_slot.material
-                                if material.use_nodes:
-                                    # If material uses nodes, iterate over the material nodes
-                                    #print(child, len(child.material_slots), len(material.node_tree.nodes))
-                                    for node in material.node_tree.nodes:
-                                        if node.type == 'TEX_IMAGE' and node.image:
-                                            texture_name = node.image.name
-                                            row = texture_box.row(align=True)
-                                            row.label(text=self.texture_properties[texture_name].name)
-                                            row.prop(self.texture_properties[texture_name], "format")
-                                else:
-                                    # If material doesn't use nodes, try to access the texture from the diffuse shader
-                                    if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                                        texture_name = material.texture_slots[0].texture.name
-                                        row = texture_box.row(align=True)
-                                        row.label(text=self.texture_properties[texture_name].name)
-                                        row.prop(self.texture_properties[texture_name], "format")
+                        if mesh and mesh in armature_meshes:     
+                            meshes_props.append(mesh_prop)
+                            
+            for mesh_prop in meshes_props:
+                if mesh_prop.checked:
+                    index = mesh_prop.library_index
+                    if index not in lib_indexes:
+                        lib = self.libs[index]
+                        box = layout.box()
+                        box.prop(lib, "name", text="")
+                                                    
+                        for texture in lib.textures:
+                            row = box.row(align=True)
+                            row.label(text=texture.name)
+                            row.prop(texture, "format", text="")
+                            
+                        lib_indexes.append(index)
         elif self.export_tab_control == 'ANIMATION':
             anim_box = layout.box()
 
@@ -619,6 +706,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         anim_settings_box.prop(self, "animation_name", text="Animation Name", icon='ANIM')
                         
                         anim_settings_box.prop(self, "animation_format", text="Animations Format")
+                        
+                        anim_settings_box.prop(self, "split_animation_format", text="Split Animations Format")
 
                         # Group for manual item addition/removal
                         items_box = anim_settings_box.box()
@@ -635,13 +724,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             remove_button.index = index  # Pass the index to the operator
                             
                         # Button to add an item
-                        items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')                            
-
+                        items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
+                else:
+                    anim_box.label(text="No animation")
+            else:
+                anim_box.label(text="Not available on mesh mode")
 
     def execute(self, context):
         armature = None
         meshes = []
-        textures = []
+        textures = {}
         animation = []
         split_animations = []
         
@@ -659,34 +751,29 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         # Check if the mesh is associated with the armature
                         mesh = bpy.data.objects.get(mesh_prop.name)
                         if mesh and mesh in armature_meshes:
+                            index = mesh_prop.library_index
+                            lib = self.libs[index]
+                            
                             # Check if the mesh has a library_name
-                            if not mesh_prop.library_name:
+                            if not lib.name:
                                 self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a library_name!")
                                 return {'FINISHED'}
                             else:
+                                mesh_prop.library_name = lib.name
+                                
+                                textures[lib.name] = []                              
                                 meshes.append(mesh_prop)
                                 
                                 # Get texture
-                                for material_slot in mesh.material_slots:
-                                    material = material_slot.material
-                                    if material.use_nodes:
-                                        # If material uses nodes, iterate over the material nodes
-                                        for node in material.node_tree.nodes:
-                                            if node.type == 'TEX_IMAGE' and node.image:
-                                                texture_name = node.image.name
-                                                textures.append(self.texture_properties[texture_name])
-                                    else:
-                                        # If material doesn't use nodes, try to access the texture from the diffuse shader
-                                        if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                                            texture_name = material.texture_slots[0].texture.name   
-                                            textures.append(self.texture_properties[texture_name])
+                                for texture in lib.textures:
+                                    textures[lib.name].append(texture)
 
                 if self.include_animation:
                     if not self.animation_name:
                         self.report({'ERROR'}, "The animation doesn't have name")
                         return {'FINISHED'}
                         
-                    animation = [self.animation_name ,self.animation_format]
+                    animation = [self.animation_name, self.animation_format, self.split_animation_format]
                     
                     for sub_animation in context.scene.export_xc_animations_items:
                         if not sub_animation.name:
@@ -694,7 +781,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             return {'FINISHED'}
                         else:
                             split_animations.append(sub_animation)
-            
+
         return fileio_write_xpck(self, context, self.filepath, templates.get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations)
         
 class ImportXC(bpy.types.Operator, ImportHelper):

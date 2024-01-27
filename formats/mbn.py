@@ -2,7 +2,9 @@ import io
 import math
 import zlib
 import struct
-from mathutils import Quaternion, Matrix
+
+from math import radians
+from mathutils import Matrix, Quaternion, Vector
 
 def matrix_to_bytes(matrix):
     out = bytes()
@@ -57,33 +59,36 @@ def open(data):
 
     return bone
 
-def write(bone):
+def write(armature, pose_bone):
     out = bytes()
     
-    out += zlib.crc32(bone.name.encode("utf-8")).to_bytes(4, 'little')
-    if (bone.parent is not None):
-        out +=  zlib.crc32(bone.parent.name.encode("utf-8")).to_bytes(4, 'little')
+    rotation_angles = (radians(270), radians(0), radians(0))
+    rotation_matrix = Matrix.Rotation(rotation_angles[2], 4, 'Z') @ Matrix.Rotation(rotation_angles[1], 4, 'Y') @ Matrix.Rotation(rotation_angles[0], 4, 'X')    
+        
+    # get bone matrix relative to bone_parent           
+    parent = pose_bone.parent	
+    while parent:
+        if parent.bone.use_deform:
+            break
+        parent = parent.parent   
+
+    pose_matrix = pose_bone.matrix
+    if parent:
+        parent_matrix = parent.matrix
+        pose_matrix = parent_matrix.inverted() @ pose_matrix	
+
+    out += zlib.crc32(pose_bone.name.encode("utf-8")).to_bytes(4, 'little')
+    if (parent is not None):
+        out +=  zlib.crc32(parent.name.encode("utf-8")).to_bytes(4, 'little')
     else:
         out += int(0).to_bytes(4, 'little')
         
     out += int(4).to_bytes(4, 'little')
     
-    # get bone matrix relative to bone_parent           
-    parent = bone.parent	
-    while parent:
-        if parent.bone.use_deform:
-            break
-        parent = parent.parent   
-                        
-    pose_matrix = bone.matrix
-    if parent:
-        parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix
-    
     out += matrix_to_bytes(pose_matrix)
     
-    tail = bone.tail
-    head = bone.head
+    tail = pose_bone.tail
+    head = pose_bone.head
     relative_transform = Matrix.Translation(head - tail)
     head_transform = pose_matrix @ relative_transform
     tail_transform = Matrix.Translation(tail)

@@ -36,7 +36,13 @@ class IMGCSwizzle:
         return self._zorderTrans.Get(point.Y * self.Width + point.X)
 
     def get_point_sequence(self):
-        # Generate the swizzled point sequence for each point in the image
-        for i in range(self.Width * self.Height):
-            point = Point(i % self.Width, i // self.Height)
-            yield self.Get(point)
+        stride_width = self.Width
+        stride_height = self.Height
+
+        for i in range(stride_width * stride_height):
+            point = Point(i % stride_width, i // stride_width)
+            if self._zorderTrans is not None:
+                point_index = point.Y * self.Width + point.X
+                point = self._zorderTrans.Get(point_index)
+
+            yield point

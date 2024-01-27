@@ -197,6 +197,7 @@ def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
     scene = context.scene
     
     armature = bpy.data.objects[armature_name]
+    armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
     
     bpy.ops.object.mode_set(mode='POSE')
@@ -254,9 +255,9 @@ def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
                 transform_scale[bone_index] = {}
             transform_scale[bone_index][frame] = scale             
 
-    if animation_format == '.mtn2':
+    if animation_format == '.mtn2' or animation_format == 'MTN2':
         return xmtn.write_mtn2(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
-    elif animation_format == '.mtn3':
+    elif animation_format == '.mtn3'  or animation_format == 'MTN3':
         return xmtn.write_mtn3(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)
         
 ##########################################
