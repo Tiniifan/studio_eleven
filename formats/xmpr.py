@@ -324,10 +324,12 @@ def parse_index_buffer(buffer):
         raise NotImplementedError("Primitive Type not implemented")
 
     if primitive_type == 0:
+        # Triangle indice
         offset = 0
-        for _ in range(face_count // 2):
-            indices.append(struct.unpack("<H", buffer[offset:offset + 2])[0])
-            offset += 2
+        for i in range(0, face_count, 3):
+            indices_tuple = struct.unpack("<HHH", buffer[offset:offset + 6])
+            indices.append(indices_tuple)
+            offset += 6
     elif primitive_type == 2:
         # Triangle strip
         offset = 0
