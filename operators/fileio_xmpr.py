@@ -56,9 +56,6 @@ def get_mesh_information(mesh):
     color_info = {}
     
     obj_matrix = mesh.matrix_world
-    
-    rotation_angles = (radians(270), radians(0), radians(0))
-    rotation_matrix = Matrix.Rotation(rotation_angles[2], 4, 'Z') @ Matrix.Rotation(rotation_angles[1], 4, 'Y') @ Matrix.Rotation(rotation_angles[0], 4, 'X')
 
     if mesh.data.vertex_colors.active is not None:
         vertex_colors = mesh.data.vertex_colors.active.data
@@ -75,18 +72,8 @@ def get_mesh_information(mesh):
             
             if vertex_index not in vertices_dict:
                 vertices_dict[vertex_index] = len(vertices_dict)
-                
-                co = mesh.data.vertices[vertex_index].co              
-                #co_world = obj_matrix @ co
-                
-                #vertex_matrix = Matrix.Translation(co_world)
-        
-                # Apply the rotation to the vertex
-                #rotated_matrix = rotation_matrix @ vertex_matrix
-        
-                #vertices_info[vertices_dict[vertex_index]] = rotated_matrix.to_translation()
-                vertices_info[vertices_dict[vertex_index]] = co
-                
+                vertices_info[vertices_dict[vertex_index]] = mesh.data.vertices[vertex_index].co 
+
             indices.append(vertices_dict[vertex_index])
 
             uv = tuple(mesh.data.uv_layers.active.data[loop_index].uv)

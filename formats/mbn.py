@@ -6,7 +6,14 @@ import struct
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-def matrix_to_bytes(matrix):
+def matrix_vector_multiply(matrix, vector):
+    result = [0, 0, 0]
+    for i in range(3):
+        for j in range(3):
+            result[i] += matrix[i][j] * vector[j]
+    return result
+
+def matrix_to_bytes(matrix, head, tail):
     out = bytes()
     
     # Location
@@ -17,15 +24,40 @@ def matrix_to_bytes(matrix):
     # Rotation
     rotation = matrix.to_quaternion()
     matrix_rotation = rotation.to_matrix().to_3x3()
+    matrix_rotation_ordered = [[0,0,0], [0,0,0], [0,0,0]]
     for i in range(3):
         for j in range(3):
-            out += bytearray(struct.pack("f", matrix_rotation[i][j]))
+            out += bytearray(struct.pack("f", matrix_rotation[j][i]))
+            matrix_rotation_ordered[i][j] = matrix_rotation[j][i]
      
     # Scale 
     scale = matrix.to_scale()
     for i in range(3):
         out += bytearray(struct.pack("f", scale[i]))
-        
+
+    # Rotation 2
+    rotation = matrix.to_quaternion()
+    matrix_rotation = rotation.to_matrix().to_3x3()
+    for i in range(3):
+        for j in range(3):
+            out += bytearray(struct.pack("f", matrix_rotation[i][j]))
+
+    rotated_head = matrix_vector_multiply(matrix_rotation_ordered, head)
+    for i in range(3):
+        out += bytearray(struct.pack("f", rotated_head[i]*-1))
+
+    for j in range(3):
+        out += bytearray(struct.pack("f", matrix_rotation[j][0]))
+
+    for i in range(3):
+        out += bytearray(struct.pack("f", tail[i]-head[i]))
+
+    for j in range(3):
+        out += bytearray(struct.pack("f", matrix_rotation[j][2]))
+
+    for i in range(3):
+        out += bytearray(struct.pack("f", head[i]))
+  
     return out    
     
 def open(data):
@@ -60,10 +92,7 @@ def open(data):
     return bone
 
 def write(armature, pose_bone):
-    out = bytes()
-    
-    rotation_angles = (radians(270), radians(0), radians(0))
-    rotation_matrix = Matrix.Rotation(rotation_angles[2], 4, 'Z') @ Matrix.Rotation(rotation_angles[1], 4, 'Y') @ Matrix.Rotation(rotation_angles[0], 4, 'X')    
+    out = bytes()  
         
     # get bone matrix relative to bone_parent           
     parent = pose_bone.parent	
@@ -75,7 +104,7 @@ def write(armature, pose_bone):
     pose_matrix = pose_bone.matrix
     if parent:
         parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix	
+        pose_matrix = parent_matrix.inverted() @ pose_matrix
 
     out += zlib.crc32(pose_bone.name.encode("utf-8")).to_bytes(4, 'little')
     if (parent is not None):
@@ -85,18 +114,6 @@ def write(armature, pose_bone):
         
     out += int(4).to_bytes(4, 'little')
     
-    out += matrix_to_bytes(pose_matrix)
-    
-    tail = pose_bone.tail
-    head = pose_bone.head
-    relative_transform = Matrix.Translation(head - tail)
-    head_transform = pose_matrix @ relative_transform
-    tail_transform = Matrix.Translation(tail)
-    tail_to_head_transform = tail_transform.inverted() @ head_transform
-
-    out += b''.join([struct.pack('f', item) for sublist in head_transform.to_3x3() for item in sublist])
-    out += struct.pack('fff', *[-x for x in head])
-    out += b''.join([struct.pack('f', item) for sublist in head_transform.to_3x3() for item in sublist])
-    out += struct.pack('fff', *head)
+    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail)
     
     return out
