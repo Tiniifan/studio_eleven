@@ -299,8 +299,8 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     if meshes:
         for mesh in meshes:
             xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.library_name, template))
-            atrs.append(bytes.fromhex("41545243303100000C000000E3010000054080FF0000C0C13C80BF0137F72F406005FFFFF0FFFF56"))
-            mtrs.append(bytes.fromhex("4D545243303000001800000000000000000000000000000041070000350000F001501301801C0340037E04800B5013F043F055F0673079F819FEFE3E5003B08B803F5003F0F023F0B5F0C770D9E8891DA70000004C555443"))
+            atrs.append(bytes.fromhex(template.atr))
+            mtrs.append(bytes.fromhex(template.mtr))
 
     # Make bones
     mbns = []
@@ -579,6 +579,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             lib = {}
             lib['texture_name'] = []
             lib['mesh_name'] = [mesh.name]
+            used_texture = []
 
             # Get textures from materials
             for material_slot in mesh.material_slots:
@@ -587,14 +588,18 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     # If material uses nodes, iterate over the material nodes
                     for node in material.node_tree.nodes:
                         if node.type == 'TEX_IMAGE' and node.image:
-                            texture_name = node.image.name
-                            lib['texture_name'].append(texture_name)
+                            if node.image not in used_texture:
+                                texture_name = node.image.name
+                                lib['texture_name'].append(texture_name)
+                                used_texture.append(node.image)
                 else:
                     # If material doesn't use nodes, try to access the texture from the diffuse shader
                     if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                        texture = material.texture_slots[0].texture
-                        texture_name = texture.name
-                        lib['texture_name'].append(texture_name)
+                        if texture not in used_texture:
+                            texture = material.texture_slots[0].texture
+                            texture_name = texture.name
+                            lib['texture_name'].append(texture_name)
+                            used_texture.append(texture)
 
             found = False
             for key, value in enumerate(libs):
