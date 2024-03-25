@@ -17,12 +17,8 @@ The addon is written in Python and the project is Open Source, everyone can cont
 
 **Available Template**
 
-- Yo-Kai Watch 1
-- Yo-Kai Watch 2
-- Yo-Kai Watch 3
-- Inazuma Eleven Go 
-- Inazuma Eleven Go Chrono Stone
-- Inazuma Eleven Go Galaxy
+- Yo-Kai Watch (YKW1/YKW2/YKW3/YKWB/YKWB2)
+- Inazuma Eleven Go (IEGOCS/IEGOGALAXY)
 
 **Special Thanks**  
 
