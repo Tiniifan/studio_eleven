@@ -6,6 +6,9 @@ import struct
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
+def scientific_float_to_float(float_scientifique):
+    return float("{:.4f}".format(float_scientifique))
+
 def matrix_vector_multiply(matrix, vector):
     result = [0, 0, 0]
     for i in range(3):
@@ -13,50 +16,57 @@ def matrix_vector_multiply(matrix, vector):
             result[i] += matrix[i][j] * vector[j]
     return result
 
-def matrix_to_bytes(matrix, head, tail):
+def matrix_to_bytes(matrix, head, tail, local_matrix):
     out = bytes()
     
     # Location
     location = matrix.to_translation()
     for i in range(3):
-        out += bytearray(struct.pack("f", location[i]))
+        out += bytearray(struct.pack("f", scientific_float_to_float(location[i])))
     
     # Rotation
     rotation = matrix.to_quaternion()
     matrix_rotation = rotation.to_matrix().to_3x3()
-    matrix_rotation_ordered = [[0,0,0], [0,0,0], [0,0,0]]
     for i in range(3):
         for j in range(3):
-            out += bytearray(struct.pack("f", matrix_rotation[j][i]))
-            matrix_rotation_ordered[i][j] = matrix_rotation[j][i]
+            out += bytearray(struct.pack("f", float(matrix_rotation[j][i])))
      
     # Scale 
     scale = matrix.to_scale()
     for i in range(3):
-        out += bytearray(struct.pack("f", scale[i]))
+        out += bytearray(struct.pack("f", float(scale[i])))
 
-    # Rotation 2
-    rotation = matrix.to_quaternion()
-    matrix_rotation = rotation.to_matrix().to_3x3()
+    # Local rotation
+    local_rotation = local_matrix.to_quaternion()
+    local_matrix_rotation = local_rotation.to_matrix().to_3x3()
+    local_matrix_rotation_ordered = [[0,0,0], [0,0,0], [0,0,0]]
     for i in range(3):
         for j in range(3):
-            out += bytearray(struct.pack("f", matrix_rotation[i][j]))
+            out += bytearray(struct.pack("f", scientific_float_to_float(local_matrix_rotation[i][j])))
+            local_matrix_rotation_ordered[i][j] = local_matrix_rotation[j][i]            
+    
+    print(rotation, local_matrix_rotation)        
 
-    rotated_head = matrix_vector_multiply(matrix_rotation_ordered, head)
+    # Location rotation * head
+    rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, head)
     for i in range(3):
-        out += bytearray(struct.pack("f", rotated_head[i]*-1))
+        out += bytearray(struct.pack("f", float(rotated_head[i]*-1)))
 
+    # First column of local matrix rotation
     for j in range(3):
-        out += bytearray(struct.pack("f", matrix_rotation[j][0]))
+        out += bytearray(struct.pack("f", float(local_matrix_rotation[j][0])))
 
+    # Tail - head
     for i in range(3):
-        out += bytearray(struct.pack("f", tail[i]-head[i]))
+        out += bytearray(struct.pack("f", float(tail[i]-head[i])))
 
+    # Last column of local matrix rotation
     for j in range(3):
-        out += bytearray(struct.pack("f", matrix_rotation[j][2]))
+        out += bytearray(struct.pack("f", float(local_matrix_rotation[j][2])))
 
+    # Head
     for i in range(3):
-        out += bytearray(struct.pack("f", head[i]))
+        out += bytearray(struct.pack("f", float(head[i])))
   
     return out    
     
@@ -102,6 +112,7 @@ def write(armature, pose_bone):
         parent = parent.parent   
 
     pose_matrix = pose_bone.matrix
+    local_matrix = pose_matrix
     if parent:
         parent_matrix = parent.matrix
         pose_matrix = parent_matrix.inverted() @ pose_matrix
@@ -114,6 +125,8 @@ def write(armature, pose_bone):
         
     out += int(4).to_bytes(4, 'little')
     
-    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail)
+    print(pose_bone.name, zlib.crc32(pose_bone.name.encode("utf-8")).to_bytes(4, 'little').hex())
+    
+    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
     
     return out
