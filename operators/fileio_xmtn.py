@@ -106,11 +106,7 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
     
     if armature_obj.animation_data:
         armature_obj.animation_data_clear()
-
-    armature_obj.animation_data_create()
-    action = bpy.data.actions.new(name=animation_name)
-    armature_obj.animation_data.action = action
-    
+        
     scene.frame_start = 0
     scene.frame_end = frame_count
     
@@ -118,6 +114,9 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
     bpy.ops.pose.select_all(action='SELECT')
     bpy.ops.pose.transforms_clear()    
     
+    # Create a new action here outside the loop
+    action = bpy.data.actions.new(name=animation_name)
+
     for frame in range(frame_count):
         if frame in animation_data:
             for bone_hash, transformation in animation_data[frame].items():
@@ -161,6 +160,10 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
                         if not fcurve:
                             fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
                         fcurve.keyframe_points.insert(frame, scale[i])
+
+    # Assign the created action to the armature object
+    armature_obj.animation_data_create()
+    armature_obj.animation_data.action = action
               
 def fileio_open_xmtn(operator, context, filepath):
     animation_name = ""

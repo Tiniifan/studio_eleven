@@ -44,7 +44,7 @@ def read_string(byte_io):
             break
         bytes_list.append(byte)
     
-    name = b''.join(bytes_list).decode('utf-8')
+    name = b''.join(bytes_list).decode('shift-jis')
     return name
 
 def read_frame_data(data, offset, count, data_offset, bone_name_hashes, track, node):

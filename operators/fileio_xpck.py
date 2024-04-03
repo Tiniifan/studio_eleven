@@ -240,22 +240,23 @@ def fileio_open_xpck(context, filepath):
         animations = []
         max_frames = 0
         
+        # Iterate over main animations
         for animation_data in animations_data:
             animation = {}
             animation['main'] = animation_data
             animation['split'] = []
-            
+
+            # Find split animations for the current main animation
             for animation_split_data in animations_split_data:
-                for animation_data in animations_data:
-                    animation_crc32 = zlib.crc32(animation_data['name'].encode("shift-jis"))
-                    if animation_crc32 == animation_split_data['anim_crc32']:
-                        split_animation = {}
-                        
-                        split_animation['name'] = animation_data['name'] + '_' + animation_split_data['split_anim_name']
-                        split_animation['frame_start'] = animation_split_data['frame_start']
-                        split_animation['frame_end'] = animation_split_data['frame_end']
-                        
-                        animation['split'].append(split_animation)
+                animation_crc32 = zlib.crc32(animation_data['name'].encode("shift-jis"))
+                if animation_crc32 == animation_split_data['anim_crc32']:
+                    split_animation = {}
+                    
+                    split_animation['name'] = animation_data['name'] + '_' + animation_split_data['split_anim_name']
+                    split_animation['frame_start'] = animation_split_data['frame_start']
+                    split_animation['frame_end'] = animation_split_data['frame_end']
+                    
+                    animation['split'].append(split_animation)
 
             animations.append(animation)
                         
@@ -275,11 +276,11 @@ def fileio_open_xpck(context, filepath):
             for split_animation in animation['split']:
                 new_animation = bpy.data.actions.new(name=split_animation['name'])
 
-                # Spécifiez le début et la fin de la nouvelle animation
+                # Specify the start and end of the new animation
                 start_frame = split_animation['frame_start']
                 end_frame = split_animation['frame_end']
 
-                # Copiez les keyframes de l'action existante dans la nouvelle action
+                # Copy the keyframes of the existing action into the new action
                 for fcurve in bpy.data.actions.get(name).fcurves:
                     new_fcurve = new_animation.fcurves.new(data_path=fcurve.data_path, index=fcurve.array_index)
                     for keyframe in fcurve.keyframe_points:
