@@ -1,56 +1,24 @@
-def decompress(instream):
-    inLength = len(instream)
-    ReadBytes = 0
-    p = 0
+import io
 
-    p += 1
+def decompress(input_bytes):
+    input_stream = io.BytesIO(input_bytes)
+    compression_header = input_stream.read(4)
+    
+    if compression_header[0] & 0x7 != 0x4:
+        raise Exception("Not Level5 Rle")
 
-    decompressed_size = (instream[p] & 0xFF) | ((instream[p + 1] & 0xFF) << 8) | ((instream[p + 2] & 0xFF) << 16)
-    p += 3
-    ReadBytes += 4;
+    decompressed_size = (compression_header[0] >> 3) | (compression_header[1] << 5) | \
+                        (compression_header[2] << 13) | (compression_header[3] << 21)
 
-    if decompressed_size == 0:
-        decompressed_size = decompressed_size | ((instream[p + 3] & 0xFF) << 24)
-        ReadBytes += 4
-
-    outstream = bytearray()
-
-    while p < inLength:
-
-        flag = instream[p]
-        p += 1
-        ReadBytes += 1
-
-        compressed = (flag & 0x80) > 0
-        length = flag & 0x7F
-        
-        if compressed:
-            length += 3
+    output_stream = bytearray()
+    while len(output_stream) < decompressed_size:
+        flag = input_stream.read(1)[0]
+        if flag & 0x80:
+            repetitions = (flag & 0x7F) + 3
+            output_stream.extend(bytes([input_stream.read(1)[0]]) * repetitions)
         else:
-            length += 1
-            
-        if compressed:
-            data = instream[p]
-            p += 1
-            ReadBytes += 1
-            
-            for i in range(length):
-                outstream.append(data)
-        else:
-            tryReadLength = length
-            if ReadBytes + length > inLength:
-                tryReadLength = int(inLength - ReadBytes)
+            length = flag + 1
+            uncompressed_data = input_stream.read(length)
+            output_stream.extend(uncompressed_data)
                 
-            ReadBytes += tryReadLength
-            
-            for i in range(tryReadLength):
-                outstream.append(instream[p] & 0xFF)
-                p += 1
-
-    if ReadBytes < inLength:
-        pass
-
-    return bytes(outstream)
-
-# Example usage:
-# result = decompress(byte_array_input)
+    return bytes(output_stream)
