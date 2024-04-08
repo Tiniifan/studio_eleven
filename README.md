@@ -18,6 +18,7 @@ The addon is written in Python and the project is Open Source, everyone can cont
 **Available Template**
 
 - Inazuma Eleven Go (IEGOCS/IEGOGALAXY)
+- Yo-Kai Watch (YKW1/YKW2/YKW3/YKWB/YKWB2)
 
 **Special Thanks**  
 
