@@ -10,7 +10,7 @@ def open_file(filepath):
     with open(filepath, 'rb') as file:
         cam_values = {
             'location': {},
-            'rotation': {},
+            'aim': {},
             'focal_length': {},
             'panning': {}
         }
@@ -23,7 +23,7 @@ def open_file(filepath):
         hash_name = header2[0]
 
         cam_values['location'] = read_cam_data(file, 3)
-        cam_values['rotation'] = read_cam_data(file, 3)
+        cam_values['aim'] = read_cam_data(file, 3)
         cam_values['focal_length'] = read_cam_data(file, 1)
         cam_values['panning'] = read_cam_data(file, 1)
 
