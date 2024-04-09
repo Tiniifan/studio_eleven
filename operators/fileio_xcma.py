@@ -21,31 +21,33 @@ def fileio_open_xcma(context, filepath):
     
     camera = bpy.data.cameras.new(f"Camera_Frame_{hash_name}")
     camera_obj = bpy.data.objects.new(f"Camera_Frame_{hash_name}", camera)
-    camera_obj.rotation_mode = 'QUATERNION'
+    aim = bpy.data.meshes.new(f"Aim_Frame{hash_name}")
+    aim_obj = bpy.data.objects.new(f"Aim_Frame{hash_name}", aim)
     scene.collection.objects.link(camera_obj)
+    scene.collection.objects.link(aim_obj)
+
 
     for frame, location in cam_values['location'].items():
         bpy.context.scene.frame_set(frame)
 
-        camera_obj.location = [location[0], location[2]*-1, location[1]]
+        camera_obj.location = [location[0], location[2], location[1]]
 
         camera_obj.keyframe_insert(data_path="location")
-        
-    max_key = max(list(cam_values['rotation'].keys()))
-    last_rotation = [cam_values['rotation'][0][2]*-1, cam_values['rotation'][0][1], cam_values['rotation'][0][0]]
-    for i in range(max_key):
+
+    #max_key = max(list(cam_values['aim'].keys()))
+    #last_aim = [cam_values['aim'][0][2]*-1, cam_values['aim'][0][1], cam_values['aim'][0][0]]
+    for i in cam_values['aim']:
         bpy.context.scene.frame_set(i)
         
-        if i in cam_values['rotation']:
-            x = cam_values['rotation'][i][2]*-1
-            y = cam_values['rotation'][i][1]
-            z = cam_values['rotation'][i][0]
+        if i in cam_values['aim']:
+            x = cam_values['aim'][i][0]
+            y = cam_values['aim'][i][2]
+            z = cam_values['aim'][i][1]
             print(x**2 + y**2 + z**2)
-            w = math.sqrt(1 - x**2 - y**2 - z**2)
-            last_rotation = [w, x, y, z]
+            last_aim = [x, y, z]
             
-        camera_obj.rotation_quaternion = last_rotation
-        camera_obj.keyframe_insert(data_path="rotation_quaternion")  
+        aim_obj.location = last_aim
+        aim_obj.keyframe_insert(data_path="location")
 
     return {'FINISHED'}
       
