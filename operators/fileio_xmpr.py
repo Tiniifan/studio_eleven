@@ -10,7 +10,7 @@ from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
 from ..formats import xmpr
-from ..templates import templates
+from ..templates import *
 
 ##########################################
 # XMPR Function
@@ -319,7 +319,7 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         return items
         
     def template_items_callback(self, context):
-        my_templates = templates.get_templates()
+        my_templates = get_templates()
         items = [(template.name, template.name, "") for template in my_templates]
         return items        
         
@@ -357,7 +357,7 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
             return {'FINISHED'}               
             
         with open(self.filepath, "wb") as f:
-            f.write(fileio_write_xmpr(context, self.mesh_name, self.library_name, templates.get_template_by_name(self.template_name)))
+            f.write(fileio_write_xmpr(context, self.mesh_name, self.library_name, get_template_by_name(self.template_name)))
             return {'FINISHED'}  
 
 class ImportXMPR(bpy.types.Operator, ImportHelper):

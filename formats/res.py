@@ -188,7 +188,7 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
                 
                 items[RESType(_type)][object_crc32] = material_dict               
 
-def make_library(meshes = [], armature = None, textures = {}, animation = {}, split_animations = []):
+def make_library(meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline_name = ""):
     items = {}
     string_table = bytes()
         
@@ -268,7 +268,12 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
                 items[RESType.mtninf] = split_animation_name
             elif animation[2] == 'MTNINF2':
                 items[RESType.mtninf2] = split_animation_name            
-            
+
+    if outline_name:
+        name = outline_name.encode("shift-jis")
+        string_table += name + int(0).to_bytes(1, 'little')
+        items[RESType.Shading] = [name]
+        
     return items, string_table
                 
 def write_res(magic, items, string_table):

@@ -4,7 +4,6 @@ import numpy as np
 import math
 import mathutils
 import zlib
-import struct
 from ..animation import *
 from ..compression import *
 

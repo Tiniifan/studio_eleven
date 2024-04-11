@@ -6,35 +6,36 @@ from ..compression import lz10, compressor
 # XCMA Open Function
 ##########################################
 
-def open_file(filepath):
-    with open(filepath, 'rb') as file:
-        cam_values = {
-            'location': {},
-            'aim': {},
-            'focal_length': {},
-            'panning': {}
-        }
+def open(data):
+    data_stream = io.BytesIO(data)
+    
+    cam_values = {
+        'location': {},
+        'aim': {},
+        'focal_length': {},
+        'roll': {}
+    }
 
-        # Read headers
-        header1 = read_struct(file, 'IiiiIIII')
-        header2 = read_struct(file, 'Iiiiiiiiii')
-        header3 = read_struct(file, 'III6h16h8B')
+    # Read headers
+    header1 = read_struct(data_stream, 'IiiiIIII')
+    header2 = read_struct(data_stream, 'Iiiiiiiiii')
+    header3 = read_struct(data_stream, 'III6h16h8B')
 
-        hash_name = header2[0]
+    hash_name = header2[0]
 
-        cam_values['location'] = read_cam_data(file, 3)
-        cam_values['aim'] = read_cam_data(file, 3)
-        cam_values['focal_length'] = read_cam_data(file, 1)
-        cam_values['panning'] = read_cam_data(file, 1)
+    cam_values['location'] = read_cam_data(data_stream, 3)
+    cam_values['aim'] = read_cam_data(data_stream, 3)
+    cam_values['focal_length'] = read_cam_data(data_stream, 1)
+    cam_values['roll'] = read_cam_data(data_stream, 1)
 
     return hash_name, cam_values
 
-def read_cam_data(file, values_count):
+def read_cam_data(data_stream, values_count):
     cam_values = {}
 
-    cam_header = read_struct(file, 'iiii')
+    cam_header = read_struct(data_stream, 'iiii')
 
-    with io.BytesIO(compressor.decompress(bytes(file.read(cam_header[3] - cam_header[0])))) as cam_data_stream:
+    with io.BytesIO(compressor.decompress(data_stream.read(cam_header[3] - cam_header[0]))) as cam_data_stream:
         unk1 = struct.unpack('B', cam_data_stream.read(1))[0]
         unk2 = struct.unpack('B', cam_data_stream.read(1))[0]
         frames_count = struct.unpack('B', cam_data_stream.read(1))[0]
@@ -56,9 +57,9 @@ def read_cam_data(file, values_count):
     return cam_values
 
 
-def read_struct(file, format):
+def read_struct(data_stream, format):
     size = struct.calcsize(format)
-    data = file.read(size)
+    data = data_stream.read(size)
     return struct.unpack(format, data)
     
 ##########################################

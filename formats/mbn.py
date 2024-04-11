@@ -43,9 +43,7 @@ def matrix_to_bytes(matrix, head, tail, local_matrix):
     for i in range(3):
         for j in range(3):
             out += bytearray(struct.pack("f", scientific_float_to_float(local_matrix_rotation[i][j])))
-            local_matrix_rotation_ordered[i][j] = local_matrix_rotation[j][i]            
-    
-    print(rotation, local_matrix_rotation)        
+            local_matrix_rotation_ordered[i][j] = local_matrix_rotation[j][i]                    
 
     # Location rotation * head
     rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, head)
@@ -124,8 +122,6 @@ def write(armature, pose_bone):
         out += int(0).to_bytes(4, 'little')
         
     out += int(4).to_bytes(4, 'little')
-    
-    print(pose_bone.name, zlib.crc32(pose_bone.name.encode("utf-8")).to_bytes(4, 'little').hex())
     
     out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
     

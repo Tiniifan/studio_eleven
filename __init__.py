@@ -2,6 +2,7 @@ import bpy
 import pip
 
 from .operators import *
+from .controls import *
 
 # Only for Debug Mod (Press F8 to reload blender addon) 
 if "fileio_xcma" in locals():
@@ -44,8 +45,8 @@ class Level5_Menu_Export(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator(ExportXMTN.bl_idname, text="Animation (XMTN)", icon="POSE_HLT")
-        layout.operator(ExportXPRM.bl_idname, text="Mesh (XPRM)", icon="POSE_HLT")
-        layout.operator(ExportXC.bl_idname, text="Model (XPCK)", icon="POSE_HLT")
+        layout.operator(ExportXPRM.bl_idname, text="Mesh (XPRM)", icon="MESH_DATA")
+        layout.operator(ExportXC.bl_idname, text="Archive (XPCK)", icon="FILE_3D")
         layout.operator(ExportXCMA.bl_idname, text="Camera (XCMA)", icon="OUTLINER_OB_CAMERA")
         
 class Level5_Menu_Import(bpy.types.Menu):
@@ -55,8 +56,8 @@ class Level5_Menu_Import(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator(ImportXMTN.bl_idname, text="Animation (XMTN)", icon="POSE_HLT")
-        layout.operator(ImportXMPR.bl_idname, text="Mesh (XPRM)", icon="POSE_HLT")
-        layout.operator(ImportXC.bl_idname, text="Model (XPCK)", icon="POSE_HLT")  
+        layout.operator(ImportXMPR.bl_idname, text="Mesh (XPRM)", icon="MESH_DATA")
+        layout.operator(ImportXC.bl_idname, text="Archive (XPCK)", icon="FILE_3D")  
         layout.operator(ImportXCMA.bl_idname, text="Camera (XCMA)", icon="OUTLINER_OB_CAMERA")
     
 def draw_menu_export(self, context):
@@ -72,6 +73,7 @@ def register():
     bpy.utils.register_class(TexturePropertyGroup)
     bpy.utils.register_class(LibPropertyGroup)
     bpy.utils.register_class(MeshPropertyGroup)
+    bpy.utils.register_class(CameraPropertyGroup)
     bpy.types.Scene.export_xc_animations_items = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.utils.register_class(ExportXMTN)
     bpy.utils.register_class(ExportXC)
@@ -98,6 +100,7 @@ def unregister():
     bpy.utils.unregister_class(TexturePropertyGroup)
     bpy.utils.unregister_class(LibPropertyGroup)
     bpy.utils.unregister_class(MeshPropertyGroup)
+    bpy.utils.unregister_class(CameraPropertyGroup)
     del bpy.types.Scene.export_xc_animations_items
     bpy.utils.unregister_class(ExportXC_AddAnimationItem)
     bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)    

@@ -32,7 +32,6 @@ def write_minf1(animation_name, split_animation_name, frame_start, frame_end):
     out += bytes([int(x,0) for x in ["0x4D", "0x49", "0x4E", "0x46"] ])
     out += int(0).to_bytes(4, 'little')
     out += int(0).to_bytes(4, 'little')
-    out += int(0).to_bytes(4, 'little')
     out += int(28).to_bytes(4, 'little')
     out += int(0).to_bytes(4, 'little')
     out += int(96).to_bytes(4, 'little')
@@ -47,6 +46,7 @@ def write_minf1(animation_name, split_animation_name, frame_start, frame_end):
     out += split_animation_name_encode.ljust(36, b'\x00')
     
     out += zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')
+    out += int(0).to_bytes(4, 'little')
     
     out += int(frame_start).to_bytes(4, 'little')
     out += int(frame_end).to_bytes(4, 'little')

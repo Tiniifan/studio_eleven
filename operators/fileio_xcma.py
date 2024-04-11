@@ -6,51 +6,68 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty, CollectionProperty
 
 from ..formats import xcma
+from ..controls import CameraElevenObject
 
 ##########################################
 # XPCK Function
 ##########################################
 
-def fileio_write_xcma(context, filepath, hash_names, cam_values):     
-    return {'FINISHED'}
+def get_first_frame(camera):
+    location_data = camera.animation_data.action.fcurves.find('location', index=0)  # Assumant que vous
+    
+    if location_data is None:
+        return None
+    
+    for point in location_data.keyframe_points:
+        if point.co[1] != location_data.keyframe_points[0].co[1]:
+            return int(point.co[0])
+    
+    return None
+
+def get_last_frame(cam_values):
+    max_location = max(list(cam_values['location'].keys()))
+    max_aim = max(list(cam_values['aim'].keys()))
+    max_roll = max(list(cam_values['roll'].keys()))
+    max_focal_length = max(list(cam_values['focal_length'].keys()))
+    return max(max_location, max_aim, max_roll, max_focal_length)
+
+def create_camera(frame_start, hash_name, cam_values):
+    scene = bpy.context.scene
+    scene.render.resolution_x = 400
+    scene.render.resolution_y = 240
+    
+    level5_camera = CameraElevenObject.create(hash_name, [0, 0, 0])
+    
+    for frame, location in cam_values['location'].items():
+        bpy.context.scene.frame_set(frame_start + frame)
+        level5_camera.camera_obj.location = [location[0], location[2]*-1, location[1]]
+        level5_camera.camera_obj.keyframe_insert(data_path="location")
+            
+    for frame, focal_length in cam_values['focal_length'].items():
+        bpy.context.scene.frame_set(frame_start + frame)       
+        level5_camera.camera_obj.data.lens = 33 + focal_length
+        level5_camera.camera_obj.data.keyframe_insert(data_path="lens")
+
+    for frame, roll in cam_values['roll'].items():
+        bpy.context.scene.frame_set(frame_start + frame)       
+        level5_camera.camera_obj.rotation_euler = (0, 0, math.radians(roll))
+        level5_camera.camera_obj.keyframe_insert(data_path="rotation_euler", index=2)       
+
+    for frame, location in cam_values['aim'].items():
+        bpy.context.scene.frame_set(frame_start +frame)       
+        level5_camera.target_obj.location = [location[0], location[2]*-1, location[1]]
+        level5_camera.target_obj.keyframe_insert(data_path="location")    
 
 def fileio_open_xcma(context, filepath):
-    scene = bpy.context.scene
-    
-    hash_name, cam_values = xcma.open_file(filepath)
-    
-    camera = bpy.data.cameras.new(f"Camera_Frame_{hash_name}")
-    camera_obj = bpy.data.objects.new(f"Camera_Frame_{hash_name}", camera)
-    aim = bpy.data.meshes.new(f"Aim_Frame{hash_name}")
-    aim_obj = bpy.data.objects.new(f"Aim_Frame{hash_name}", aim)
-    scene.collection.objects.link(camera_obj)
-    scene.collection.objects.link(aim_obj)
-
-
-    for frame, location in cam_values['location'].items():
-        bpy.context.scene.frame_set(frame)
-
-        camera_obj.location = [location[0], location[2], location[1]]
-
-        camera_obj.keyframe_insert(data_path="location")
-
-    #max_key = max(list(cam_values['aim'].keys()))
-    #last_aim = [cam_values['aim'][0][2]*-1, cam_values['aim'][0][1], cam_values['aim'][0][0]]
-    for i in cam_values['aim']:
-        bpy.context.scene.frame_set(i)
-        
-        if i in cam_values['aim']:
-            x = cam_values['aim'][i][0]
-            y = cam_values['aim'][i][2]
-            z = cam_values['aim'][i][1]
-            print(x**2 + y**2 + z**2)
-            last_aim = [x, y, z]
-            
-        aim_obj.location = last_aim
-        aim_obj.keyframe_insert(data_path="location")
+    with open(filepath, 'rb') as file:    
+        hash_name, cam_values = xcma.open(file.read())
+        create_camera(0, hash_name, cam_values)
 
     return {'FINISHED'}
-      
+    
+def fileio_write_xcma(context, filepath, hash_names, cam_values):     
+    return {'FINISHED'}
+          
 ##########################################
 # Register class
 ##########################################
