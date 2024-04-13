@@ -1,21 +1,22 @@
-# Level-5 Blender Addon (Python)
+# Studio Eleven
 ___________________________________________________________________________
 **Disclaimer**
 
-I'm not affiliated with Level-5, I'm a fan who wants to know how level 5 files work.  
+I'm not affiliated with Level-5, I'm a fan who wants to know how Level-5 files work.  
 
 **What is the project**
 
-Level-5 Blender Addon is a project to create an addon that can import and export some Level-5 files on Blender.
+Studio Eleven is a project to create an addon that can import and export some Level-5 files on Blender.  
 The addon is written in Python and the project is Open Source, everyone can contribute.
 
 **Supported File**
 
 - XMTN (Animation)
 - XPRM (Mesh)
-- XPCK (Model Archive)
+- XPCK (Archive) 
+- XCMA (Camera) (Only for Inazuma Eleven games)
 
-**Available Template**
+**Available Template for export**
 
 - Inazuma Eleven Go (IEGOCS/IEGOGALAXY)
 - Yo-Kai Watch (YKW1/YKW2/YKW3/YKWB/YKWB2)
@@ -31,7 +32,7 @@ also the project couldn't have been done without the logic that I could learn by
 **How to Install**
 
 To install it you have to do:  
-- download the latest version [here](https://github.com/Tiniifan/Level-5-blender-addon/releases/latest)
+- download the latest version [here](https://github.com/Tiniifan/studio_eleven/releases/latest)
 - wait the download process
 - now open Blender and on Blender click on "edit", "Preference", "Add-on", "install" and select the .zip you have downloaded
 - don't forget to enable the addon!
