@@ -27,7 +27,7 @@ def write(cameras):
     out = bytes()  
     
     # header
-    out += int("0x58434D54", 16).to_bytes(4, 'little')
+    out += int("0x544D4358", 16).to_bytes(4, 'little')
     out += int(8).to_bytes(2, 'little')
     out += int(len(cameras)).to_bytes(2, 'little')
 

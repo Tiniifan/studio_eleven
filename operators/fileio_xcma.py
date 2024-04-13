@@ -115,7 +115,7 @@ def fileio_write_xcma(context, animation_name, camera, target):
                 if idx == 0 or idx == num_keyframes - 1:
                     cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
                     cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
-                    cam_values['roll'][frame-first_frame] = camera.rotation_euler.z * 180 / math.pi
+                    cam_values['roll'][frame-first_frame] = math.degrees(camera.rotation_euler[2])
                 else:
                     if 'location' in fcurve.data_path:
                         cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
@@ -124,7 +124,7 @@ def fileio_write_xcma(context, animation_name, camera, target):
                         cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
                         
                     if 'rotation_euler' in fcurve.data_path:
-                        cam_values['roll'][frame-first_frame] = camera.rotation_euler.z * 180 / math.pi
+                        cam_values['roll'][frame-first_frame] = math.degrees(camera.rotation_euler[2])
 
     # Process target animation
     target_animation = target.animation_data
@@ -141,7 +141,11 @@ def fileio_write_xcma(context, animation_name, camera, target):
                 else:
                     if 'location' in fcurve.data_path:
                         cam_values['aim'][frame-first_frame] = [target.location.x, target.location.z, target.location.y*-1]
-                            
+
+    # Sort keyframes
+    for key in cam_values:
+        cam_values[key] = dict(sorted(cam_values[key].items()))
+
     return xcma.write(animation_name, cam_values)
          
 ##########################################
