@@ -18,6 +18,13 @@ class CameraElevenObject(bpy.types.Camera):
     # Function to create the object
     @classmethod
     def create(cls, hash_name, location):
+        # Get the current scene
+        scene = bpy.context.scene
+        
+        # Set render resolution
+        scene.render.resolution_x = 400
+        scene.render.resolution_y = 240
+        
         # Create the CameraEleven object
         camera_eleven = bpy.data.objects.new("CameraEleven", None)
         camera_eleven.name = f"CameraEleven_{hash_name}"
@@ -38,6 +45,7 @@ class CameraElevenObject(bpy.types.Camera):
         bpy.ops.object.camera_add(location=location)
         camera_obj = bpy.context.object
         camera_obj.name = f"Camera_{hash_name}"
+        camera_obj.data.lens = 33
         cls.camera_obj = camera_obj
         camera_obj.parent = camera_eleven
 
@@ -106,7 +114,7 @@ class MESH_OT_primitive_CameraEleven_add(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        CameraElevenObject.create(context.scene.cursor.location)
+        CameraElevenObject.create("000", context.scene.cursor.location)
         return {'FINISHED'}
 
 # Register the classes
