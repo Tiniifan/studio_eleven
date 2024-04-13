@@ -22,3 +22,18 @@ def open(data):
         data.seek(data.tell() + 4)
         
     return camera_hashes
+    
+def write(cameras):
+    out = bytes()  
+    
+    # header
+    out += int("0x58434D54", 16).to_bytes(4, 'little')
+    out += int(8).to_bytes(2, 'little')
+    out += int(len(cameras)).to_bytes(2, 'little')
+
+    for camera_object in cameras:
+        animation_name = camera_object[0]
+        out += zlib.crc32(animation_name.encode("utf-8")).to_bytes(4, 'little')
+        out += int(0).to_bytes(4, 'little')
+        
+    return lz10.compress(out)

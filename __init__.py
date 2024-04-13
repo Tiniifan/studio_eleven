@@ -26,39 +26,39 @@ if "fileio_xpck" in locals():
     importlib.reload(minf)
 
 bl_info = {
-    "name": "Level 5 Lib For Blender",
+    "name": "Studio Eleven",
     "category": "Import-Export",
     "description": "Support some Level 5 files for Blender",
     "author": "Tinifan",
     "version": (1, 1, 0),
     "blender": (2, 80, 2),
-    "location": "File > Import-Export > Level 5", 
+    "location": "File > Import-Export > Studio Eleven", 
     "warning": "",
     "doc_url": "",
     "support": 'COMMUNITY',
 }
 
 class Level5_Menu_Export(bpy.types.Menu):
-    bl_label = "Level 5"
+    bl_label = "Studio Eleven (.mtn, .prm, .xc, .cmr2)"
     bl_idname = "TOPBAR_MT_file_level5_export"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(ExportXMTN.bl_idname, text="Animation (XMTN)", icon="POSE_HLT")
-        layout.operator(ExportXPRM.bl_idname, text="Mesh (XPRM)", icon="MESH_DATA")
-        layout.operator(ExportXC.bl_idname, text="Archive (XPCK)", icon="FILE_3D")
-        layout.operator(ExportXCMA.bl_idname, text="Camera (XCMA)", icon="OUTLINER_OB_CAMERA")
+        layout.operator(ExportXMTN.bl_idname, text="Animation (xmtn)", icon="POSE_HLT")
+        layout.operator(ExportXPRM.bl_idname, text="Mesh (xprm)", icon="MESH_DATA")
+        layout.operator(ExportXC.bl_idname, text="Archive (xpck)", icon="FILE_3D")
+        layout.operator(ExportXCMA.bl_idname, text="Camera (xcma)", icon="OUTLINER_OB_CAMERA")
         
 class Level5_Menu_Import(bpy.types.Menu):
-    bl_label = "Level 5"
+    bl_label = "Studio Eleven (.mtn, .prm, .xc, .cmr2)"
     bl_idname = "TOPBAR_MT_file_level5_import"
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(ImportXMTN.bl_idname, text="Animation (XMTN)", icon="POSE_HLT")
-        layout.operator(ImportXMPR.bl_idname, text="Mesh (XPRM)", icon="MESH_DATA")
-        layout.operator(ImportXC.bl_idname, text="Archive (XPCK)", icon="FILE_3D")  
-        layout.operator(ImportXCMA.bl_idname, text="Camera (XCMA)", icon="OUTLINER_OB_CAMERA")
+        layout.operator(ImportXMTN.bl_idname, text="Animation (xmtn)", icon="POSE_HLT")
+        layout.operator(ImportXMPR.bl_idname, text="Mesh (xprm)", icon="MESH_DATA")
+        layout.operator(ImportXC.bl_idname, text="Archive (xpck)", icon="FILE_3D")  
+        layout.operator(ImportXCMA.bl_idname, text="Camera (xcma)", icon="OUTLINER_OB_CAMERA")
     
 def draw_menu_export(self, context):
     self.layout.menu(Level5_Menu_Export.bl_idname)

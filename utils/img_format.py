@@ -88,6 +88,7 @@ class RGBA4:
     name = "RGBA4"
     size = 2
     type = 1
+    has_alpha = True
     
     def encode(self, color):
         r = color.r >> 4

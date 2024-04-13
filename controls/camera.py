@@ -20,7 +20,7 @@ class CameraElevenObject(bpy.types.Camera):
     def create(cls, hash_name, location):
         # Create the CameraEleven object
         camera_eleven = bpy.data.objects.new("CameraEleven", None)
-        camera_eleven.name = f"CameraEleven_{hex(hash_name)}"
+        camera_eleven.name = f"CameraEleven_{hash_name}"
         camera_eleven.location = location
         
         # Make the CameraEleven object invisible
@@ -30,14 +30,14 @@ class CameraElevenObject(bpy.types.Camera):
         # Create the "Target" mesh object
         bpy.ops.object.empty_add(type='PLAIN_AXES', location=location)
         target_obj = bpy.context.object
-        target_obj.name = f"Target_{hex(hash_name)}"
+        target_obj.name = f"Target_{hash_name}"
         cls.target_obj = target_obj
         target_obj.parent = camera_eleven
 
         # Create the "Camera" camera object
         bpy.ops.object.camera_add(location=location)
         camera_obj = bpy.context.object
-        camera_obj.name = f"Camera_{hex(hash_name)}"
+        camera_obj.name = f"Camera_{hash_name}"
         cls.camera_obj = camera_obj
         camera_obj.parent = camera_eleven
 

@@ -5,15 +5,9 @@ import struct
 from ..compression import *
 
 def calculate_f1_f2(file_count):
-    if file_count < 256:
-        f1 = file_count
-        f2 = 2 ** (int(math.log2(file_count)))
-        f2 = int(f2)
-    else:
-        f1 = file_count & 0xFF
-        f2 = (file_count >> 8) & 0xFF
-    
-    return (f2 << 8) | f1
+    fc1 = file_count & 0xFF
+    fc2 = (file_count >> 8) & 0xF
+    return (fc2 << 8) | fc1
 
 def fill(data):
     remainder = len(data) % 16
@@ -37,48 +31,54 @@ def fill_to_multiple_of_16(arr, pos):
 def open_file(file_item):
     files = {}
     
-    with open(file_item, 'rb') as file:
-        data = file.read()
-        header = struct.unpack("4s", data[:4])[0].decode()
-        if header != "XPCK":
-            raise Exception("File header error")
-
-        file_count = struct.unpack("<H", data[4:6])[0] & 0xFFF
-        file_info_offset = struct.unpack("<H", data[6:8])[0] * 4
-        file_table_offset = struct.unpack("<H", data[8:10])[0] * 4
-        data_offset = struct.unpack("<H", data[10:12])[0] * 4
-        filename_table_size = struct.unpack("<H", data[14:16])[0] * 4
-
-        hash_to_data = {}
-        for i in range(file_count):
-            name_crc = struct.unpack("<I", data[file_info_offset + i * 12 : file_info_offset + i * 12 + 4])[0]
-            offset = struct.unpack("<H", data[file_info_offset + i * 12 + 6 : file_info_offset + i * 12 + 8])[0]
-            size = struct.unpack("<H", data[file_info_offset + i * 12 + 8 : file_info_offset + i * 12 + 10])[0]
-            offset_ext = struct.unpack("<B", data[file_info_offset + i * 12 + 10 : file_info_offset + i * 12 + 11])[0]
-            size_ext = struct.unpack("<B", data[file_info_offset + i * 12 + 11 : file_info_offset + i * 12 + 12])[0]
-
-            offset |= offset_ext << 16
-            size |= size_ext << 16
-            offset = offset * 4 + data_offset
-
-            file_data = data[offset : offset + size]
-
-            hash_to_data[name_crc] = file_data
-
-        name_table = data[file_table_offset : file_table_offset + filename_table_size]
-        name_table = compressor.decompress(name_table)
-
-        pos = 0
-        for i in range(file_count):
-            name_length = name_table.find(b'\x00', pos)
-            name = name_table[pos:name_length].decode("utf-8")
-            pos = name_length + 1
+    if isinstance(file_item, str):  # If the input is a filename
+        with open(file_item, 'rb') as file:
+            data = file.read()
+    elif isinstance(file_item, (bytearray, bytes)):  # If the input is a bytearray
+        data = bytes(file_item)
+    else:
+        raise ValueError("Unsupported input type. Please provide a filename or a bytearray.")
     
-            crc = zlib.crc32(name.encode("utf-8"))
-            if crc in hash_to_data:
-                files[name] = hash_to_data[crc]
-            else:
-                print("Couldn't find", name, hex(crc))
+    header = struct.unpack("4s", data[:4])[0].decode()
+    if header != "XPCK":
+        raise Exception("File header error")
+
+    file_count = struct.unpack("<H", data[4:6])[0] & 0xFFF
+    file_info_offset = struct.unpack("<H", data[6:8])[0] * 4
+    file_table_offset = struct.unpack("<H", data[8:10])[0] * 4
+    data_offset = struct.unpack("<H", data[10:12])[0] * 4
+    filename_table_size = struct.unpack("<H", data[14:16])[0] * 4
+
+    hash_to_data = {}
+    for i in range(file_count):
+        name_crc = struct.unpack("<I", data[file_info_offset + i * 12 : file_info_offset + i * 12 + 4])[0]
+        offset = struct.unpack("<H", data[file_info_offset + i * 12 + 6 : file_info_offset + i * 12 + 8])[0]
+        size = struct.unpack("<H", data[file_info_offset + i * 12 + 8 : file_info_offset + i * 12 + 10])[0]
+        offset_ext = struct.unpack("<B", data[file_info_offset + i * 12 + 10 : file_info_offset + i * 12 + 11])[0]
+        size_ext = struct.unpack("<B", data[file_info_offset + i * 12 + 11 : file_info_offset + i * 12 + 12])[0]
+
+        offset |= offset_ext << 16
+        size |= size_ext << 16
+        offset = offset * 4 + data_offset
+
+        file_data = data[offset : offset + size]
+
+        hash_to_data[name_crc] = file_data
+
+    name_table = data[file_table_offset : file_table_offset + filename_table_size]
+    name_table = compressor.decompress(name_table)
+
+    pos = 0
+    for i in range(file_count):
+        name_length = name_table.find(b'\x00', pos)
+        name = name_table[pos:name_length].decode("utf-8")
+        pos = name_length + 1
+
+        crc = zlib.crc32(name.encode("utf-8"))
+        if crc in hash_to_data:
+            files[name] = hash_to_data[crc]
+        else:
+            print("Couldn't find", name, hex(crc))
 
     return files
 

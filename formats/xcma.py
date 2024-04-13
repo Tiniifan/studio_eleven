@@ -1,5 +1,7 @@
 import io
+import zlib
 import struct
+
 from ..compression import lz10, compressor
 
 ##########################################
@@ -56,7 +58,6 @@ def read_cam_data(data_stream, values_count):
             
     return cam_values
 
-
 def read_struct(data_stream, format):
     size = struct.calcsize(format)
     data = data_stream.read(size)
@@ -76,37 +77,55 @@ def get_frame_count(cam_values):
 
     return max_key
 
-def save(file_name, hash_name, cam_values):
-    with open(file_name, 'wb') as stream:
-        header1 = struct.pack('IiiiIIII', 0x414D4358, 0x20, 0x18, 0x01, 0x01, 0x01, 0x01, 0x00)
-        header2 = struct.pack('Iiiiiiiii', hash_name, 0x0, get_frame_count(cam_values), 0x02, 0x3F000000, 0x00, 0x0C, 0x1C, 0x50, 0x00)
-        pattern1 = struct.pack('hhhh', 0x0201, 0x0300, 0x00, get_frame_count(cam_values))
-        pattern2 = struct.pack('hhhh', 0x0201, 0x0100, 0x00, get_frame_count(cam_values))
-        header3 = struct.pack('IIIhhhhhhhhh8B', 0xC55BEBD1, 0xC55BEBD1, 0xC55BEBD1, 0x28, 0x30, 0x38, 0x40, 0x48, 0x00, *([pattern1] * 2 + [pattern2] * 2), bytes(8))
+def write(animation_name, cam_values):
+    file_bytes = io.BytesIO()
 
-        stream.write(header1)
-        stream.write(header2)
-        stream.write(header3)
+    hash_name = zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')
+    hash_name_uint = int.from_bytes(hash_name, byteorder='little', signed=False)
+    header1 = struct.pack('IiiiIIII', 0x414D4358, 0x20, 0x18, 0x01, 0x01, 0x01, 0x01, 0x00)
+    header2 = struct.pack('Iiiiiiiiii', hash_name_uint, 0x0, get_frame_count(cam_values), 0x02, 0x3F000000, 0x00, 0x0C, 0x1C, 0x50, 0x00)
+    pattern1 = struct.pack('hhhh', 0x0201, 0x0300, 0x00, get_frame_count(cam_values))
+    pattern2 = struct.pack('hhhh', 0x0201, 0x0100, 0x00, get_frame_count(cam_values))
+    pattern1_octets = struct.unpack('4h', pattern1)
+    pattern2_octets = struct.unpack('4h', pattern2)
+    header3 = struct.pack('III6h4h4h4h4h8B',
+                      0xC55BEBD1, 0xC55BEBD1, 0xC55BEBD1,
+                      0x28, 0x30, 0x38, 0x40, 0x48,
+                      0x00,
+                      pattern1_octets[0], pattern1_octets[1], pattern1_octets[2], pattern1_octets[3],
+                      pattern1_octets[0], pattern1_octets[1], pattern1_octets[2], pattern1_octets[3],
+                      pattern2_octets[0], pattern2_octets[1], pattern2_octets[2], pattern2_octets[3],
+                      pattern2_octets[0], pattern2_octets[1], pattern2_octets[2], pattern2_octets[3],
+                      0, 0, 0, 0, 0, 0, 0, 0)
 
-        for i in range(4):
-            cam_data_stream = bytearray()
-            cam_data_start_offset = 0
+    file_bytes.write(header1)
+    file_bytes.write(header2)
+    file_bytes.write(header3)
 
-            cam_data_stream += b'\xFF\xFF' + struct.pack('BBBx', len(cam_values[i]), 0x20)
+    for cam_value in list(cam_values.values()):
+        cam_data_stream = bytearray()
+        cam_data_start_offset = 0
 
-            frames_indexes = [key for key in cam_values[i].keys()]
-            cam_data_stream += struct.pack(f'{len(frames_indexes)}h', *frames_indexes)
+        cam_data_stream += b'\xFF\xFF' + struct.pack('BB', len(cam_value), 0x20)
 
-            # Write alignment
-            alignment = 4 - (len(cam_data_stream) % 4)
-            cam_data_stream += bytes(alignment)
+        frames_indexes = [key for key in cam_value.keys()]
+        cam_data_stream += struct.pack(f'{len(frames_indexes)}h', *frames_indexes)
 
-            cam_data_start_offset = len(cam_data_stream)
+        # Write alignment
+        alignment = 4 - (len(cam_data_stream) % 4)
+        cam_data_stream += bytes(alignment)
 
-            for key in frames_indexes:
-                cam_data_stream += struct.pack(f'{len(cam_values[i][key])}f', *cam_values[i][key])
+        cam_data_start_offset = len(cam_data_stream)
 
-            compressed_cam_data = lz10.compress(bytes(cam_data_stream))
+        for key in frames_indexes:
+            if isinstance(cam_value[key], float):
+                cam_data_stream += struct.pack('f', cam_value[key])
+            else:
+                cam_data_stream += struct.pack(f'{len(cam_value[key])}f', *cam_value[key])
 
-            stream.write(struct.pack('IIBI', 0x10, 0x04, cam_data_start_offset, len(compressed_cam_data) + 0x10))
-            stream.write(compressed_cam_data)
+        compressed_cam_data = lz10.compress(bytes(cam_data_stream))
+
+        file_bytes.write(struct.pack('4i', 0x10, 0x04, cam_data_start_offset, len(compressed_cam_data) + 0x10))
+        file_bytes.write(compressed_cam_data)
+
+    return file_bytes.getvalue()

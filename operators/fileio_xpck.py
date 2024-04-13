@@ -23,6 +23,20 @@ from ..controls import CameraElevenObject
 # XPCK Function
 ##########################################
 
+def find_armature_by_animation(animation_name):
+    # Get armatures
+    armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
+    
+    # Loop through armatures
+    for armature in armatures:
+        # Loop through actions/animations
+        if armature.animation_data and armature.animation_data.action:
+            action = armature.animation_data.action
+            if action.name == animation_name:
+                return armature
+                
+    return None
+
 def create_files_dict(extension, data_list):
     output = {}
     
@@ -67,11 +81,15 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     # Set object mode
     bpy.ops.object.mode_set(mode='OBJECT')
 
-def fileio_open_xpck(context, filepath):
+def fileio_open_xpck(context, filepath, file_name = ""):
     scene = bpy.context.scene
     
     archive = xpck.open_file(filepath)
-    archive_name = os.path.splitext(os.path.basename(filepath))[0]
+    
+    if file_name == '':
+        archive_name = os.path.splitext(os.path.basename(filepath))[0]
+    else:
+        archive_name = file_name
     
     libs = {}
     armature = None
@@ -86,14 +104,18 @@ def fileio_open_xpck(context, filepath):
     animations_split_data = []
     
     for file_name in archive:
-        if file_name.endswith('.prm'):
+        if file_name.endswith('.xc'):
+            try:
+                fileio_open_xpck(context, archive[file_name], file_name)
+            except Exception as e:
+                pass
+        elif file_name.endswith('.prm'):
             meshes_data.append(xmpr.open(archive[file_name]))
         elif file_name.endswith('.mbn'):
             bones_data.append(mbn.open(archive[file_name]))    
         elif file_name.endswith('.xi'):
             textures_data.append(imgc.open(archive[file_name]))
         elif file_name.endswith('.cmr2'):
-            print(file_name)
             hash_name, cam_values = xcma.open(archive[file_name])
             camera_data[hash_name] = cam_values
         elif file_name.endswith('.mtn2'):
@@ -133,7 +155,10 @@ def fileio_open_xpck(context, filepath):
             res_data = res.open_res(data=archive[file_name])
         elif file_name == 'CMR.bin':
             camera_hashes = xcmt.open(data=archive[file_name])
-          
+
+    if bpy.context.scene.objects:
+        bpy.ops.object.mode_set(mode='OBJECT')
+    
     # Make amature
     if len(bones_data) > 0 and res_data is not None:
         # Create a new amature
@@ -303,11 +328,14 @@ def fileio_open_xpck(context, filepath):
     # Make camera
     if len(camera_data) > 0 and len(camera_hashes):
         frame = 0
+        index = 0
         for camera_hash in camera_hashes:
             if camera_hash in camera_data:
                 camera_values = camera_data[camera_hash]
-                create_camera(frame, camera_hash, camera_values)
+                camera_name = archive_name.split('_')[0] + "_" + str(index).rjust(3, '0')
+                create_camera(frame, camera_name, camera_values)
                 frame += get_last_frame(camera_values)
+                index += 1
             
     return {'FINISHED'}
 
@@ -351,7 +379,11 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         animation_name = animation[0]
         animation_format = animation[1]
         
-        mtns.append(fileio_write_xmtn(context, armature.name, animation_name, animation_format))
+        if armature == None:
+            found_armature = find_armature_by_animation(animation[3])
+            mtns.append(fileio_write_xmtn(context, found_armature.name, animation_name, animation_format))
+        else:
+            mtns.append(fileio_write_xmtn(context, armature.name, animation_name, animation_format))
         
         for split_animation in split_animations:
             minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.frame_start, split_animation.frame_end))
@@ -367,14 +399,16 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         #xcsls.append(xcsl.write("#new_000", meshes_name, outline[0], outline[1], template.outline_mesh_data, template.cmb1, template.cmb2))
 
     # Make cameras
-    xcma = []
+    xcmas = []
+    cameras_sorted = []
     if cameras:
         # Sort camera by frame start
-        for cam_object in cameras:
+        cameras_sorted = sorted(cameras, key=lambda cam_object: get_first_frame(cam_object[1]))
+        for cam_object in cameras_sorted:
             animation_name = cam_object[0]
-            camera_eleven = cam_object[1]
-            camera, target = CameraElevenObject.get_camera_and_target(camera_eleven)
-            print(get_first_frame(camera))
+            camera = cam_object[1]
+            target = cam_object[2]
+            xcmas.append(fileio_write_xcma(context, animation_name, camera, target))
     
     files = {}
     
@@ -423,7 +457,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
 
         #if xcsls:
             #files.update(create_files_dict(".sil", xcsls)) 
-    elif  mode == "ANIMATION":
+    elif mode == "ANIMATION":
+        if mbns:
+            files.update(create_files_dict(".mbn", mbns))
+            
         if mtns:
             if animation[1] == 'MTN2':
                 files.update(create_files_dict(".mtn2", mtns))
@@ -434,10 +471,17 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             if animation[2] == 'MTNINF':
                 files.update(create_files_dict(".mtninf", minfs))
             elif animation[2] == 'MTNINF2':
-                files.update(create_files_dict(".mtninf2", minfs))    
+                files.update(create_files_dict(".mtninf2", minfs))
+    elif mode == "CAMERA":
+        if xcmas:
+            files.update(create_files_dict(".cmr2", xcmas))
 
-    items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "")
-    files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
+    if mode != "CAMERA":
+        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "")
+        files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
+    else:
+        if len(cameras_sorted) > 0:
+            files["CMR.bin"] = xcmt.write(cameras_sorted)
     
     # Create xpck
     xpck.pack(files, filepath)
@@ -501,9 +545,9 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
             ('RGBA4', "RGBA4", "Make RGBA4 image"),
             ('RBGR888', "RBGR888", "Make RBGR888 image"),
             ('RGB565', "RGB565", "Make RGB565 image"),
-            ('L4', "L4", "Make L4 image"),
-            ('ETC1', "ETC1", "Make ETC1 image"),
-            ('ETC1A4', "ETC1A4", "Make ETC1A4 image"),
+            #('L4', "L4", "Make L4 image"),
+            #('ETC1', "ETC1", "Make ETC1 image"),
+            #('ETC1A4', "ETC1A4", "Make ETC1A4 image"),
         ],
         default='RGBA8'
     )
@@ -532,7 +576,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".xc"
     filter_glob: StringProperty(
-        default="*.xc;*.xv",
+        default="*.xc;*.xv;*.pck",
         options={'HIDDEN'}
     )
     
@@ -550,6 +594,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         items=[
             ('MESH', "Meshes", "Export multiple meshes"),
             ('ARMATURE', "Armature", "Export one armature"),
+            ('ANIMATION', "Animation", "Export one animation"),
             ('CAMERA', "Cameras", "Export multiple camera"),
         ],
         default='MESH'
@@ -598,12 +643,42 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         name="Armatures",
         items=armature_items_callback,
         default=0
-    )  
+    )   
     
     animation_name: bpy.props.StringProperty(
         name="Animation Name",
         default="animation",
         description="Name of the animation"
+    )
+    
+    def animation_items_callback(self, context):
+        # Get armatures
+        armatures = [obj for obj in bpy.data.objects if obj.type == 'ARMATURE']
+        
+        animation_names = []
+        
+        # Loop through armatures
+        for armature in armatures:
+            if armature.animation_data and armature.animation_data.action:
+                action = armature.animation_data.action
+                animation_names.append((action.name, action.name, ""))
+        
+        if not animation_names:
+            # No animations found, return default or empty list
+            return [("None", "None", "No animations found")]
+        
+        return animation_names
+    
+    animation_enum: EnumProperty(
+        name="Armatures",
+        items=animation_items_callback,
+        default=0
+    )       
+
+    attach_bone: bpy.props.BoolProperty(
+        name="Attach amarture",
+        description="Whether to attach armature or not",
+        default=False
     )
 
     def template_items_callback(self, context):
@@ -665,6 +740,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         libs = []
         self.mesh_properties.clear()
         self.libs.clear()
+        self.camera_properties.clear()
         context.scene.export_xc_animations_items.clear()
 
         # Get meshes
@@ -777,6 +853,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             row = mesh_group.row(align=True)
                             row.prop(self.mesh_properties[child.name], "checked", text=child.name)
                             row.prop(self.libs[self.mesh_properties[child.name].library_index], "name", text="", emboss=False)
+            elif self.export_option == 'ANIMATION':
+                options_box.prop(self, "animation_enum", text="Available animations")
+                options_box.prop(self, "attach_bone", text="Attach armature")
             elif self.export_option == 'CAMERA':
                 camera_group = options_box.box()
                 for camera_prop in self.camera_properties:
@@ -784,7 +863,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     row.prop(camera_prop, "checked", text=camera_prop.name)
                     row.prop(camera_prop, "animation_name", text="")
         elif self.export_tab_control == 'TEXTURE':
-            if self.export_option == 'CAMERA':
+            if self.export_option == 'CAMERA' or self.export_option == 'ANIMATION':
                 texture_box = layout.box()
                 texture_box.label(text="Not available on camera mode")
             else:
@@ -831,10 +910,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         anim_settings_box = anim_box.box()
 
                         # Text field for animation name
-                        anim_settings_box.prop(self, "animation_name", text="Animation Name", icon='ANIM')
-                        
+                        anim_settings_box.prop(self, "animation_name", text="Animation Name", icon='ANIM') 
                         anim_settings_box.prop(self, "animation_format", text="Animations Format")
-                        
                         anim_settings_box.prop(self, "split_animation_format", text="Split Animations Format")
 
                         # Group for manual item addition/removal
@@ -855,6 +932,31 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
                 else:
                     anim_box.label(text="No animation")
+            elif self.export_option == 'ANIMATION':
+                # Group for animation settings
+                anim_settings_box = anim_box.box()
+
+                # Text field for animation name
+                anim_settings_box.prop(self, "animation_name", text="Animation Name", icon='ANIM')             
+                anim_settings_box.prop(self, "animation_format", text="Animations Format")                       
+                anim_settings_box.prop(self, "split_animation_format", text="Split Animations Format")
+
+                # Group for manual item addition/removal
+                items_box = anim_settings_box.box()
+                        
+                # List of items with name, frame start, and frame end
+                for index, item in enumerate(context.scene.export_xc_animations_items):
+                    row = items_box.row(align=True)
+                    row.prop(item, "name", text="Name")
+                    row.prop(item, "frame_start", text="Start Frame")
+                    row.prop(item, "frame_end", text="End Frame")
+                            
+                    # Button to remove selected item
+                    remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
+                    remove_button.index = index  # Pass the index to the operator
+                            
+                # Button to add an item
+                items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')            
             else:
                 if self.export_option == 'MESH':
                     anim_box.label(text="Not available on mesh mode")
@@ -871,7 +973,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         outline = [self.outline_thickness, self.outline_visibility]
         
         if self.export_option == 'MESH':
-            pass
+            self.report({'ERROR'}, f"Mesh export not yet available!")
+            return {'FINISHED'}
         elif self.export_option == 'ARMATURE':
             # Check that all meshes have a library name
             armature = bpy.data.objects.get(self.armature_enum)
@@ -914,7 +1017,31 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             return {'FINISHED'}
                         else:
                             split_animations.append(sub_animation)
+        elif self.export_option == 'ANIMATION':
+            if not self.animation_name:
+                self.report({'ERROR'}, "The animation doesn't have name")
+                return {'FINISHED'}
+                        
+            animation = [self.animation_name, self.animation_format, self.split_animation_format, self.animation_enum]
+                    
+            for sub_animation in context.scene.export_xc_animations_items:
+                if not sub_animation.name:
+                    self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
+                    return {'FINISHED'}
+                else:
+                    split_animations.append(sub_animation)
+
+            if self.attach_bone:
+                find_armature = find_armature_by_animation(self.animation_enum)
+
+                if find_armature == None:
+                    self.report({'ERROR'}, "The armature attached to the animation hasn't been found")
+                    return {'FINISHED'}
+                else:
+                    armature = find_armature
         elif self.export_option == 'CAMERA':
+            camera_animation_names = []
+            
             for camera_prop in self.camera_properties:
                 if camera_prop.checked:
                 # Check if the camera has a animation name
@@ -922,7 +1049,14 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         self.report({'ERROR'}, f"{camera_prop.name}' is checked but doesn't have a animation name!")
                         return {'FINISHED'}
                     else:
-                        cameras.append([camera_prop.animation_name, bpy.data.objects.get(camera_prop.name)])
+                        camera_eleven = bpy.data.objects.get(camera_prop.name)
+                        camera, target = CameraElevenObject.get_camera_and_target(camera_eleven)
+                        cameras.append([camera_prop.animation_name, camera, target])
+                        camera_animation_names.append(camera_prop.animation_name)
+                        
+                if len(set(camera_animation_names)) != len(camera_animation_names):
+                    self.report({'ERROR'}, f"Several cameras have the same animation name")
+                    return {'FINISHED'}
        
         return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras)
         
@@ -932,7 +1066,7 @@ class ImportXC(bpy.types.Operator, ImportHelper):
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".xc"
     filter_glob: StringProperty(
-        default="*.xc;*.xv",
+        default="*.xc;*.xv;*.pck",
         options={'HIDDEN'}
     )
     
