@@ -146,6 +146,7 @@ def get_frame_count(cam_values):
     return max_key
 
 def write(animation_name, camera_speed, cam_values):
+    print(animation_name, "\n", camera_speed, "\n", cam_values)
     file_bytes = io.BytesIO()
 
     hash_name = zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')
@@ -188,6 +189,8 @@ def write(animation_name, camera_speed, cam_values):
         for key in frames_indexes:
             if isinstance(cam_value[key], float):
                 cam_data_stream += struct.pack('f', cam_value[key])
+            elif isinstance(cam_value[key], int):
+                cam_data_stream += struct.pack('f', float(cam_value[key]))
             else:
                 cam_data_stream += struct.pack(f'{len(cam_value[key])}f', *cam_value[key])
 

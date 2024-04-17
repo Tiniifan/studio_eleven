@@ -404,12 +404,13 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     cameras_sorted = []
     if cameras:
         # Sort camera by frame start
-        cameras_sorted = sorted(cameras, key=lambda cam_object: get_first_frame(cam_object[1]))
+        cameras_sorted = sorted(cameras, key=lambda cam_object: get_first_frame(cam_object[2]))
         for cam_object in cameras_sorted:
             animation_name = cam_object[0]
-            camera = cam_object[1]
-            target = cam_object[2]
-            xcmas.append(fileio_write_xcma(context, animation_name, camera, target))
+            speed = cam_object[1]
+            camera = cam_object[2]
+            target = cam_object[3]
+            xcmas.append(fileio_write_xcma(context, animation_name, speed, camera, target))
     
     files = {}
     
@@ -571,6 +572,7 @@ class CameraPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Camera name")
     name: bpy.props.StringProperty()
     animation_name: bpy.props.StringProperty()
+    speed: bpy.props.FloatProperty(default=1.0, min=0.1, precision=2) 
     
 # Define a Property Group to store archive information
 class ArchivePropertyGroup(bpy.types.PropertyGroup):
@@ -820,6 +822,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 item.checked = True
                 item.name = obj.name
                 item.animation_name = ""
+                item.speed = 1.0
 
         # Get archive properties
         for name, value in properties.items():
@@ -880,7 +883,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 for camera_prop in self.camera_properties:
                     row = camera_group.row(align=True)
                     row.prop(camera_prop, "checked", text=camera_prop.name)
-                    row.prop(camera_prop, "animation_name", text="")
+                    row.prop(camera_prop, "animation_name", text="Name")
+                    row.prop(camera_prop, "speed", text="Speed")
         elif self.export_tab_control == 'TEXTURE':
             if self.export_option == 'CAMERA' or self.export_option == 'ANIMATION':
                 texture_box = layout.box()
@@ -1081,7 +1085,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     else:
                         camera_eleven = bpy.data.objects.get(camera_prop.name)
                         camera, target = CameraElevenObject.get_camera_and_target(camera_eleven)
-                        cameras.append([camera_prop.animation_name, camera, target])
+                        cameras.append([camera_prop.animation_name, camera_prop.speed, camera, target])
                         camera_animation_names.append(camera_prop.animation_name)
                         
                 if len(set(camera_animation_names)) != len(camera_animation_names):
