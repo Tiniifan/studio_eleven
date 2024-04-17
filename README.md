@@ -14,7 +14,7 @@ The addon is written in Python and the project is Open Source, everyone can cont
 - XMTN (Animation)
 - XPRM (Mesh)
 - XPCK (Archive) 
-- XCMA (Camera) (Only for Inazuma Eleven games)
+- XCMA (Camera)
 
 **Available Template for export**
 
