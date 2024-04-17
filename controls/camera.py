@@ -45,7 +45,7 @@ class CameraElevenObject(bpy.types.Camera):
         bpy.ops.object.camera_add(location=location)
         camera_obj = bpy.context.object
         camera_obj.name = f"Camera_{hash_name}"
-        camera_obj.data.lens = 33
+        camera_obj.data.lens = 10.33
         cls.camera_obj = camera_obj
         camera_obj.parent = camera_eleven
 

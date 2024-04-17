@@ -33,10 +33,22 @@ def get_first_frame(camera):
 
 def get_last_frame(cam_values):
     # Get the maximum frame number for each camera parameter
-    max_location = max(list(cam_values['location'].keys()))
-    max_aim = max(list(cam_values['aim'].keys()))
-    max_roll = max(list(cam_values['roll'].keys()))
-    max_focal_length = max(list(cam_values['focal_length'].keys()))
+    max_location = 0
+    max_aim = 0
+    max_roll = 0
+    max_focal_length = 0
+    
+    if 'location' in cam_values:
+        max_location = max(list(cam_values['location'].keys()))
+        
+    if 'aim' in cam_values:    
+        max_aim = max(list(cam_values['aim'].keys()))
+        
+    if 'roll' in cam_values:    
+        max_roll = max(list(cam_values['roll'].keys()))
+        
+    if 'focal_length' in cam_values:
+        max_focal_length = max(list(cam_values['focal_length'].keys()))
     
     # Return the maximum frame number among all parameters
     return max(max_location, max_aim, max_roll, max_focal_length)
@@ -53,28 +65,32 @@ def create_camera(frame_start, hash_name, cam_values):
     level5_camera = CameraElevenObject.create(hash_name, [0, 0, 0])
     
     # Set keyframes for camera location
-    for frame, location in cam_values['location'].items():
-        bpy.context.scene.frame_set(frame_start + frame)
-        level5_camera.camera_obj.location = [location[0], location[2]*-1, location[1]]
-        level5_camera.camera_obj.keyframe_insert(data_path="location")
+    if 'location' in cam_values:
+        for frame, location in cam_values['location'].items():
+            bpy.context.scene.frame_set(frame_start + frame)
+            level5_camera.camera_obj.location = [location[0], location[2]*-1, location[1]]
+            level5_camera.camera_obj.keyframe_insert(data_path="location")
             
     # Set keyframes for focal length
-    for frame, focal_length in cam_values['focal_length'].items():
-        bpy.context.scene.frame_set(frame_start + frame)       
-        level5_camera.camera_obj.data.lens = 33 + focal_length
-        level5_camera.camera_obj.data.keyframe_insert(data_path="lens")
+    if 'focal_length' in cam_values:
+        for frame, focal_length in cam_values['focal_length'].items():
+            bpy.context.scene.frame_set(frame_start + frame)       
+            level5_camera.camera_obj.data.lens = 33 + focal_length
+            level5_camera.camera_obj.data.keyframe_insert(data_path="lens")
 
     # Set keyframes for camera roll
-    for frame, roll in cam_values['roll'].items():
-        bpy.context.scene.frame_set(frame_start + frame)       
-        level5_camera.camera_obj.rotation_euler = (0, 0, math.radians(roll))
-        level5_camera.camera_obj.keyframe_insert(data_path="rotation_euler", index=2)       
+    if 'roll' in cam_values:
+        for frame, roll in cam_values['roll'].items():
+            bpy.context.scene.frame_set(frame_start + frame)       
+            level5_camera.camera_obj.rotation_euler = (0, 0, math.radians(roll))
+            level5_camera.camera_obj.keyframe_insert(data_path="rotation_euler", index=2)       
 
     # Set keyframes for target location (aim)
-    for frame, location in cam_values['aim'].items():
-        bpy.context.scene.frame_set(frame_start +frame)       
-        level5_camera.target_obj.location = [location[0], location[2]*-1, location[1]]
-        level5_camera.target_obj.keyframe_insert(data_path="location")  
+    if 'aim' in cam_values:
+        for frame, location in cam_values['aim'].items():
+            bpy.context.scene.frame_set(frame_start +frame)       
+            level5_camera.target_obj.location = [location[0], location[2]*-1, location[1]]
+            level5_camera.target_obj.keyframe_insert(data_path="location")  
 
 def fileio_open_xcma(context, filepath):
     file_name = os.path.splitext(os.path.basename(filepath))[0]
@@ -87,7 +103,7 @@ def fileio_open_xcma(context, filepath):
 
     return {'FINISHED'}
     
-def fileio_write_xcma(context, animation_name, camera, target):
+def fileio_write_xcma(context, animation_name, camera_speed, camera, target):
     # Get the current scene
     scene = context.scene
     
@@ -114,17 +130,17 @@ def fileio_write_xcma(context, animation_name, camera, target):
                 # Check if the keyframe is the first or the last
                 if idx == 0 or idx == num_keyframes - 1:
                     cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
-                    cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
-                    cam_values['roll'][frame-first_frame] = math.degrees(camera.rotation_euler[2])
+                    cam_values['focal_length'][frame-first_frame] = camera.data.lens - 10.33
+                    cam_values['roll'][frame-first_frame] = 0 # No roll support
                 else:
                     if 'location' in fcurve.data_path:
                         cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
                         
                     if 'lens' in fcurve.data_path:
-                        cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
+                        cam_values['focal_length'][frame-first_frame] = camera.data.lens - 10.33
                         
                     if 'rotation_euler' in fcurve.data_path:
-                        cam_values['roll'][frame-first_frame] = math.degrees(camera.rotation_euler[2])
+                        cam_values['roll'][frame-first_frame] = 0 # No roll support
 
     # Process target animation
     target_animation = target.animation_data
@@ -146,7 +162,7 @@ def fileio_write_xcma(context, animation_name, camera, target):
     for key in cam_values:
         cam_values[key] = dict(sorted(cam_values[key].items()))
 
-    return xcma.write(animation_name, cam_values)
+    return xcma.write(animation_name, camera_speed, cam_values)
          
 ##########################################
 # Register class
@@ -176,11 +192,19 @@ class ExportXCMA(bpy.types.Operator, ExportHelper):
         default=0,
     )
     
+    camera_speed: bpy.props.FloatProperty(
+        name="Camera speed",
+        description="Set the camera speed",
+        default=1.0,
+        min=0.1,
+        precision=2
+    )      
+    
     animation_name: StringProperty(
         name="Animation name",
         description="Write a animation name",
         default="",
-    )    
+    )  
 
     def execute(self, context):
         if (self.camera_name == ""):
@@ -194,7 +218,7 @@ class ExportXCMA(bpy.types.Operator, ExportHelper):
         with open(self.filepath, "wb") as f:
             camera_eleven = bpy.data.objects.get(self.camera_name)
             camera, target = CameraElevenObject.get_camera_and_target(camera_eleven)
-            f.write(fileio_write_xcma(context, self.animation_name, camera, target))
+            f.write(fileio_write_xcma(context, self.animation_name, self.camera_speed, camera, target))
             return {'FINISHED'} 
         
 class ImportXCMA(bpy.types.Operator, ImportHelper):

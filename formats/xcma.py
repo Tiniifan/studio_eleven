@@ -5,63 +5,131 @@ import struct
 from ..compression import lz10, compressor
 
 ##########################################
+# XCMA Header Class
+##########################################
+
+class Header:
+    header_format = '12I1f1I'
+    
+    def __init__(self, *args):
+        self.magic = args[0]
+        self.data_offset = args[1]
+        self.data_skip_offset = args[2]
+        self.enable_location = args[3]
+        self.enable_target = args[4]
+        self.enable_focal_length = args[5]
+        self.enable_roll = args[6]
+        self.enable_unk = args[7]
+        self.animation_hash = args[8]
+        self.empty_block1 = args[9]
+        self.frame_count = args[10]
+        self.unk1 = args[11]
+        self.cam_speed = args[12]
+        self.unk1 = args[13]
+        
+class CameraSettingHeader:
+    header_format = '4I'
+    
+    def __init__(self, *args):
+        self.track_length = args[0]
+        self.track_offset = args[1]
+        self.block_length = args[2]
+        self.empty_block = args[3]
+
+##########################################
 # XCMA Open Function
 ##########################################
 
 def open(data):
+    # Initialize a stream from the data
     data_stream = io.BytesIO(data)
     
-    cam_values = {
-        'location': {},
-        'aim': {},
-        'focal_length': {},
-        'roll': {}
-    }
-
-    # Read headers
-    header1 = read_struct(data_stream, 'IiiiIIII')
-    header2 = read_struct(data_stream, 'Iiiiiiiiii')
-    header3 = read_struct(data_stream, 'III6h16h8B')
-
-    hash_name = header2[0]
-
-    cam_values['location'] = read_cam_data(data_stream, 3)
-    cam_values['aim'] = read_cam_data(data_stream, 3)
-    cam_values['focal_length'] = read_cam_data(data_stream, 1)
-    cam_values['roll'] = read_cam_data(data_stream, 1)
-
-    return hash_name, cam_values
-
-def read_cam_data(data_stream, values_count):
+    # Initialize a dictionary to store camera values
     cam_values = {}
+    
+    # List of camera types
+    cam_types = ["location", "aim", "focal_length", "roll", "unk"]
+    
+    # Read the header
+    header = Header(*struct.unpack(Header.header_format, data_stream.read(56)))
+    
+    # Calculate the number of tracks
+    track_count = header.enable_location + header.enable_target + header.enable_focal_length + header.enable_roll + header.enable_unk
+    
+    # Read the camera setting header
+    setting_start = data_stream.tell()
+    setting = CameraSettingHeader(*struct.unpack(CameraSettingHeader.header_format, data_stream.read(16)))
+    
+    # Get tracks
+    tracks = []
+    for i in range(5):
+        # Read track offset
+        data_stream.seek(setting_start + setting.track_offset + i * 2)
+        track_offset = struct.unpack('H', data_stream.read(2))[0]
+        
+        # Read track data
+        data_stream.seek(setting_start + track_offset)
+        track = {}
+        track["type"] = struct.unpack("<B", data_stream.read(1))[0]
+        track["data_type"] = struct.unpack("<B", data_stream.read(1))[0]
+        track["unk"] = struct.unpack("<B", data_stream.read(1))[0]
+        track["data_count"] = struct.unpack("<B", data_stream.read(1))[0]
+        track["start"] = struct.unpack("<H", data_stream.read(2))[0]
+        track["end"] = struct.unpack("<H", data_stream.read(2))[0]
+        tracks.append(track)
 
-    cam_header = read_struct(data_stream, 'iiii')
+    # Get to data offset
+    data_stream.seek(setting_start + setting.block_length)
 
-    with io.BytesIO(compressor.decompress(data_stream.read(cam_header[3] - cam_header[0]))) as cam_data_stream:
-        unk1 = struct.unpack('B', cam_data_stream.read(1))[0]
-        unk2 = struct.unpack('B', cam_data_stream.read(1))[0]
-        frames_count = struct.unpack('B', cam_data_stream.read(1))[0]
-        unk3 = struct.unpack('B', cam_data_stream.read(1))[0]
-
-        frames_indexes = struct.unpack(f'{frames_count}h', cam_data_stream.read(2 * frames_count))
-
-        cam_data_stream.seek(cam_header[2])
-
-        for k in range(frames_count):
-            frame_index = frames_indexes[k]
-            values = struct.unpack(f'{values_count}f', cam_data_stream.read(4 * values_count))
+    # Iterate over tracks
+    for i in range(track_count):
+        track = tracks[i]
+        block_offset = data_stream.tell()
+        
+        # Read block metadata
+        decomp_offset = struct.unpack('I', data_stream.read(4))[0]
+        frame_offset = struct.unpack('I', data_stream.read(4))[0]
+        data_offset = struct.unpack('I', data_stream.read(4))[0]
+        block_length = struct.unpack('I', data_stream.read(4))[0]
+        
+        # Decompress block data
+        with io.BytesIO(compressor.decompress(data_stream.read(block_length - decomp_offset))) as cam_data_stream:
+            values = {}
             
-            if values_count == 1:
-                cam_values[frame_index] = values[0]
-            else:
-                cam_values[frame_index] = list(values)
+            # Read header
+            bone_index = struct.unpack("<h", cam_data_stream.read(2))[0]
+            low_frame_count = struct.unpack("<B", cam_data_stream.read(1))[0]
+            high_frame_count = struct.unpack("<B", cam_data_stream.read(1))[0] - 32
+            frames_count = (high_frame_count << 8) | low_frame_count
             
-    return cam_values
+            # Read frame indexes
+            frames_indexes = struct.unpack(f'{frames_count}h', cam_data_stream.read(2 * frames_count))
+            
+            # Read data
+            cam_data_stream.seek(data_offset)
+            for k in range(frames_count):
+                frame_index = frames_indexes[k]
+                
+                anim_data = [0] * track["data_count"]
+                for j in range(track["data_count"]):
+                    if track["data_type"] == 1:
+                        anim_data[j] = struct.unpack("<h", cam_data_stream.read(2))[0] / float(0x7FFF)
+                    elif track["data_type"] == 2:
+                        anim_data[j] = struct.unpack("<f", cam_data_stream.read(4))[0]
+                    elif track["data_type"] == 4:
+                        anim_data[j] = struct.unpack("<h", cam_data_stream.read(2))[0]
+                    else:
+                        raise NotImplementedError(f"Data Type {track['data_type']} not implemented")
+               
+                if len(anim_data) == 1:
+                    anim_data = anim_data[0]
+                    
+                values[frame_index] = anim_data
+            
+            # Store values in cam_values dictionary
+            cam_values[cam_types[i]] = values
 
-def read_struct(data_stream, format):
-    size = struct.calcsize(format)
-    data = data_stream.read(size)
-    return struct.unpack(format, data)
+    return header.animation_hash, cam_values
     
 ##########################################
 # XCMA Save Function
@@ -77,13 +145,13 @@ def get_frame_count(cam_values):
 
     return max_key
 
-def write(animation_name, cam_values):
+def write(animation_name, camera_speed, cam_values):
     file_bytes = io.BytesIO()
 
     hash_name = zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')
     hash_name_uint = int.from_bytes(hash_name, byteorder='little', signed=False)
     header1 = struct.pack('IiiiIIII', 0x414D4358, 0x20, 0x18, 0x01, 0x01, 0x01, 0x01, 0x00)
-    header2 = struct.pack('Iiiiiiiiii', hash_name_uint, 0x0, get_frame_count(cam_values), 0x02, 0x3F000000, 0x00, 0x0C, 0x1C, 0x50, 0x00)
+    header2 = struct.pack('Iiiifiiiii', hash_name_uint, 0x0, get_frame_count(cam_values), 0x02, camera_speed, 0x00, 0x0C, 0x1C, 0x50, 0x00)
     pattern1 = struct.pack('hhhh', 0x0201, 0x0300, 0x00, get_frame_count(cam_values))
     pattern2 = struct.pack('hhhh', 0x0201, 0x0100, 0x00, get_frame_count(cam_values))
     pattern1_octets = struct.unpack('4h', pattern1)

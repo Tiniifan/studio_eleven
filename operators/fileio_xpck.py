@@ -16,6 +16,7 @@ from .fileio_xmtn import *
 from .fileio_xcma import *
 from ..utils.img_format import *
 from ..utils.img_tool import *
+from ..utils.properties import *
 from ..templates import *
 from ..controls import CameraElevenObject
 
@@ -506,6 +507,7 @@ class ExportXC_AddAnimationItem(bpy.types.Operator):
         new_item.private_index = self.find_unused_index(used_indexes)
         
         new_item.name = "splitted_animation_" + str(new_item.private_index)
+        new_item.speed = 1
         new_item.frame_start = 1
         new_item.frame_end = 250
         return {'FINISHED'}
@@ -532,6 +534,7 @@ class ExportXC_RemoveAnimationItem(bpy.types.Operator):
 
 class AnimationItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
+    speed: bpy.props.FloatProperty()
     frame_start: bpy.props.IntProperty()
     frame_end: bpy.props.IntProperty()
     private_index: bpy.props.IntProperty()
@@ -568,6 +571,12 @@ class CameraPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Camera name")
     name: bpy.props.StringProperty()
     animation_name: bpy.props.StringProperty()
+    
+# Define a Property Group to store archive information
+class ArchivePropertyGroup(bpy.types.PropertyGroup):
+    checked: bpy.props.BoolProperty(default=False, description="Property name")
+    name: bpy.props.StringProperty()
+    value: bpy.props.FloatProperty(default=0.0, description="Property value")
 
 # Define a Property Group to store armature information
 class ExportXC(bpy.types.Operator, ExportHelper):
@@ -585,6 +594,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             ('MAIN', "Main", "Configure the essentials"),
             ('TEXTURE', "Texture", "Configure textures"),
             ('ANIMATION', "Animation", "Configure animations"),
+            ('PROPERTIES', "Properties", "Configure properties"),
         ],
         default='MAIN'
     )
@@ -603,6 +613,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
     libs: bpy.props.CollectionProperty(type=LibPropertyGroup)
     camera_properties: bpy.props.CollectionProperty(type=CameraPropertyGroup)
+    archive_properties: bpy.props.CollectionProperty(type=ArchivePropertyGroup)
     
     include_animation: bpy.props.BoolProperty(
         name="Include Animation",
@@ -742,6 +753,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         self.libs.clear()
         self.camera_properties.clear()
         context.scene.export_xc_animations_items.clear()
+        self.archive_properties.clear()
 
         # Get meshes
         meshes = [obj for obj in bpy.data.objects if obj.type == 'MESH']
@@ -809,6 +821,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 item.name = obj.name
                 item.animation_name = ""
 
+        # Get archive properties
+        for name, value in properties.items():
+            item = self.archive_properties.add()
+            item.checked = value[0]
+            item.name = name
+            item.value = value[1]
+            
         wm.fileselect_add(self)    
         return {'RUNNING_MODAL'}
 
@@ -921,6 +940,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         for index, item in enumerate(context.scene.export_xc_animations_items):
                             row = items_box.row(align=True)
                             row.prop(item, "name", text="Name")
+                            row.prop(item, "speed", text="Speed")
                             row.prop(item, "frame_start", text="Start Frame")
                             row.prop(item, "frame_end", text="End Frame")
                             
@@ -962,6 +982,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     anim_box.label(text="Not available on mesh mode")
                 elif self.export_option == 'CAMERA':
                     anim_box.label(text="Not available on camera mode")
+        elif self.export_tab_control == 'PROPERTIES':
+                properties_box = layout.box()
+                
+                if self.export_option != 'CAMERA':
+                    for archive_prop in self.archive_properties:
+                        row = properties_box.row(align=True)
+                        row.prop(archive_prop, "checked", text=archive_prop.name)
+                        row.prop(archive_prop, "value", text="")
+                else:
+                    properties_box.label(text="Not available on camera mode")
 
     def execute(self, context):
         armature = None
