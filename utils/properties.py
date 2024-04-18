@@ -7,7 +7,7 @@ properties = {
     "bb_ratio_z": [True, 1.2],
     "bb_ref_bone": [True, 0],
     "chr_flag": [True, 0],
-    "mesh_sort": [True, 0],
+    "mesh_sort": [True, 2],
     "flw_cmr_type": [False, 0],
     "scale_base_one": [False, 2],
 }

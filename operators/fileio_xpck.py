@@ -10,7 +10,7 @@ import bmesh
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt
+from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn
 from .fileio_xmpr import *
 from .fileio_xmtn import *
 from .fileio_xcma import *
@@ -340,7 +340,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline = [], cameras=[]):
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline = [], cameras=[], properties=[]):    
     # Make meshes
     xmprs = []
     atrs = []
@@ -387,7 +387,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             mtns.append(fileio_write_xmtn(context, armature.name, animation_name, animation_format))
         
         for split_animation in split_animations:
-            minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.frame_start, split_animation.frame_end))
+            minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
 
     # Make outline
     xcsls = []
@@ -411,7 +411,13 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             camera = cam_object[2]
             target = cam_object[3]
             xcmas.append(fileio_write_xcma(context, animation_name, speed, camera, target))
-    
+
+    # Make properties
+    cmns = []
+    if properties:
+        for archive_property in properties:
+            cmns.append(cmn.write(archive_property[0], archive_property[1])) 
+               
     files = {}
     
     if mode == "MESH":
@@ -427,8 +433,11 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if imgcs:
             files.update(create_files_dict(".xi", imgcs))
 
-        if xcsls:
-            files.update(create_files_dict(".sil", xcsls))  
+        #if xcsls:
+            #files.update(create_files_dict(".sil", xcsls))
+
+        if cmns:
+            files.update(create_files_dict(".cmn", cmns))  
     elif mode == "ARMATURE":
         if xmprs:
             files.update(create_files_dict(".prm", xmprs))
@@ -458,7 +467,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
                 files.update(create_files_dict(".mtninf2", minfs))
 
         #if xcsls:
-            #files.update(create_files_dict(".sil", xcsls)) 
+            #files.update(create_files_dict(".sil", xcsls))
+            
+        if cmns:
+            files.update(create_files_dict(".cmn", cmns))  
     elif mode == "ANIMATION":
         if mbns:
             files.update(create_files_dict(".mbn", mbns))
@@ -474,12 +486,15 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
                 files.update(create_files_dict(".mtninf", minfs))
             elif animation[2] == 'MTNINF2':
                 files.update(create_files_dict(".mtninf2", minfs))
+                
+        if cmns:
+            files.update(create_files_dict(".cmn", cmns))  
     elif mode == "CAMERA":
         if xcmas:
             files.update(create_files_dict(".cmr2", xcmas))
 
     if mode != "CAMERA":
-        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "")
+        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "", properties=properties)
         files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
     else:
         if len(cameras_sorted) > 0:
@@ -604,12 +619,12 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     export_option: bpy.props.EnumProperty(
         name="Mode",
         items=[
-            ('MESH', "Meshes", "Export multiple meshes"),
+            #('MESH', "Meshes", "Export multiple meshes"),
             ('ARMATURE', "Armature", "Export one armature"),
             ('ANIMATION', "Animation", "Export one animation"),
             ('CAMERA', "Cameras", "Export multiple camera"),
         ],
-        default='MESH'
+        default='ARMATURE'
     )  
 
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
@@ -627,7 +642,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         name="Format",
         items=[
             ('MTN2', "MTN2", "Make MTN2 Animation"),
-            ('MTN3', "MTN3", "Make MTN3 Animation"),
+            #('MTN3', "MTN3", "Make MTN3 Animation"),
         ],
         default='MTN2'
     )
@@ -636,7 +651,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         name="Format",
         items=[
             ('MTNINF', "MTNINF", "Make MTNINF Split Animation"),
-            ('MTNINF2', "MTNINF2", "Make MTNINF2 Split Animation"),
+            #('MTNINF2', "MTNINF2", "Make MTNINF2 Split Animation"),
         ],
         default='MTNINF'
     )     
@@ -972,6 +987,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 for index, item in enumerate(context.scene.export_xc_animations_items):
                     row = items_box.row(align=True)
                     row.prop(item, "name", text="Name")
+                    row.prop(item, "speed", text="Speed")
                     row.prop(item, "frame_start", text="Start Frame")
                     row.prop(item, "frame_end", text="End Frame")
                             
@@ -1004,6 +1020,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         animation = []
         cameras = []
         split_animations = []
+        properties = []
         outline = [self.outline_thickness, self.outline_visibility]
         
         if self.export_option == 'MESH':
@@ -1091,8 +1108,14 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 if len(set(camera_animation_names)) != len(camera_animation_names):
                     self.report({'ERROR'}, f"Several cameras have the same animation name")
                     return {'FINISHED'}
-       
-        return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras)
+
+        # Get archive properties
+        if self.export_option != 'CAMERA':
+            for archive_prop in self.archive_properties:
+                if archive_prop.checked:
+                    properties.append([archive_prop.name, archive_prop.value])
+            
+        return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties)
         
 class ImportXC(bpy.types.Operator, ImportHelper):
     bl_idname = "import.xc"

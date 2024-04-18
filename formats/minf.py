@@ -26,7 +26,7 @@ def open_minf1(data):
     
     return split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end
 
-def write_minf1(animation_name, split_animation_name, frame_start, frame_end):
+def write_minf1(animation_name, split_animation_name, animation_speed, frame_start, frame_end):
     out = bytes()
     
     out += bytes([int(x,0) for x in ["0x4D", "0x49", "0x4E", "0x46"] ])
@@ -51,7 +51,7 @@ def write_minf1(animation_name, split_animation_name, frame_start, frame_end):
     out += int(frame_start).to_bytes(4, 'little')
     out += int(frame_end).to_bytes(4, 'little')
     
-    out += struct.pack('<f', 1.0)
+    out += struct.pack('<f', animation_speed)
     out += int(0).to_bytes(4, 'little')
     out += int(0).to_bytes(4, 'little')
     

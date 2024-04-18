@@ -9,3 +9,4 @@ from .xcma import *
 from .minf import *
 from .xcsl import *
 from .xcmt import *
+from .cmn import *

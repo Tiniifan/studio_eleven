@@ -22,7 +22,7 @@ def table_offset(frame_offset, frame_transform):
 def node_modified(node, frames):
     frames_count = len(frames)
     low_frame_count = frames_count & 0xFF
-    high_frame_count = (32 + (frames_count >> 8)) & 0xFF
+    high_frame_count = 32 + (frames_count >> 8) & 0xFF
 
     out = bytes()
     out += int(node).to_bytes(2, 'little')

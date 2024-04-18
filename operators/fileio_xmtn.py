@@ -316,8 +316,9 @@ class ExportXMTN(bpy.types.Operator, ExportHelper):
 
     extension: bpy.props.EnumProperty(
         name="Animation Format",
-        items=[(".mtn2", "MTN2", "Export as MTN2"),
-               (".mtn3", "MTN3", "Export as MTN3")],
+        #items=[(".mtn2", "MTN2", "Export as MTN2"),
+               #(".mtn3", "MTN3", "Export as MTN3")],
+        items=[(".mtn2", "MTN2", "Export as MTN2")],
         default=".mtn2",
     )
 
