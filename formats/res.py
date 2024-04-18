@@ -278,9 +278,9 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
         properties_name = []
         
         for archive_property in properties:
-            name = archive_property[0].encode("shift-jis")
-            string_table += name + int(0).to_bytes(1, 'little')
-            properties_name.append(name)
+            property_name = archive_property[0].encode("shift-jis")
+            properties_name.append(zlib.crc32(property_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            string_table += property_name + int(0).to_bytes(1, 'little')
             
         items[RESType.BoundingBoxParameter] = properties_name
         
