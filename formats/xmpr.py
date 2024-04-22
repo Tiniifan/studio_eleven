@@ -174,6 +174,12 @@ def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_name
     material += zlib.crc32(material_name.encode("shift-jis")).to_bytes(4, 'little')
     material += bytes.fromhex(template.material)
     material += int(len(bone_names)).to_bytes(4, 'little')
+    
+    if template.name == "Yo-Kai Watch":
+        material += int(0).to_bytes(4, 'little')
+        material += int(0).to_bytes(4, 'little')
+        material += int(0).to_bytes(4, 'little')
+        material += int(0).to_bytes(4, 'little')
 
     # Node ------------------------------------------
     node = bytes()
