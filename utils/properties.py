@@ -1,4 +1,7 @@
 properties = {
+    "bb_size_x": [True, 1],
+    "bb_size_y": [True, 1],
+    "bb_size_z": [True, 1],
     "bb_pos_x": [True, 0],
     "bb_pos_y": [True, 0],
     "bb_pos_z": [True, 0],

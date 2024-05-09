@@ -188,7 +188,7 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
                 
                 items[RESType(_type)][object_crc32] = material_dict               
 
-def make_library(meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline_name = "", properties=[]):
+def make_library(meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline_name = "", properties=[], texprojs=[]):
     items = {}
     string_table = bytes()
         
@@ -283,6 +283,16 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             string_table += property_name + int(0).to_bytes(1, 'little')
             
         items[RESType.BoundingBoxParameter] = properties_name
+        
+    if texprojs:
+        texprojs_name = []
+        
+        for texproj in texprojs:
+            texproj_name = texproj[0].encode("shift-jis")
+            texprojs_name.append(zlib.crc32(texproj_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            string_table += texproj_name + int(0).to_bytes(1, 'little')
+            
+        items[RESType.Textproj] = texprojs_name
         
     return items, string_table
                 

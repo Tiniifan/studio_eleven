@@ -10,7 +10,7 @@ import bmesh
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn
+from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp
 from .fileio_xmpr import *
 from .fileio_xmtn import *
 from .fileio_xcma import *
@@ -340,7 +340,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline = [], cameras=[], properties=[]):    
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline = [], cameras=[], properties=[], texprojs=[]):    
     # Make meshes
     xmprs = []
     atrs = []
@@ -417,6 +417,12 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     if properties:
         for archive_property in properties:
             cmns.append(cmn.write(archive_property[0], archive_property[1])) 
+
+    # Make texprojs
+    txps = []
+    if texprojs:
+        for texproj in texprojs:
+            txps.append(txp.write(texproj[0], texproj[1])) 
                
     files = {}
     
@@ -437,7 +443,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             #files.update(create_files_dict(".sil", xcsls))
 
         if cmns:
-            files.update(create_files_dict(".cmn", cmns))  
+            files.update(create_files_dict(".cmn", cmns)) 
+       
+        if txps:
+            files.update(create_files_dict(".txp", txps))  
     elif mode == "ARMATURE":
         if xmprs:
             files.update(create_files_dict(".prm", xmprs))
@@ -470,7 +479,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             #files.update(create_files_dict(".sil", xcsls))
             
         if cmns:
-            files.update(create_files_dict(".cmn", cmns))  
+            files.update(create_files_dict(".cmn", cmns))
+            
+        if txps:
+            files.update(create_files_dict(".txp", txps))
     elif mode == "ANIMATION":
         if mbns:
             files.update(create_files_dict(".mbn", mbns))
@@ -494,7 +506,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             files.update(create_files_dict(".cmr2", xcmas))
 
     if mode != "CAMERA":
-        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "", properties=properties)
+        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "", properties=properties, texprojs=texprojs)
         files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
     else:
         if len(cameras_sorted) > 0:
@@ -572,6 +584,7 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
     )
 
 class LibPropertyGroup(bpy.types.PropertyGroup):
+    texproj_name: bpy.props.StringProperty()
     name: bpy.props.StringProperty()
     textures: bpy.props.CollectionProperty(type=TexturePropertyGroup)
 
@@ -818,6 +831,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         for index, value in enumerate(libs):
             item = self.libs.add()
             item.name = 'DefaultLib.' + str(index)
+            item.texproj_name =  item.name + "_texproj0"
             
             for texture_name in value['texture_name']:
                 texture = item.textures.add()
@@ -924,7 +938,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         index = mesh_prop.library_index
                         if index not in lib_indexes:
                             lib = self.libs[index]
-                            box = layout.box()
+                            groupbox = layout.box()
+                            groupbox.prop(lib, "texproj_name", text="")
+                            box = groupbox.box()
                             box.prop(lib, "name", text="")
                                                         
                             for texture in lib.textures:
@@ -1021,6 +1037,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         cameras = []
         split_animations = []
         properties = []
+        texprojs = []
         outline = [self.outline_thickness, self.outline_visibility]
         
         if self.export_option == 'MESH':
@@ -1045,15 +1062,21 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             if not lib.name:
                                 self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a library_name!")
                                 return {'FINISHED'}
-                            else:
-                                mesh_prop.library_name = lib.name
                                 
-                                textures[lib.name] = []                              
-                                meshes.append(mesh_prop)
+                           # Check if the mesh has a texproj_name
+                            if not lib.texproj_name:
+                                self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a texproj_name!")
+                                return {'FINISHED'}     
+                            
+                            texprojs.append([lib.texproj_name, lib.name])
+                            mesh_prop.library_name = lib.name
                                 
-                                # Get texture
-                                for texture in lib.textures:
-                                    textures[lib.name].append(texture)
+                            textures[lib.name] = []                              
+                            meshes.append(mesh_prop)
+                                
+                            # Get texture
+                            for texture in lib.textures:
+                                textures[lib.name].append(texture)
 
                 if self.include_animation:
                     if not self.animation_name:
@@ -1114,8 +1137,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             for archive_prop in self.archive_properties:
                 if archive_prop.checked:
                     properties.append([archive_prop.name, archive_prop.value])
-            
-        return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties)
+
+        print(textures)
+        return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties, texprojs=texprojs)
         
 class ImportXC(bpy.types.Operator, ImportHelper):
     bl_idname = "import.xc"
