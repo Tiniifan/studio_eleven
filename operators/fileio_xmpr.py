@@ -272,7 +272,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
             
         mesh_obj.data.materials.append(mat)
   
-def fileio_write_xmpr(context, mesh_name, library_name, template):
+def fileio_write_xmpr(context, mesh_name, library_name, mode):
     # Get Mesh
     mesh = bpy.data.objects[mesh_name]
     
@@ -285,7 +285,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, template):
             
     weights = dict(get_weights(mesh, bone_names))  
             
-    return xmpr.write(mesh.name_full, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, template)
+    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode)
 
 def fileio_open_xmpr(context, filepath):
     # Extract the file name without extension

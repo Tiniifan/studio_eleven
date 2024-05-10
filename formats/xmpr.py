@@ -145,7 +145,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, template):
+def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -172,20 +172,33 @@ def write(mesh_name, indices, vertices, uvs, normals, colors, weights, bone_name
     # Material-------------------------------------------
     material = zlib.crc32(mesh_name.encode("shift-jis")).to_bytes(4, 'little')
     material += zlib.crc32(material_name.encode("shift-jis")).to_bytes(4, 'little')
-    material += bytes.fromhex(template.material)
+    material += bytes.fromhex(mode[0])
+    material += int(0).to_bytes(4, 'little')
+    material += int(0).to_bytes(4, 'little')
+    material += int(0).to_bytes(4, 'little')
+    material += int(0).to_bytes(4, 'little')
+    material += int(0).to_bytes(4, 'little')
+    material += int(0).to_bytes(4, 'little')
+    material += struct.pack("f", dimensions[0]/2)
+    material += struct.pack("f", dimensions[1]/2)
+    material += struct.pack("f", dimensions[2]/2)
+    material += int(0).to_bytes(4, 'little')
+    material += int(mode[1]).to_bytes(4, 'little')
     material += int(len(bone_names)).to_bytes(4, 'little')
     
-    if template.name == "Yo-Kai Watch":
-        material += int(0).to_bytes(4, 'little')
-        material += int(0).to_bytes(4, 'little')
-        material += int(0).to_bytes(4, 'little')
-        material += int(0).to_bytes(4, 'little')
+    #if template.name == "Yo-Kai Watch":
+        #material += int(0).to_bytes(4, 'little')
+        #material += int(0).to_bytes(4, 'little')
+        #material += int(0).to_bytes(4, 'little')
+        #material += int(0).to_bytes(4, 'little')
 
     # Node ------------------------------------------
     node = bytes()
     for name in bone_names:
         name_bytes = name.encode("shift-jis")
         node += zlib.crc32(name_bytes).to_bytes(4, 'little')
+
+    print(len(bone_names), bone_names, node.hex())
 
     # Name ------------------------------------------
     xmpr_name = bytes()

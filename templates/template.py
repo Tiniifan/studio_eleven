@@ -1,7 +1,7 @@
 class Template:
-    def __init__(self, name, material, atr, mtr, outline_mesh_data, cmb1, cmb2):
+    def __init__(self, name, modes, atr, mtr, outline_mesh_data, cmb1, cmb2):
         self.name = name
-        self.material = material
+        self.modes = modes
         self.atr = atr
         self.mtr = mtr
         self.outline_mesh_data = outline_mesh_data
@@ -17,7 +17,10 @@ class Template:
 templates = [
         Template(
             "Inazuma Eleven", 
-            "759FE5F376F5DC8FA208000000000000000008B6A4F37342000004368CF0323F06A844428CF0323F1100000001000000",
+            {
+                "Object (Transparent)": ["759FE5F3", 1],
+                "Map": ["F1697E54", 3],
+            },
             "41545243303100000C000000E3010000054080FF0000C0C13C80BF0137F72F406005FFFFF0FFFF56",
             "4D545243303000001800000000000000000000000000000041070000350000F001501301801C0340037E04800B5013F043F055F0673079F819FEFE3E5003B08B803F5003F0F023F0B5F0C770D9E8891DA70000004C555443",
             [ 0.0249999985, 5.0, 1, 1.0, 1.0, 1.0, 1.0, 1, 0.0, 1.0, 1.0, 1.0, 1.0, 100.0, 60.0, 96000.0, 0.5, 0.0, 1, 1, 0.0025, 0.5, 0.4, 10.0, 60.0, 0.0, 0.0, 1 ],

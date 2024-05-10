@@ -347,9 +347,9 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     mtrs = []
     if meshes:
         for mesh in meshes:
-            xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.library_name, template))
-            atrs.append(bytes.fromhex(template.atr))
-            mtrs.append(bytes.fromhex(template.mtr))
+            xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.library_name, template[0].modes[template[1]]))
+            atrs.append(bytes.fromhex(template[0].atr))
+            mtrs.append(bytes.fromhex(template[0].mtr))
 
     # Make bones
     mbns = []
@@ -734,6 +734,18 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         default=0,
     )
     
+    def template_mode_items_callback(self, context):
+        my_template = get_template_by_name(self.template_name)
+        items = [(mode, mode, "") for mode in my_template.modes.keys()]
+        return items
+
+    template_mode_name: EnumProperty(
+        name="Mode",
+        description="Choose a mode",
+        items=template_mode_items_callback,
+        default=0,
+    )    
+    
     outline_thickness: bpy.props.FloatProperty(
         name="Outline Thickness",
         description="Thickness of the outline",
@@ -875,6 +887,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             
             # Add the template_name property to the main box
             box.prop(self, "template_name", text="Template")
+            
+            if self.template_name == 'Inazuma Eleven':
+                box.prop(self, "template_mode_name", text="Mode")
             
             # Create a sub-box for outline properties
             #outline_box = box.box()
@@ -1138,8 +1153,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 if archive_prop.checked:
                     properties.append([archive_prop.name, archive_prop.value])
 
-        print(textures)
-        return fileio_write_xpck(self, context, self.filepath, get_template_by_name(self.template_name), self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties, texprojs=texprojs)
+        return fileio_write_xpck(self, context, self.filepath, [get_template_by_name(self.template_name), self.template_mode_name], self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties, texprojs=texprojs)
         
 class ImportXC(bpy.types.Operator, ImportHelper):
     bl_idname = "import.xc"
