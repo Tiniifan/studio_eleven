@@ -209,7 +209,7 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
                     texture_name = value[i].name.encode("shift-jis")
                     texture_data += zlib.crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                 else:
-                    texture_data += bytes.fromhex("00000000010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
+                    texture_data += bytes.fromhex("00000000000000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                     
             textures_data.append(texture_data)
             
@@ -217,7 +217,7 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             
             for texture in value:
                 texture_name = texture.name.encode("shift-jis")
-                textures_name.append(zlib.crc32(texture_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030500000000000000000000"))
+                textures_name.append(zlib.crc32(texture_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
                 string_table += texture_name + int(0).to_bytes(1, 'little')        
             
         items[RESType.Material1] = lib_names
