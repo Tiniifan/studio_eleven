@@ -313,7 +313,7 @@ def write_mtn2(name, nodes, frame_location, frame_rotation, frame_scale, frame_e
     out += int(len(frame_rotation)).to_bytes(4, 'little')
     out += int(len(frame_scale)).to_bytes(4, 'little')
     out += int(0).to_bytes(4, 'little')
-    out += int(len(frame_location)).to_bytes(4, 'little')
+    out += int(0).to_bytes(4, 'little')
     out += name_bytes
     out += int(0).to_bytes(40-len(name), 'little')
     out += int(frame_end).to_bytes(4, 'little')
