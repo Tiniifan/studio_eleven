@@ -117,26 +117,37 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
     # Create a new action here outside the loop
     action = bpy.data.actions.new(name=animation_name)
 
+    # Initialize a dictionary to store previous values
+    previous_values = {}
+
     for frame in range(frame_count):
         if frame in animation_data:
             for bone_hash, transformation in animation_data[frame].items():
                 bone = find_bone_by_crc32(armature, bone_hash)
-                if bone == None:
+                if bone is None:
                     continue
         
                 pose_bone = armature_obj.pose.bones.get(bone.name)
                 if not pose_bone:
                     print(f"Pose bone {bone.name} not found.")
                     continue
-                                     
+                
+                # Initialize previous values for this bone if not set
+                if bone.name not in previous_values:
+                    previous_values[bone.name] = {'location': None, 'rotation': None, 'scale': None}
+                
                 if 'location' in transformation:
                     location = calculate_transformed_location(pose_bone, Vector([transformation['location'].location_x, transformation['location'].location_y, transformation['location'].location_z]))
                     
-                    for i in range(3):
-                        fcurve = action.fcurves.find("pose.bones[\"{}\"].location".format(pose_bone.name), index=i)
-                        if not fcurve:
-                            fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].location".format(pose_bone.name), index=i)
-                        fcurve.keyframe_points.insert(frame, location[i])
+                    # Check if the location has changed
+                    if previous_values[bone.name]['location'] != location:
+                        for i in range(3):
+                            fcurve = action.fcurves.find("pose.bones[\"{}\"].location".format(pose_bone.name), index=i)
+                            if not fcurve:
+                                fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].location".format(pose_bone.name), index=i)
+                            fcurve.keyframe_points.insert(frame, location[i])
+                        # Update previous value
+                        previous_values[bone.name]['location'] = location
                 
                 if 'rotation' in transformation:
                     pose_bone.rotation_mode = 'QUATERNION'
@@ -146,20 +157,28 @@ def create_animation(animation_name, frame_count, armature_obj, animation_data):
                     while parent and not parent.bone.use_deform:
                         parent = parent.parent
                         
-                    for i in range(4):
-                        fcurve = action.fcurves.find("pose.bones[\"{}\"].rotation_quaternion".format(pose_bone.name), index=i)
-                        if not fcurve:
-                            fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].rotation_quaternion".format(pose_bone.name), index=i)
-                        fcurve.keyframe_points.insert(frame, rotation[i])
+                    # Check if the rotation has changed
+                    if previous_values[bone.name]['rotation'] != rotation:
+                        for i in range(4):
+                            fcurve = action.fcurves.find("pose.bones[\"{}\"].rotation_quaternion".format(pose_bone.name), index=i)
+                            if not fcurve:
+                                fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].rotation_quaternion".format(pose_bone.name), index=i)
+                            fcurve.keyframe_points.insert(frame, rotation[i])
+                        # Update previous value
+                        previous_values[bone.name]['rotation'] = rotation
 
                 if 'scale' in transformation:
                     scale = calculate_transformed_scale(pose_bone, Vector([transformation['scale'].scale_x, transformation['scale'].scale_y, transformation['scale'].scale_z]))
                     
-                    for i in range(3):
-                        fcurve = action.fcurves.find("pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
-                        if not fcurve:
-                            fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
-                        fcurve.keyframe_points.insert(frame, scale[i])
+                    # Check if the scale has changed
+                    if previous_values[bone.name]['scale'] != scale:
+                        for i in range(3):
+                            fcurve = action.fcurves.find("pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
+                            if not fcurve:
+                                fcurve = action.fcurves.new(data_path="pose.bones[\"{}\"].scale".format(pose_bone.name), index=i)
+                            fcurve.keyframe_points.insert(frame, scale[i])
+                        # Update previous value
+                        previous_values[bone.name]['scale'] = scale
 
     # Assign the created action to the armature object
     armature_obj.animation_data_create()
@@ -196,71 +215,84 @@ def fileio_open_xmtn(operator, context, filepath):
     
     return {'FINISHED'}
 
-def fileio_write_xmtn(context, armature_name, animation_name, animation_format):   
+def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
     scene = context.scene
-    
     armature = bpy.data.objects[armature_name]
     armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
     
     bpy.ops.object.mode_set(mode='POSE')
 
-    # initialise transform data
+    # Initialize transformation data
     node_name = []
     transform_location = {}
     transform_rotation = {}
     transform_scale = {}
     
-    # for each bone
-    for bone in armature.pose.bones:
-        node_name.append(bone.name)
-        
-    # for each frame
-    for frame in range(scene.frame_end):
-        scene.frame_set(frame)
-        for bone in armature.pose.bones:
-            # get pose_bone matrix relative to bone_parent
-            bone_index = armature.pose.bones.values().index(bone)
-            pose_bone = armature.pose.bones[bone_index]
-            
-            if not pose_bone.bone.use_deform: 
-                continue
-		
-            parent = pose_bone.parent	
-            while parent:
-                if parent.bone.use_deform:
-                    break
-                parent = parent.parent   
-                        
-            pose_matrix = pose_bone.matrix
-            if parent:
-                parent_matrix = parent.matrix
-                pose_matrix = parent_matrix.inverted() @ pose_matrix
-            
-            # append location in transform_location
-            location = pose_matrix.to_translation()
-            location = Location(float(location[0]), float(location[1]), float(location[2]))
-            if bone_index not in transform_location:
-                transform_location[bone_index] = {}
-            transform_location[bone_index][frame] = location
+    for pose_bone in armature.pose.bones:
+        if not pose_bone.bone.use_deform: 
+            continue
+ 
+        node_name.append(pose_bone.name)
 
-            # append rotation in transform_rotation
-            rotation = pose_matrix.to_euler()
-            rotation = Rotation(float(rotation[0]), float(rotation[1]), float(rotation[2]))          
-            if bone_index not in transform_rotation:
-                transform_rotation[bone_index] = {}
-            transform_rotation[bone_index][frame] = rotation
+    # Process armature animation
+    armature_animation = armature.animation_data
+    if armature_animation and armature_animation.action:
+        for fcurve in armature_animation.action.fcurves:
+            bone_name = None
+            if 'pose.bones' in fcurve.data_path:
+                # Extract the bone name from the data_path
+                path_parts = fcurve.data_path.split('"')
+                if len(path_parts) > 1:
+                    bone_name = path_parts[1]
 
-            # append scale in transform_scale
-            scale = pose_matrix.to_scale()
-            scale = Scale(float(scale[0]), float(scale[1]), float(scale[2]))            
-            if bone_index not in transform_scale:
-                transform_scale[bone_index] = {}
-            transform_scale[bone_index][frame] = scale             
+            if bone_name:                
+                num_keyframes = len(fcurve.keyframe_points)
+                for idx, keyframe in enumerate(fcurve.keyframe_points):
+                    frame = int(keyframe.co[0])
+                    scene.frame_set(frame)
+                    
+                    bone_index = node_name.index(bone_name)
+                    pose_bone = armature.pose.bones[bone_name]
+            
+                    parent = pose_bone.parent	
+                    while parent:
+                        if parent.bone.use_deform:
+                            break
+                        parent = parent.parent   
+                                
+                    pose_matrix = pose_bone.matrix
+                    if parent:
+                        parent_matrix = parent.matrix
+                        pose_matrix = parent_matrix.inverted() @ pose_matrix       
+                    
+                    # append location in transform_location
+                    if 'location' in fcurve.data_path:
+                        location = pose_matrix.to_translation()
+                        location = Location(float(location[0]), float(location[1]), float(location[2]))
+                        if bone_index not in transform_location:
+                            transform_location[bone_index] = {}
+                        transform_location[bone_index][frame] = location
+                    
+                    # append rotation in transform_rotation
+                    if 'rotation_euler' in fcurve.data_path or 'rotation_quaternion' in fcurve.data_path:
+                        rotation = pose_matrix.to_euler()
+                        rotation = Rotation(float(rotation[0]), float(rotation[1]), float(rotation[2]))          
+                        if bone_index not in transform_rotation:
+                            transform_rotation[bone_index] = {}
+                        transform_rotation[bone_index][frame] = rotation
+                    
+                    # append scale in transform_scale
+                    if 'scale' in fcurve.data_path:
+                        scale = pose_matrix.to_scale()
+                        scale = Scale(float(scale[0]), float(scale[1]), float(scale[2]))            
+                        if bone_index not in transform_scale:
+                            transform_scale[bone_index] = {}
+                        transform_scale[bone_index][frame] = scale  
 
     if animation_format == '.mtn2' or animation_format == 'MTN2':
         return xmtn.write_mtn2(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
-    elif animation_format == '.mtn3'  or animation_format == 'MTN3':
+    elif animation_format == '.mtn3' or animation_format == 'MTN3':
         return xmtn.write_mtn3(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)
         
 ##########################################
