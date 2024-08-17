@@ -4,10 +4,13 @@ import zlib
 import struct
 from ..compression import *
 
-def calculate_f1_f2(file_count):
-    fc1 = file_count & 0xFF
-    fc2 = (file_count >> 8) & 0xF
-    return (fc2 << 8) | fc1
+def file_count_to_hex(file_count):
+    for i in range(12):
+        var2 = 2 ** i
+        if var2 > file_count:
+            var2 = i
+            break
+    return ((var2 << 12) | file_count) & 0xFFFF
 
 def fill(data):
     remainder = len(data) % 16
@@ -106,7 +109,7 @@ def pack(files, output_file):
     # Écrit l'entête du fichier XPCK
     with open(output_file, 'wb') as file:
         file.write(struct.pack("4s", "XPCK".encode()))
-        file.write(struct.pack("<H", calculate_f1_f2(len(files))))
+        file.write(struct.pack("<H", file_count_to_hex(len(files))))
         file.write(struct.pack("<H", 20 // 4))
         file.write(struct.pack("<H", (20 + len(files) * 12) // 4))
         file.write(struct.pack("<H", (20 + len(files) * 12 + len(compressed_name_table)) // 4))
