@@ -184,9 +184,9 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
             # Face doesn't exist, create a new one
             face = bm.faces.new((v1, v2, v3))
 
-            # Assign normals to vertices
-            for i, vert in enumerate(face.verts):
-                vert.normal = normals[face_indices[i]]
+            # Assign normals to vertices (INCORRECT)
+            #for i, vert in enumerate(face.verts):
+            #    vert.normal = normals[face_indices[i]]
 
             # Assign UV coordinates to vertices
             for i, loop in enumerate(face.loops):
@@ -219,6 +219,9 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
     
     # Switch back to object mode
     bpy.ops.object.mode_set(mode='OBJECT')
+
+    # Add normals
+    mesh.normals_split_custom_set_from_vertices(normals)
 
     # Assign weights to vertex groups
     for vert_index, group_data in vertex_group_mapping.items():
