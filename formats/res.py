@@ -108,17 +108,21 @@ def read_data(reader, string_table, items):
     node_count = header[6]
 
     reader.seek(string_offset)
-    text_section = reader.read()
-
-    text_reader = io.BytesIO(text_section)
-    while text_reader.tell() < len(text_section):
-        name = read_string(text_reader)
+    text_reader = io.BytesIO(reader.read())
+    text_section = text_reader.read().decode("shift-jis").split("\x00")
+    for text in text_section:
+        if text == "":
+            continue
         
-        if name == '':
-            break
-        else:
-            name_crc = zlib.crc32(name.encode("shift-jis"))
-            string_table[name_crc] = name
+        crc32text = zlib.crc32(text.encode("shift-jis"))
+        if crc32text not in string_table:
+            string_table[crc32text] = text
+        
+        text_split = text.split(".")
+        for t in text_split:
+            crc32text_split = zlib.crc32(t.encode("shift-jis"))
+            if crc32text_split not in string_table:
+                string_table[crc32text_split] = t
 
     read_section_table(reader, material_table_offset, material_table_count, items, string_table, text_reader)
     read_section_table(reader, node_offset, node_count, items, string_table, text_reader)
