@@ -204,12 +204,13 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
                 for j, weight in enumerate(vert_weights):
                     if face_indices[i] < len(bone_indices):
                         bone_crc32 = bone_indices[face_indices[i]][j]
-
-                        if bone_crc32 in bones:
-                            bone_name = bones[bone_crc32]
-                            if index not in vertex_group_mapping:
-                                vertex_group_mapping[index] = []
-                            vertex_group_mapping[index].append((bone_name, weight))
+                        
+                        if bones != None:
+                            if bone_crc32 in bones:
+                                bone_name = bones[bone_crc32]
+                                if index not in vertex_group_mapping:
+                                    vertex_group_mapping[index] = []
+                                vertex_group_mapping[index].append((bone_name, weight))
            
     # Update the mesh
     bmesh.update_edit_mesh(mesh)
