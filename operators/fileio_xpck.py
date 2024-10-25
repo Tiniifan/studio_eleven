@@ -105,7 +105,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
     animations_split_data = []
     
     for file_name in archive:
-        if file_name.endswith('.xc'):
+        if file_name.endswith('.xc') or file_name.endswith('.xv'):
             try:
                 fileio_open_xpck(context, archive[file_name], file_name)
             except Exception as e:
@@ -388,7 +388,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         
         for split_animation in split_animations:
             minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
-
+    
     # Make outline
     xcsls = []
     #if outline and meshes:
@@ -411,19 +411,19 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             camera = cam_object[2]
             target = cam_object[3]
             xcmas.append(fileio_write_xcma(context, animation_name, speed, camera, target))
-
+    
     # Make properties
     cmns = []
     if properties:
         for archive_property in properties:
             cmns.append(cmn.write(archive_property[0], archive_property[1])) 
-
+    
     # Make texprojs
     txps = []
     if texprojs:
         for texproj in texprojs:
             txps.append(txp.write(texproj[0], texproj[1])) 
-               
+    
     files = {}
     
     if mode == "MESH":
@@ -822,12 +822,20 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                                 used_texture.append(node.image)
                 else:
                     # If material doesn't use nodes, try to access the texture from the diffuse shader
-                    if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                        if texture not in used_texture:
-                            texture = material.texture_slots[0].texture
-                            texture_name = texture.name
-                            lib['texture_name'].append(texture_name)
-                            used_texture.append(texture)
+                    if hasattr(material, 'texture_slots'):
+                        if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
+                            if texture not in used_texture:
+                                texture = material.texture_slots[0].texture
+                                texture_name = texture.name
+                                lib['texture_name'].append(texture_name)
+                                used_texture.append(texture)
+                    else:
+                        # Enter in berry bush situation
+                        for texture_berry_bush in material.brres.textures:
+                            texture_name = texture_berry_bush.name
+                            for image in texture_berry_bush.imgs:
+                                lib['texture_name'].append(texture_name)
+                                used_texture.append(image.img)
 
             found = False
             for key, value in enumerate(libs):

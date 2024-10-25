@@ -198,8 +198,6 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
         name_bytes = name.encode("shift-jis")
         node += zlib.crc32(name_bytes).to_bytes(4, 'little')
 
-    print(len(bone_names), bone_names, node.hex())
-
     # Name ------------------------------------------
     xmpr_name = bytes()
     xmpr_name += mesh_name.encode('shift-jis')
@@ -403,11 +401,18 @@ def open(data):
     material_position, material_length = struct.unpack("<II", data[offset:offset + 8])
     offset += 8
     material_name = data[material_position:material_position + material_length-1].decode('utf-8')
+    
+    single_bind = None
+    if len(node_table) == 1:
+        # 1 == 0 because we always skip one occurence
+        pass
+        #single_bind = name.split(".")[1]         
 
     return {
         "vertices": parse_buffer(polygon_vertex_buffer, node_table),
         "triangles": parse_index_buffer(polygon_vertex_index_buffer),
         "node_table": node_table,
         "name": name,
-        "material_name": material_name
+        "material_name": material_name,
+        "single_bind": single_bind,
     }

@@ -125,6 +125,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
     weights = []
     bone_indices = []
     color_data = []
+    single_bind = model_data['single_bind']
 
     # Fill the array with data from model_data['vertices']
     for vertex_data in model_data['vertices']:
@@ -238,11 +239,42 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
     
     # Link mesh to armature
     if armature:
+        if mesh_obj.vertex_groups:
+            # Créer un dictionnaire pour stocker les influences par os
+            bone_influences = {bone.name: 0.0 for bone in armature.data.bones}
+
+            # Parcourir tous les vertices de la mesh
+            for vertex in mesh_obj.data.vertices:
+                # Vérifier les groupes de vertices associés à chaque vertex
+                for group in vertex.groups:
+                    group_name = mesh_obj.vertex_groups[group.group].name
+                    if group_name in bone_influences:
+                        # Ajouter l'influence au total pour chaque os
+                        bone_influences[group_name] += group.weight
+            
+            # Trouver l'os avec l'influence totale la plus élevée
+            most_influential_bone = armature.pose.bones.get(max(bone_influences, key=bone_influences.get))
+            
+            # Récupérer la matrice de transformation du bone le plus influent en espace monde
+            bone_world_matrix = armature.matrix_world @ most_influential_bone.matrix
+            bone_world_location = bone_world_matrix.translation
+            
+            # déplacer la mesh vers le bone le plus influent
+            print(mesh_obj.name, bone_world_location.x, bone_world_location.y, bone_world_location.z, most_influential_bone.name)
+            if bone_world_location.y > 400:
+                mesh_obj.location.y = bone_world_location.y  
+
         bpy.ops.object.select_all(action='DESELECT')
         mesh_obj.select_set(True)
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.parent_set(type='ARMATURE', keep_transform=True)
+        
+        # Créer une relation mesh au bone
+        if single_bind != None:
+            mesh_obj.parent_type = 'BONE'
+            mesh_obj.parent_bone = single_bind
+            mesh_obj.rotation_euler = (0, 0, 0)
         
     # Link textures to mesh
     if lib:

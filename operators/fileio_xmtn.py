@@ -215,84 +215,71 @@ def fileio_open_xmtn(operator, context, filepath):
     
     return {'FINISHED'}
 
-def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
+def fileio_write_xmtn(context, armature_name, animation_name, animation_format):   
     scene = context.scene
+    
     armature = bpy.data.objects[armature_name]
     armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
     
     bpy.ops.object.mode_set(mode='POSE')
 
-    # Initialize transformation data
+    # initialise transform data
     node_name = []
     transform_location = {}
     transform_rotation = {}
     transform_scale = {}
     
-    for pose_bone in armature.pose.bones:
-        if not pose_bone.bone.use_deform: 
-            continue
- 
-        node_name.append(pose_bone.name)
-
-    # Process armature animation
-    armature_animation = armature.animation_data
-    if armature_animation and armature_animation.action:
-        for fcurve in armature_animation.action.fcurves:
-            bone_name = None
-            if 'pose.bones' in fcurve.data_path:
-                # Extract the bone name from the data_path
-                path_parts = fcurve.data_path.split('"')
-                if len(path_parts) > 1:
-                    bone_name = path_parts[1]
-
-            if bone_name:                
-                num_keyframes = len(fcurve.keyframe_points)
-                for idx, keyframe in enumerate(fcurve.keyframe_points):
-                    frame = int(keyframe.co[0])
-                    scene.frame_set(frame)
-                    
-                    bone_index = node_name.index(bone_name)
-                    pose_bone = armature.pose.bones[bone_name]
+    # for each bone
+    for bone in armature.pose.bones:
+        node_name.append(bone.name)
+        
+    # for each frame
+    for frame in range(scene.frame_end):
+        scene.frame_set(frame)
+        for bone in armature.pose.bones:
+            # get pose_bone matrix relative to bone_parent
+            bone_index = armature.pose.bones.values().index(bone)
+            pose_bone = armature.pose.bones[bone_index]
             
-                    parent = pose_bone.parent	
-                    while parent:
-                        if parent.bone.use_deform:
-                            break
-                        parent = parent.parent   
-                                
-                    pose_matrix = pose_bone.matrix
-                    if parent:
-                        parent_matrix = parent.matrix
-                        pose_matrix = parent_matrix.inverted() @ pose_matrix       
-                    
-                    # append location in transform_location
-                    if 'location' in fcurve.data_path:
-                        location = pose_matrix.to_translation()
-                        location = Location(float(location[0]), float(location[1]), float(location[2]))
-                        if bone_index not in transform_location:
-                            transform_location[bone_index] = {}
-                        transform_location[bone_index][frame] = location
-                    
-                    # append rotation in transform_rotation
-                    if 'rotation_euler' in fcurve.data_path or 'rotation_quaternion' in fcurve.data_path:
-                        rotation = pose_matrix.to_euler()
-                        rotation = Rotation(float(rotation[0]), float(rotation[1]), float(rotation[2]))          
-                        if bone_index not in transform_rotation:
-                            transform_rotation[bone_index] = {}
-                        transform_rotation[bone_index][frame] = rotation
-                    
-                    # append scale in transform_scale
-                    if 'scale' in fcurve.data_path:
-                        scale = pose_matrix.to_scale()
-                        scale = Scale(float(scale[0]), float(scale[1]), float(scale[2]))            
-                        if bone_index not in transform_scale:
-                            transform_scale[bone_index] = {}
-                        transform_scale[bone_index][frame] = scale  
+            if not pose_bone.bone.use_deform: 
+                continue
+		
+            parent = pose_bone.parent	
+            while parent:
+                if parent.bone.use_deform:
+                    break
+                parent = parent.parent   
+                        
+            pose_matrix = pose_bone.matrix
+            if parent:
+                parent_matrix = parent.matrix
+                pose_matrix = parent_matrix.inverted() @ pose_matrix
+            
+            # append location in transform_location
+            location = pose_matrix.to_translation()
+            location = Location(float(location[0]), float(location[1]), float(location[2]))
+            if bone_index not in transform_location:
+                transform_location[bone_index] = {}
+            transform_location[bone_index][frame] = location
+
+            # append rotation in transform_rotation
+            rotation = pose_matrix.to_euler()
+            rotation = Rotation(float(rotation[0]), float(rotation[1]), float(rotation[2]))          
+            if bone_index not in transform_rotation:
+                transform_rotation[bone_index] = {}
+            transform_rotation[bone_index][frame] = rotation
+
+            # append scale in transform_scale
+            scale = pose_matrix.to_scale()
+            scale = Scale(float(scale[0]), float(scale[1]), float(scale[2]))            
+            if bone_index not in transform_scale:
+                transform_scale[bone_index] = {}
+            transform_scale[bone_index][frame] = scale             
 
     if animation_format == '.mtn2' or animation_format == 'MTN2':
         return xmtn.write_mtn2(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)  
-    elif animation_format == '.mtn3' or animation_format == 'MTN3':
+    elif animation_format == '.mtn3'  or animation_format == 'MTN3':
         return xmtn.write_mtn3(animation_name, node_name, transform_location, transform_rotation, transform_scale, scene.frame_end)
         
 ##########################################
