@@ -402,11 +402,15 @@ def open(data):
     offset += 8
     material_name = data[material_position:material_position + material_length-1].decode('utf-8')
     
+    offset = 0x0C
+    offset = struct.unpack("<I", data[offset : offset + 4])[0] + 12
+    splitted_name_crc32 = struct.unpack("<I", data[offset : offset + 4])[0]
+    
     single_bind = None
     if len(node_table) == 1:
         # 1 == 0 because we always skip one occurence
-        pass
-        #single_bind = name.split(".")[1]         
+        #pass
+        single_bind = splitted_name_crc32       
 
     return {
         "vertices": parse_buffer(polygon_vertex_buffer, node_table),

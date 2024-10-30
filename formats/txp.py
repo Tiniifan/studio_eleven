@@ -2,6 +2,9 @@ import io
 import zlib
 import struct
 
+def read_txp(reader):
+    return list(struct.unpack("<II", reader.read(8)))
+
 def write(name, lib_name):
     out = bytes()  
         

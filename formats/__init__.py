@@ -11,3 +11,5 @@ from .xcsl import *
 from .xcmt import *
 from .cmn import *
 from .txp import *
+from .animationmanager import *
+from .animationsupport import *

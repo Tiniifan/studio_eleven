@@ -103,7 +103,7 @@ def get_mesh_information(mesh):
 
     return face_indices, vertices_info, uv_info, normal_info, color_info
 
-def make_mesh(model_data, armature=None, bones=None, lib=None):
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     # Create a new mesh object
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
@@ -275,7 +275,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
             mesh_obj.parent_type = 'BONE'
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
-        
+    
     # Link textures to mesh
     if lib:
         # Create a new material for the mesh
@@ -302,22 +302,31 @@ def make_mesh(model_data, armature=None, bones=None, lib=None):
             
             # Connect the color output of the texture to the Base Color input of Principled BSDF
             mat.node_tree.links.new(tex_node.outputs[0], principled_BSDF.inputs[0])
-            
+        
         mesh_obj.data.materials.append(mat)
-  
+    
+    # Rename uv layers and add uv warp modifier
+    if txp_data:
+        for txp in txp_data:
+            if txp[1] == model_data['material_name']:
+                mesh_obj.data.uv_layers[0].name = txp[0]
+                #print(mesh_obj.modifiers)
+                mesh_obj.modifiers.new(name=txp[0], type="UV_WARP")
+                mesh_obj.modifiers[txp[0]].uv_layer = mesh_obj.data.uv_layers[0].name
+
 def fileio_write_xmpr(context, mesh_name, library_name, mode):
     # Get Mesh
     mesh = bpy.data.objects[mesh_name]
     
     indices, vertices, uvs, normals, colors = get_mesh_information(mesh)
-            
+    
     bone_names = []
     if mesh.parent:
         if mesh.parent.type == 'ARMATURE':
             bone_names = list(get_bone_names(mesh.parent))
             
     weights = dict(get_weights(mesh, bone_names))  
-            
+    
     return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode)
 
 def fileio_open_xmpr(context, filepath):
