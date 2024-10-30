@@ -8,7 +8,6 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty
 
 from ..animation import *
-from ..animation2 import *
 from ..formats import xmtn, res, animationmanager, animationsupport
 
 ##########################################
