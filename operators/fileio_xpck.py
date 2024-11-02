@@ -9,8 +9,9 @@ import bmesh
 
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
+import io
 
-from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp
+from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, animationmanager, animationsupport
 from .fileio_xmpr import *
 from .fileio_xmtn import *
 from .fileio_xcma import *
@@ -103,6 +104,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
     camera_data = {}
     animations_data = []
     animations_split_data = []
+    txp_data = []
     
     for file_name in archive:
         if file_name.endswith('.xc') or file_name.endswith('.xv'):
@@ -120,15 +122,15 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             hash_name, cam_values = xcma.open(archive[file_name])
             camera_data[hash_name] = cam_values
         elif file_name.endswith('.mtn2'):
-            animation_data = {}
-            
-            name, frame_count, bone_name_hashes, data = xmtn.open_mtn2(archive[file_name])
-            animation_data['name'] = name
-            animation_data['frame_count'] = frame_count
-            animation_data['bone_name_hashes'] = bone_name_hashes
-            animation_data['data'] = data
-            
-            animations_data.append(animation_data)
+            #animation_data = {}
+            #
+            #name, frame_count, bone_name_hashes, data = xmtn.open_mtn2(archive[file_name])
+            #animation_data['name'] = name
+            #animation_data['frame_count'] = frame_count
+            #animation_data['bone_name_hashes'] = bone_name_hashes
+            #animation_data['data'] = data
+            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            animations_data.append(anim)
         elif file_name.endswith('.mtn3'):
             animation_data = {}
             
@@ -138,8 +140,14 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             animation_data['bone_name_hashes'] = bone_name_hashes
             animation_data['data'] = data
             
-            animations_data.append(animation_data)  
-        elif file_name.endswith('.mtninf') and not file_name.endswith('.mtninf2'):
+            animations_data.append(animation_data)
+        elif file_name.endswith('.imm2'):
+            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            animations_data.append(anim)
+        elif file_name.endswith('.mtm2'):
+            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            animations_data.append(anim)
+        elif file_name.endswith('mtninf') and not file_name.endswith('.mtninf2'):
             split_animation_data = {}
             
             split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end = minf.open_minf1(archive[file_name])
@@ -151,11 +159,13 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
             animations_split_data.append(split_animation_data)
         elif file_name.endswith('.mtninf2'):
-            animations_split_data.extend(minf.open_minf2(archive[file_name]))         
+            animations_split_data.extend(minf.open_minf2(archive[file_name])) 
         elif file_name == 'RES.bin':
             res_data = res.open_res(data=archive[file_name])
         elif file_name == 'CMR.bin':
             camera_hashes = xcmt.open(data=archive[file_name])
+        elif file_name.endswith('.txp'):
+            txp_data.append(txp.read_txp(io.BytesIO(archive[file_name])))
 
     if bpy.context.scene.objects:
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -242,7 +252,15 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                     material_textures.append(images[int(material_texture_crc32, 16)])
                                 
             libs[material_name] = material_textures
-       
+    
+    # Make txps
+    txps = []
+    for i in range(len(txp_data)):
+        txps.append([
+            res_data[res.RESType.Textproj][txp_data[i][0]],
+            res_data[res.RESType.MaterialData][txp_data[i][1]]['name'],
+        ])
+    
     # Make meshes
     if len(meshes_data) > 0:
         for i in range(len(meshes_data)):
@@ -253,14 +271,18 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             lib = None
             if mesh_data['material_name'] in libs:
                 lib = libs[mesh_data['material_name']]
-                
+            
             # Get bones
             bones = None
             if res.RESType.Bone in res_data:
                 bones = res_data[res.RESType.Bone]
+            
+            # Get single_bind
+            if mesh_data["single_bind"] is not None:
+                mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
                 
             # Create the mesh using the mesh data
-            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib) 
+            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps) 
 
     # Check if there is an active object and if it's an armature
     if armature == None and len(animations_data) > 0:
@@ -284,11 +306,11 @@ def fileio_open_xpck(context, filepath, file_name = ""):
 
             # Find split animations for the current main animation
             for animation_split_data in animations_split_data:
-                animation_crc32 = zlib.crc32(animation_data['name'].encode("shift-jis"))
+                animation_crc32 = zlib.crc32(animation_data.AnimationName.encode("shift-jis"))
                 if animation_crc32 == animation_split_data['anim_crc32']:
                     split_animation = {}
                     
-                    split_animation['name'] = animation_data['name'] + '_' + animation_split_data['split_anim_name']
+                    split_animation['name'] = animation_data.AnimationName + '_' + animation_split_data['split_anim_name']
                     split_animation['frame_start'] = animation_split_data['frame_start']
                     split_animation['frame_end'] = animation_split_data['frame_end']
                     
@@ -299,14 +321,14 @@ def fileio_open_xpck(context, filepath, file_name = ""):
         # Add all animations to the armature
         for animation in animations:
             # Add main animation           
-            name = animation['main']['name']
-            frame_count = animation['main']['frame_count']
-            data = animation['main']['data']
+            name = animation['main'].AnimationName
+            frame_count = animation['main'].FrameCount
+            data = animation['main']
             
             if frame_count > max_frames:
                 max_frames = frame_count
             
-            create_animation(name, frame_count, armature, data)
+            create_animation(name, frame_count, armature, data, res_data)
             
             # Split animations
             for split_animation in animation['split']:
