@@ -1,6 +1,5 @@
 from .imgc import *
 from .xmpr import *
-from .xmtn import *
 from .xpck import *
 from .mbn import *
 from .res import *
@@ -11,5 +10,5 @@ from .xcsl import *
 from .xcmt import *
 from .cmn import *
 from .txp import *
-from .animationmanager import *
-from .animationsupport import *
+from .animation_manager import *
+from .animation_support import *

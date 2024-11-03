@@ -15,7 +15,7 @@ if "fileio_xmpr" in locals():
     
 if "fileio_xmtn" in locals():
     importlib.reload(fileio_xmtn) 
-    importlib.reload(xmtn)
+    importlib.reload(animation_manager)
 
 if "fileio_xpck" in locals():
     importlib.reload(fileio_xpck) 

@@ -11,7 +11,7 @@ from math import radians
 from mathutils import Matrix, Quaternion, Vector
 import io
 
-from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, animationmanager, animationsupport
+from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, animation_manager, animation_support
 from .fileio_xmpr import *
 from .fileio_xmtn import *
 from .fileio_xcma import *
@@ -129,7 +129,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             #animation_data['frame_count'] = frame_count
             #animation_data['bone_name_hashes'] = bone_name_hashes
             #animation_data['data'] = data
-            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
             animations_data.append(anim)
         elif file_name.endswith('.mtn3'):
             animation_data = {}
@@ -142,10 +142,10 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
             animations_data.append(animation_data)
         elif file_name.endswith('.imm2'):
-            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
             animations_data.append(anim)
         elif file_name.endswith('.mtm2'):
-            anim = animationmanager.AnimationManager(reader=io.BytesIO(archive[file_name]))
+            anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
             animations_data.append(anim)
         elif file_name.endswith('mtninf') and not file_name.endswith('.mtninf2'):
             split_animation_data = {}
@@ -278,8 +278,9 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                 bones = res_data[res.RESType.Bone]
             
             # Get single_bind
-            if mesh_data["single_bind"] is not None:
-                mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
+            mesh_data["single_bind"] = None
+            #if mesh_data["single_bind"] is not None:
+                #mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
                 
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps) 
@@ -328,7 +329,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             if frame_count > max_frames:
                 max_frames = frame_count
             
-            create_animation(name, frame_count, armature, data, res_data)
+            create_animation(data, armature)
             
             # Split animations
             for split_animation in animation['split']:
