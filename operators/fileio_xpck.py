@@ -918,9 +918,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             
             # Add the template_name property to the main box
             box.prop(self, "template_name", text="Template")
-            
-            if self.template_name == 'Inazuma Eleven':
-                box.prop(self, "template_mode_name", text="Mode")
+            box.prop(self, "template_mode_name", text="Mode")
             
             # Create a sub-box for outline properties
             #outline_box = box.box()
