@@ -123,6 +123,12 @@ def read_data(reader, string_table, items):
             crc32text_split = zlib.crc32(t.encode("shift-jis"))
             if crc32text_split not in string_table:
                 string_table[crc32text_split] = t
+        
+        text_split = text.split("_")
+        for t in text_split:
+            crc32text_split = zlib.crc32(t.encode("shift-jis"))
+            if crc32text_split not in string_table:
+                string_table[crc32text_split] = t
     
     read_section_table(reader, material_table_offset, material_table_count, items, string_table, text_reader)
     read_section_table(reader, node_offset, node_count, items, string_table, text_reader)
