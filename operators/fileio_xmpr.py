@@ -104,215 +104,125 @@ def get_mesh_information(mesh):
     return face_indices, vertices_info, uv_info, normal_info, color_info
 
 def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
-    # Create a new mesh object
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
-
-    # Add the new mesh object to the scene
+    
     bpy.context.collection.objects.link(mesh_obj)
-
-    # Select the object and make it active
+    
     bpy.context.view_layer.objects.active = mesh_obj
     mesh_obj.select_set(True)
-
-    # Switch to edit mode
-    bpy.ops.object.mode_set(mode='EDIT')
-
-    # Initialize array to store vertex data
-    positions = []
-    normals = []
-    uv_data = []
-    weights = []
-    bone_indices = []
-    color_data = []
-    single_bind = model_data['single_bind']
-
-    # Fill the array with data from model_data['vertices']
-    for vertex_data in model_data['vertices']:
-        if 'positions' in vertex_data:
-            positions.append(vertex_data['positions'])
-      
-        if 'normals' in vertex_data:
-            normals.append(vertex_data['normals'])
-            
-        if 'uv_data' in vertex_data:    
-            uv_data.append(vertex_data['uv_data'])
-            
-        if 'weights' in vertex_data:
-            weights.append(vertex_data['weights'])
-            
-        if 'bone_indices' in vertex_data:    
-            bone_indices.append(vertex_data['bone_indices'])
-            
-        if 'color_data' in vertex_data:
-            color_data.append(vertex_data['color_data'])        
     
-    bm = bmesh.from_edit_mesh(mesh)
-
-    # Create vertices
-    vertices = [bm.verts.new(pos) for pos in positions]
-                        
-    # Update normals
-    bm.normal_update()            
-            
-    # Create uv layers
-    uv_layer = bm.loops.layers.uv.verify()
-    
-    vertex_group_mapping = {}
-                    
-    # Create colors layer
-    colors_layer = bm.loops.layers.color.new('Color')            
-
-    # Create faces using triangle indices
-    for face_indices in model_data['triangles']:
-        if isinstance(face_indices, int):
-            continue
-        else:
-            v1_idx, v2_idx, v3_idx = face_indices
-
-        v1 = vertices[v1_idx]
-        v2 = vertices[v2_idx]
-        v3 = vertices[v3_idx]
-
-        # Check if the face already exists
-        existing_face = None
-        for existing_face in bm.faces:
-            if (existing_face.verts[0] == v1 and
-                existing_face.verts[1] == v2 and
-                existing_face.verts[2] == v3):
-                break
-        else:
-            # Face doesn't exist, create a new one
-            face = bm.faces.new((v1, v2, v3))
-
-            # Assign normals to vertices
-            for i, vert in enumerate(face.verts):
-                vert.normal = normals[face_indices[i]]
-
-            # Assign UV coordinates to vertices
-            for i, loop in enumerate(face.loops):
-                loop[uv_layer].uv = uv_data[face_indices[i]]
-
-            # Assign colors to vertices
-            for i, loop in enumerate(face.loops):
-                loop[colors_layer] = color_data[face_indices[i]]
-
-            # Collect vertex and bone index mapping
-            for i, vert in enumerate(face.verts):
-                index = face_indices[i]
-                vert_weights = weights[face_indices[i]]
-
-                for j, weight in enumerate(vert_weights):
-                    if face_indices[i] < len(bone_indices):
-                        bone_crc32 = bone_indices[face_indices[i]][j]
-                        
-                        if bones != None:
-                            if bone_crc32 in bones:
-                                bone_name = bones[bone_crc32]
-                                if index not in vertex_group_mapping:
-                                    vertex_group_mapping[index] = []
-                                vertex_group_mapping[index].append((bone_name, weight))
-           
-    # Update the mesh
-    bmesh.update_edit_mesh(mesh)
-    
-    # Memory free
-    bm.free()
-    
-    # Switch back to object mode
     bpy.ops.object.mode_set(mode='OBJECT')
-
-    # Assign weights to vertex groups
-    for vert_index, group_data in vertex_group_mapping.items():
-        for bone_name, weight in group_data:
-            vertex_group = mesh_obj.vertex_groups.get(bone_name)
-
-            if not vertex_group:
-                vertex_group = mesh_obj.vertex_groups.new(name=bone_name)
-
-            # Assign weight to the vertex group
-            if weight > 0:
-                vertex_group.add([vert_index], weight, 'REPLACE')    
-
-    # Rotate the mesh 90 degrees around the X axis
+    
+    positions = model_data["vertices"]["positions"]
+    normals = model_data["vertices"]["normals"]
+    uv_data0 = model_data["vertices"]["uv_data0"]
+    uv_data1 = model_data["vertices"]["uv_data1"]
+    weights = model_data["vertices"]["weights"]
+    bone_indices = model_data["vertices"]["bone_indices"]
+    color_data = model_data["vertices"]["color_data"]
+    single_bind = model_data["single_bind"]
+    
+    mesh.from_pydata(positions, [], model_data["triangles"])
+    
+    if normals:
+        mesh.normals_split_custom_set_from_vertices(normals)
+    
+    texprojs = ["UVMap0", "UVMap1"] # prm can't get more than 2 UVMaps
+    if txp_data:
+        for i in txp_data:
+            if i[1] == model_data["material_name"]:
+                texprojs[i[2]] = i[0]
+    
+    if uv_data0:
+        uv_layer0 = mesh.uv_layers.new(name=texprojs[0])
+        for loop in mesh.loops:
+            vertex_index = loop.vertex_index
+            if vertex_index < len(uv_data0):
+                uv_layer0.data[loop.index].uv = uv_data0[vertex_index]
+        mesh_obj.modifiers.new(name=texprojs[0], type="UV_WARP")
+        mesh_obj.modifiers[texprojs[0]].uv_layer = texprojs[0]
+    if uv_data1:
+        uv_layer1 = mesh.uv_layers.new(name=texprojs[1])
+        for loop in mesh.loops:
+            vertex_index = loop.vertex_index
+            if vertex_index < len(uv_data1):
+                uv_layer1.data[loop.index].uv = uv_data1[vertex_index]
+        mesh_obj.modifiers.new(name=texprojs[1], type="UV_WARP")
+        mesh_obj.modifiers[texprojs[1]].uv_layer = texprojs[1]
+    
+    if color_data:
+        color_layer = mesh.vertex_colors.new(name="Col")
+        for loop_idx, color in enumerate(color_data):
+            color_layer.data[loop_idx].color = color
+    
     mesh_obj.rotation_euler = (radians(90), 0, 0)
     
-    # Link mesh to armature
     if armature:
+        modifier = mesh_obj.modifiers.new(type="ARMATURE", name="Armature")
+        modifier.object = armature
+        if bones:
+            for bone_crc32 in bones:
+                bone_name = bones[bone_crc32]
+                if bone_name not in mesh_obj.vertex_groups:
+                    mesh_obj.vertex_groups.new(name=bone_name)
+            
+            for vert_idx, (vertex_weights, vertex_bones) in enumerate(zip(weights, bone_indices)):
+                for weight, bone_idx in zip(vertex_weights, vertex_bones):
+                    bone_name = bones[bone_idx]
+                    mesh_obj.vertex_groups[bone_name].add([vert_idx], weight, 'ADD')
+        
         if mesh_obj.vertex_groups:
-            # Créer un dictionnaire pour stocker les influences par os
             bone_influences = {bone.name: 0.0 for bone in armature.data.bones}
-
-            # Parcourir tous les vertices de la mesh
             for vertex in mesh_obj.data.vertices:
-                # Vérifier les groupes de vertices associés à chaque vertex
                 for group in vertex.groups:
                     group_name = mesh_obj.vertex_groups[group.group].name
                     if group_name in bone_influences:
-                        # Ajouter l'influence au total pour chaque os
                         bone_influences[group_name] += group.weight
             
-            # Trouver l'os avec l'influence totale la plus élevée
             most_influential_bone = armature.pose.bones.get(max(bone_influences, key=bone_influences.get))
             
-            # Récupérer la matrice de transformation du bone le plus influent en espace monde
             bone_world_matrix = armature.matrix_world @ most_influential_bone.matrix
             bone_world_location = bone_world_matrix.translation
             
-            # déplacer la mesh vers le bone le plus influent
-            print(mesh_obj.name, bone_world_location.x, bone_world_location.y, bone_world_location.z, most_influential_bone.name)
+            #print(mesh_obj.name, bone_world_location.x, bone_world_location.y, bone_world_location.z, most_influential_bone.name)
             if bone_world_location.y > 400:
-                mesh_obj.location.y = bone_world_location.y  
-
+                mesh_obj.location.y = bone_world_location.y
+        
         bpy.ops.object.select_all(action='DESELECT')
         mesh_obj.select_set(True)
         armature.select_set(True)
         bpy.context.view_layer.objects.active = armature
         bpy.ops.object.parent_set(type='ARMATURE', keep_transform=True)
         
-        # Créer une relation mesh au bone
-        if single_bind != None:
+        if single_bind:
             mesh_obj.parent_type = 'BONE'
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
     
-    # Link textures to mesh
     if lib:
-        # Create a new material for the mesh
         mat = bpy.data.materials.new(name=model_data['material_name'])
         mat.use_nodes=True 
         
         material_output = mat.node_tree.nodes.get('Material Output')
         principled_BSDF = mat.node_tree.nodes.get('Principled BSDF')
-
+        
         for texture in lib:
             tex_node = mat.node_tree.nodes.new('ShaderNodeTexImage')
             tex_node.image = texture
             
-            # Check if the texture has an alpha channel
             if texture.alpha_mode != "NONE":
-                # Enable the use of the alpha channel in the material
                 principled_BSDF.inputs["Alpha"].default_value = 1.0
-
-                # Set the material blend mode to 'BLEND' for alpha blending
+                
                 mat.blend_method = 'BLEND'
-
-                # Connect the alpha output of the texture to the Alpha input of Principled BSDF
+                
                 mat.node_tree.links.new(tex_node.outputs["Alpha"], principled_BSDF.inputs["Alpha"])
             
-            # Connect the color output of the texture to the Base Color input of Principled BSDF
             mat.node_tree.links.new(tex_node.outputs[0], principled_BSDF.inputs[0])
         
         mesh_obj.data.materials.append(mat)
     
-    # Rename uv layers and add uv warp modifier
-    if txp_data:
-        for txp in txp_data:
-            if txp[1] == model_data['material_name']:
-                mesh_obj.data.uv_layers[0].name = txp[0]
-                #print(mesh_obj.modifiers)
-                mesh_obj.modifiers.new(name=txp[0], type="UV_WARP")
-                mesh_obj.modifiers[txp[0]].uv_layer = mesh_obj.data.uv_layers[0].name
+    return mesh_obj
 
 def fileio_write_xmpr(context, mesh_name, library_name, mode):
     # Get Mesh
