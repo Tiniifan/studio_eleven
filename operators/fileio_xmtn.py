@@ -18,11 +18,15 @@ from ..formats import  animation_manager, animation_support, res
 def crc32_hash(name):
     return zlib.crc32(name.encode())
 
-def find_bone_by_crc32(armature, crc32):
-    for bone in armature.bones:
-        if crc32_hash(bone.name) == crc32:
-            return bone
-            
+def findCrc32(crc32, bones=None, modifier=None):
+    if bones:
+        for bone in bones.items():
+            if crc32_hash(bone[0]) == crc32:
+                return bone[0]
+    if modifier:
+        for uvmap in modifier.items():
+            if crc32_hash(uvmap[0]) == crc32 and str(uvmap[0]) != "Armature":
+                return str(uvmap[0])
     return None
 
 def find_armatures_with_bones(bone_name_hashes):
@@ -30,8 +34,7 @@ def find_armatures_with_bones(bone_name_hashes):
 
     for armature_obj in bpy.data.objects:
         if armature_obj.type == 'ARMATURE' and armature_obj.data:
-            armature = armature_obj.data
-            contains_any_bone = any(find_bone_by_crc32(armature, crc32) is not None for crc32 in bone_name_hashes)
+            contains_any_bone = any(findCrc32(crc32, armature_obj) is not None for crc32 in bone_name_hashes)
             
             if contains_any_bone:
                 armatures.append(armature_obj)
@@ -97,51 +100,41 @@ def calculate_transformed_scale(pose_bone, scale):
 
     return transformed_scale
 
-def create_animation(animation, armature_obj):
-    scene = bpy.context.scene
-    armature = armature_obj.data
-    
-    # Switch to Pose Mode
-    bpy.context.view_layer.objects.active = armature_obj
-    bpy.ops.object.mode_set(mode='POSE')
-    
-    if armature_obj.animation_data:
-        armature_obj.animation_data_clear()
-        
-    scene.frame_start = 0
-    scene.frame_end = animation.FrameCount
-    
-    bpy.context.scene.frame_set(0)
-    bpy.ops.pose.select_all(action='SELECT')
-    bpy.ops.pose.transforms_clear()
-    
+def create_animation(animData, armature):
     # Create an action for the animation
-    action = bpy.data.actions.new(name=animation.AnimationName)
+    action = bpy.data.actions.new(name=animData.AnimationName)
+    
+    # Assign the action to the armature's animation data
+    if armature.animation_data is None:
+        armature.animation_data_create()
+    armature.animation_data.action = action
     
     # Loop through each track in animdata
-    for track in animation.Tracks:
+    for track in animData.Tracks:
         for node in track.Nodes:
+            # Check if this is a bone track or a material/UV track
             if track.Name.startswith("Bone") and not track.Name == "BoneBool":
-                bone = find_bone_by_crc32(armature, node.Name)
-                if bone is None:
-                    continue
-        
-                pose_bone = armature_obj.pose.bones.get(bone.name)
-                if not pose_bone:
-                    print(f"Pose bone {bone.name} not found.")
+                bpy.ops.object.mode_set(mode='POSE')
+                #print("POSE MODE")
+                
+                nodeName = findCrc32(node.Name, armature.pose.bones)
+                bone = armature.pose.bones.get(nodeName)
+                if not bone:
+                    #print(f"Bone '{nodeName}' not found in armature.")
                     continue
                 
                 # Determine the transformation channel
                 if track.Name == "BoneLocation":
-                    data_path = f'pose.bones["{pose_bone.name}"].location'
+                    data_path = f'pose.bones["{nodeName}"].location'
                     indices = [0, 1, 2]  # X, Y, Z location
                 elif track.Name == "BoneRotation":
-                    data_path = f'pose.bones["{pose_bone.name}"].rotation_quaternion'
+                    data_path = f'pose.bones["{nodeName}"].rotation_quaternion'
                     indices = [0, 1, 2, 3]  # W, X, Y, Z quaternion
                 elif track.Name == "BoneScale":
-                    data_path = f'pose.bones["{pose_bone.name}"].scale'
+                    data_path = f'pose.bones["{nodeName}"].scale'
                     indices = [0, 1, 2]  # X, Y, Z scale
                 else:
+                    #print(f"Unknown bone track: {track.Name}")
                     continue
                 
                 # Add fcurves and keyframes
@@ -154,52 +147,52 @@ def create_animation(animation, armature_obj):
                         value = frame.Value
                         
                         if track.Name == "BoneLocation":
-                            transformation = calculate_transformed_location(pose_bone, Vector([value.X, value.Y, value.Z]))
+                            transformation = calculate_transformed_location(bone, Vector([value.X, value.Y, value.Z]))
                             fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
                         elif track.Name == "BoneRotation":
-                            transformation = calculate_transformed_rotation(pose_bone, Vector([value.W, value.X, value.Y, value.Z]))
+                            transformation = calculate_transformed_rotation(bone, Vector([value.W, value.X, value.Y, value.Z]))
                             fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
                         elif track.Name == "BoneScale":
-                            transformation = calculate_transformed_scale(pose_bone, Vector([value.X, value.Y, value.Z]))
+                            transformation = calculate_transformed_scale(bone, Vector([value.X, value.Y, value.Z]))
                             fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
             
-            #elif track.Name == "MaterialTransparency":
-            #    bpy.ops.object.mode_set(mode='OBJECT')
+            elif track.Name.startswith("UV"):
+                bpy.ops.object.mode_set(mode='OBJECT')
+                
+                for mesh in armature.children:
+                    if mesh.type == "MESH":
+                        nodeName = findCrc32(node.Name, modifier=mesh.modifiers)
+                        if not nodeName:
+                            continue
+                        modifier = mesh.modifiers.get(nodeName)
+                        if modifier:
+                            for frame in node.Frames:
+                                frame_num = frame.Key
+                                value = frame.Value
+                                
+                                if track.Name == "UVMove":
+                                    modifier.offset[0] = value.X
+                                    modifier.offset[1] = value.Y
+                                    modifier.keyframe_insert(data_path="offset", index=0, frame=frame_num)
+                                    modifier.keyframe_insert(data_path="offset", index=1, frame=frame_num)
+                                if track.Name == "UVScale":
+                                    modifier.scale[0] = value.X
+                                    modifier.scale[1] = value.Y
+                                    modifier.keyframe_insert(data_path="scale", index=0, frame=frame_num)
+                                    modifier.keyframe_insert(data_path="scale", index=1, frame=frame_num)
+                                if track.Name == "UVRotate":
+                                    modifier.rotation[0] = value.X
+                                    modifier.keyframe_insert(data_path="rotation", index=0, frame=frame_num)
             
-            #elif track.Name.startswith("UV"):
-            #    nodeName = resData[res.RESType.Textproj][node.Name]
-            #    
-            #    bpy.ops.object.mode_set(mode='OBJECT')
-            #    
-            #    for mesh in bpy.data.meshes:
-            #        for obj in bpy.data.objects:
-            #            if obj.data == mesh:
-            #                modifier = obj.modifiers.get(nodeName)
-            #                if modifier:
-            #                    for frame in node.Frames:
-            #                        frame_num = frame.Key
-            #                        value = frame.Value
-            #                        
-            #                        if track.Name == "UVMove":
-            #                            modifier.offset[0] = value.X
-            #                            modifier.offset[1] = value.Y
-            #                            modifier.keyframe_insert(data_path="offset", index=0, frame=frame_num)
-            #                            modifier.keyframe_insert(data_path="offset", index=1, frame=frame_num)
-            #                        if track.Name == "UVScale":
-            #                            modifier.scale[0] = value.X
-            #                            modifier.scale[1] = value.Y
-            #                            modifier.keyframe_insert(data_path="scale", index=0, frame=frame_num)
-            #                            modifier.keyframe_insert(data_path="scale", index=1, frame=frame_num)
-            #                        if track.Name == "UVRotate":
-            #                            modifier.rotation[0] = value.X
-            #                            modifier.keyframe_insert(data_path="rotation", index=0, frame=frame_num)
             else:
                 pass
+    
+    for obj in bpy.context.scene.objects:
+        if obj.animation_data and obj.animation_data.action:
+            for fcurve in obj.animation_data.action.fcurves:
+                for keyframe in fcurve.keyframe_points:
+                    keyframe.interpolation = 'LINEAR'
 
-    # Assign the created action to the armature object
-    armature_obj.animation_data_create()
-    armature_obj.animation_data.action = action
-                
 def fileio_open_xmtn(operator, context, filepath):
     animation_name = ""
     frame_count = 0
