@@ -259,6 +259,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
         txps.append([
             res_data[res.RESType.Textproj][txp_data[i][0]],
             res_data[res.RESType.MaterialData][txp_data[i][1]]['name'],
+            txp_data[i][2], # UVMap index
         ])
     
     # Make meshes
@@ -278,13 +279,12 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                 bones = res_data[res.RESType.Bone]
             
             # Get single_bind
-            mesh_data["single_bind"] = None
-            #if mesh_data["single_bind"] is not None:
-                #mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
+            if mesh_data["single_bind"] is not None:
+                mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
                 
             # Create the mesh using the mesh data
-            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps) 
-
+            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps)
+    
     # Check if there is an active object and if it's an armature
     if armature == None and len(animations_data) > 0:
         active_obj = bpy.context.active_object
