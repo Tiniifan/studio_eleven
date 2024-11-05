@@ -3,7 +3,7 @@ import zlib
 import struct
 
 def read_txp(reader):
-    return list(struct.unpack("<II", reader.read(8)))
+    return list(struct.unpack("<III", reader.read(12)))
 
 def write(name, lib_name):
     out = bytes()  

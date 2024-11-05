@@ -237,186 +237,180 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
 # XMPR Open Function
 ##########################################
 
-def read_attribute(data, offset, type, count):
-    o = (0, 0, 0, 0)
+def read_vertex(reader, count, aType, size):
+    v = (0.0, 0.0, 0.0, 0.0)
+    if count != 0x00:
+        if aType == 0x02:
+            return struct.unpack(f"<{count}f", reader.read(size))
+    return v
+
+def parse_buffer(reader, node_table):
+    vertices = {
+        "positions": [],
+        "normals": [],
+        "uv_data0": [],
+        "uv_data1": [],
+        "weights": [],
+        "bone_indices": [],
+        "color_data": [],
+    }
     
-    if type == 0:  # nothing
-        pass
-    elif type == 1:  # Vec3
-        pass
-    elif type == 2:  # Vec4
-        if count > 0 and offset + 4 * count <= len(data):
-            o = struct.unpack(f"<{count}f", data[offset:offset + 4 * count])
-    else:
-        raise Exception(f"Unknown Type 0x{type:02X}")
-
-    return o
-
-def parse_buffer(buffer, node_table):
-    vertices = []
-    attribute_buffer = bytearray()
-    stride = 0
-    vertex_count = 0
-
-    offset = 0x4
-    att_offset = struct.unpack("<H", buffer[offset:offset + 2])[0]
-    offset += 2
-    att_something = struct.unpack("<h", buffer[offset:offset + 2])[0]
-    offset += 2
-    ver_offset = struct.unpack("<H", buffer[offset:offset + 2])[0]
-    offset += 2
-    stride = struct.unpack("<h", buffer[offset:offset + 2])[0]
-    offset += 2
-    vertex_count = struct.unpack("<i", buffer[offset:offset + 4])[0]
-
-    attribute_buffer = compressor.decompress(buffer[att_offset:att_offset + att_something])
-    buffer = compressor.decompress(buffer[ver_offset:])
-
-    ACount = [0] * 10
-    AOffet = [0] * 10
-    ASize = [0] * 10
-    AType = [0] * 10
-
-    offset = 0
+    xpvb_magic = struct.unpack("<4s", reader.read(4))[0]
+    att_buffer_offset = struct.unpack("<H", reader.read(2))[0]
+    unk_offset = struct.unpack("<H", reader.read(2))[0]
+    vertex_buffer_offset = struct.unpack("<H", reader.read(2))[0]
+    stride = struct.unpack("<H", reader.read(2))[0]
+    vertex_count = struct.unpack("<I", reader.read(4))[0]
+    
+    reader.seek(att_buffer_offset)
+    attbuffer = io.BytesIO(compressor.decompress(reader.read(unk_offset - att_buffer_offset)))
+    aCount = [int] * 10
+    aOffset = [int] * 10
+    aSize = [int] * 10
+    aType = [int] * 10
     for i in range(10):
-        ACount[i] = struct.unpack("<b", attribute_buffer[offset:offset + 1])[0]
-        offset += 1
-        AOffet[i] = struct.unpack("<b", attribute_buffer[offset:offset + 1])[0]
-        offset += 1
-        ASize[i] = struct.unpack("<b", attribute_buffer[offset:offset + 1])[0]
-        offset += 1
-        AType[i] = struct.unpack("<b", attribute_buffer[offset:offset + 1])[0]
-        offset += 1
-
-        if ACount[i] > 0 and i != 0 and i != 1 and i != 2 and i != 4 and i != 7 and i != 8 and i != 9:
-            print(f"{i} {ACount[i]} {AOffet[i]} {ASize[i]} {AType[i]}")
-            
-
+        aCount[i]  = struct.unpack("<B", attbuffer.read(1))[0]
+        aOffset[i] = struct.unpack("<B", attbuffer.read(1))[0]
+        aSize[i]   = struct.unpack("<B", attbuffer.read(1))[0]
+        aType[i]   = struct.unpack("<B", attbuffer.read(1))[0]
+    attbuffer.close()
+    
+    reader.seek(vertex_buffer_offset)
+    vbuffer = io.BytesIO(compressor.decompress(reader.read()))
+    
     for i in range(vertex_count):
-        vert = {}
-        
         for j in range(10):
-            offset = i * stride + AOffet[j]
-            if j == 0:  # Position
-                vert["positions"] = read_attribute(buffer, offset, AType[j], ACount[j])[:3]
-            elif j == 1:  # Tangent
-                pass
-            elif j == 2:  # Normal
-                vert["normals"] = read_attribute(buffer, offset, AType[j], ACount[j])[:3]
-            elif j == 4:  # UV0
-                uv_data = list(read_attribute(buffer, offset, AType[j], ACount[j])[:2])
-
-                # Effectuer l'opération 1.0 - sur la composante Y des coordonnées UV
-                uv_data[1] = 1.0 - uv_data[1]
-
-                vert["uv_data"] = tuple(uv_data)
-            elif j == 7:  # Bone Weight
-                vert["weights"] = read_attribute(buffer, offset, AType[j], ACount[j])
-            elif j == 8:  # Bone Index
-                vn = read_attribute(buffer, offset, AType[j], ACount[j])
-                if node_table and len(node_table) > 0 and len(node_table) != 1:
-                    vert["bone_indices"] = (node_table[int(vn[0])], node_table[int(vn[1])], node_table[int(vn[2])], node_table[int(vn[3])])
-            elif j == 9:  # Color
-                vert["color_data"] = read_attribute(buffer, offset, AType[j], ACount[j])[:4]
-
-        vertices.append(vert)
+            vbuffer.seek(i * stride + aOffset[j])
+            if j == 0:
+                vertices["positions"].append(
+                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])[:3]
+                )
+            elif j == 2:
+                vertices["normals"].append(
+                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])[:3]
+                )
+            elif j == 4:
+                uv_data0 = list(read_vertex(vbuffer, aCount[j], aType[j], aSize[j]))[:2]
+                uv_data0[1] = 1.0 - uv_data0[1]
+                vertices["uv_data0"].append(
+                    tuple(uv_data0)
+                )
+            elif j == 5:
+                uv_data1 = list(read_vertex(vbuffer, aCount[j], aType[j], aSize[j]))[:2]
+                uv_data1[1] = 1.0 - uv_data1[1]
+                vertices["uv_data1"].append(
+                    tuple(uv_data1)
+                )
+            elif j == 7:
+                vertices["weights"].append(
+                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                )
+            elif j == 8:
+                bone_indices = read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                if node_table:
+                    vertices["bone_indices"].append((
+                        node_table[int(bone_indices[0])],
+                        node_table[int(bone_indices[1])],
+                        node_table[int(bone_indices[2])],
+                        node_table[int(bone_indices[3])],
+                    ))
+            elif j == 9:
+                vertices["color_data"].append(
+                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                )
+    vbuffer.close()
+    reader.close()
 
     return vertices
 
-def parse_index_buffer(buffer):
-    indices = []
-    primitive_type = 0
-    face_count = 0
-
-    offset = 0x04
-    primitive_type = struct.unpack("<h", buffer[offset:offset + 2])[0]
-    offset += 2
-    face_offset = struct.unpack("<H", buffer[offset:offset + 2])[0]
-    offset += 2
-    face_count = struct.unpack("<i", buffer[offset:offset + 4])[0]
-
-    buffer = compressor.decompress(buffer[face_offset:])
-
-    if primitive_type != 2 and primitive_type != 0:
-        raise NotImplementedError("Primitive Type not implemented")
-
+def parse_index_buffer(reader):
+    triangles = []
+    
+    xpvi_magic = struct.unpack("<4s", reader.read(4))[0]
+    primitive_type = struct.unpack("<H", reader.read(2))[0]
+    faces_offset = struct.unpack("<H", reader.read(2))[0]
+    face_count = struct.unpack("<I", reader.read(4))[0]
+    
+    reader.seek(faces_offset)
+    ibuffer = io.BytesIO(compressor.decompress(reader.read()))
+    
     if primitive_type == 0:
-        # Triangle indice
-        offset = 0
         for i in range(0, face_count, 3):
-            indices_tuple = struct.unpack("<HHH", buffer[offset:offset + 6])
-            indices.append(indices_tuple)
-            offset += 6
+            triangles.append(struct.unpack("<HHH", ibuffer.read(6)))
     elif primitive_type == 2:
-        # Triangle strip
-        offset = 0
         for i in range(face_count):
-            indices.append(struct.unpack("<H", buffer[offset:offset + 2])[0])
-            offset += 2
-        
-        indices = triangulate([indices])
-
-    return indices
-
-def open(data):
-    offset = 4
-    prm_offset = struct.unpack("<I", data[offset:offset + 4])[0]
+            triangles.append(struct.unpack("<H", ibuffer.read(2))[0])
+        triangles = triangulate([triangles])
+    else:
+        raise NotImplementedError("Primitive Type not implemented")
+    ibuffer.close()
+    reader.close()
     
-    offset = prm_offset + 4
+    return triangles
 
-    # Buffers
-    pvb_offset = struct.unpack("<I", data[offset:offset + 4])[0] + prm_offset
-    offset += 4
-    pvb_size = struct.unpack("<i", data[offset:offset + 4])[0]
-    offset += 4
-
-    pvi_offset = struct.unpack("<I", data[offset:offset + 4])[0] + prm_offset
-    offset += 4
-    pvi_size = struct.unpack("<i", data[offset:offset + 4])[0] 
-    offset += 4
-
-    polygon_vertex_buffer = data[pvb_offset : pvb_offset + pvb_size]
-    polygon_vertex_index_buffer = data[pvi_offset : pvi_offset + pvi_size]
-
-    # Node Table
-    offset = 0x28
-    no_offset = struct.unpack("<I", data[offset:offset + 4])[0]
-    offset += 4
-
-    no_size = struct.unpack("<i", data[offset:offset + 4])[0] // 4 + 1
-    offset += 4
-
-    node_table = []
-    offset = no_offset
-    for _ in range(no_size):
-        node_table.append(struct.unpack("<I", data[offset:offset + 4])[0])
-        offset += 4
-
-    # Name and Material
-    offset = 0x30
-    name_position, name_length = struct.unpack("<II", data[offset:offset + 8])
-    offset += 8
-    name = data[name_position: name_position + name_length-1].decode('utf-8')
-
-    material_position, material_length = struct.unpack("<II", data[offset:offset + 8])
-    offset += 8
-    material_name = data[material_position:material_position + material_length-1].decode('utf-8')
+def open_xmpr(reader):
+    xmpr_magic = struct.unpack("<4s", reader.read(4))[0]
+    xprm_offset = struct.unpack("<I", reader.read(4))[0]
+    xprm_lenght = struct.unpack("<I", reader.read(4))[0]
+    properties_offset = struct.unpack("<I", reader.read(4))[0]
+    unk_offset = struct.unpack("<I", reader.read(4))[0]
+    unk_length = struct.unpack("<I", reader.read(4))[0]
+    unk1_offset = struct.unpack("<I", reader.read(4))[0]
+    unk1_length = struct.unpack("<I", reader.read(4))[0]
+    unk2_offset = struct.unpack("<I", reader.read(4))[0]
+    unk2_length = struct.unpack("<I", reader.read(4))[0]
+    nodes_offset = struct.unpack("<I", reader.read(4))[0]
+    nodes_lenght = struct.unpack("<I", reader.read(4))[0]
+    mesh_name_offset = struct.unpack("<I", reader.read(4))[0]
+    mesh_name_lenght = struct.unpack("<I", reader.read(4))[0]
+    material_name_offset = struct.unpack("<I", reader.read(4))[0]
+    material_name_length = struct.unpack("<I", reader.read(4))[0]
     
-    offset = 0x0C
-    offset = struct.unpack("<I", data[offset : offset + 4])[0] + 12
-    splitted_name_crc32 = struct.unpack("<I", data[offset : offset + 4])[0]
+    reader.seek(xprm_offset)
+    xprm_magic = struct.unpack("<4s", reader.read(4))[0]
+    xpvb_offset = struct.unpack("<I", reader.read(4))[0]
+    xpvb_lenght = struct.unpack("<I", reader.read(4))[0]
+    xpvi_offset = struct.unpack("<I", reader.read(4))[0]
+    xpvi_lenght = struct.unpack("<I", reader.read(4))[0]
+    
+    reader.seek(xpvb_offset + xprm_offset)
+    xpvb = io.BytesIO(reader.read(xpvb_lenght))
+    reader.seek(xpvi_offset + xprm_offset)
+    xpvi = io.BytesIO(reader.read(xpvi_lenght))
+    
+    reader.seek(properties_offset)
+    mesh_name_hash = struct.unpack("<I", reader.read(4))[0]
+    mat_name_hash = struct.unpack("<I", reader.read(4))[0]
+    unk_hash = struct.unpack("<I", reader.read(4))[0]
+    mesh_name_split_hash = struct.unpack("<I", reader.read(4))[0]
+    reader.read(36) # unk
+    unk_type = struct.unpack("<HH", reader.read(4))
+    nodes_count = struct.unpack("<I", reader.read(4))[0]
+    
+    reader.seek(nodes_offset)
+    node_table = None
+    if nodes_lenght != 0:
+        node_table = []
+        for i in range(nodes_count):
+            node_table.append(unpack("<I", reader.read(4))[0])
+    
+    reader.seek(mesh_name_offset)
+    mesh_name = reader.read(mesh_name_lenght).decode("shift-jis").replace("\x00", "")
+    
+    reader.seek(material_name_offset)
+    material_name = reader.read(material_name_length).decode("shift-jis").replace("\x00", "")
     
     single_bind = None
-    if len(node_table) == 1:
-        # 1 == 0 because we always skip one occurence
-        #pass
-        single_bind = splitted_name_crc32       
-
+    if nodes_lenght == 0:
+        single_bind = mesh_name_split_hash
+    
+    reader.close()
+    
     return {
-        "vertices": parse_buffer(polygon_vertex_buffer, node_table),
-        "triangles": parse_index_buffer(polygon_vertex_index_buffer),
+        "vertices": parse_buffer(xpvb, node_table),
+        "triangles": parse_index_buffer(xpvi),
         "node_table": node_table,
-        "name": name,
+        "name": mesh_name,
         "material_name": material_name,
         "single_bind": single_bind,
     }
