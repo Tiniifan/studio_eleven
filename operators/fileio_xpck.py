@@ -69,13 +69,17 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
 
             # Create a rotation matrix from the quaternion
             rotation_matrix = relative_rotation.to_matrix().to_4x4()
+            
+            # Check and adjust scale if necessary
+            if scale == (0, 0, 0):
+                scale = (0.00001, 0.00001, 0.00001)
 
-            # Create a resizing matrix
+            # Create a scaling matrix
             scale_matrix = Matrix.Scale(scale[0], 4, (1, 0, 0))
             scale_matrix *= Matrix.Scale(scale[1], 4, (0, 1, 0))
             scale_matrix *= Matrix.Scale(scale[2], 4, (0, 0, 1))
 
-            # Applying transformations
+            # Apply transformations
             new_bone.matrix = parent_bone.matrix @ translation_matrix @ rotation_matrix @ scale_matrix
     else:
         new_bone.matrix = Matrix.Translation(relative_location) @ relative_rotation.to_matrix().to_4x4() @ Matrix.Scale(scale[0], 4)
