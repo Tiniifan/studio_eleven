@@ -1,5 +1,6 @@
 import zlib
 import struct
+import io
 from ..utils import *
 from ..compression import lz10, compressor
 

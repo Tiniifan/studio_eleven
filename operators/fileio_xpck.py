@@ -113,7 +113,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             except Exception as e:
                 pass
         elif file_name.endswith('.prm'):
-            meshes_data.append(xmpr.open(archive[file_name]))
+            meshes_data.append(xmpr.open_xmpr(io.BytesIO(archive[file_name])))
         elif file_name.endswith('.mbn'):
             bones_data.append(mbn.open(archive[file_name]))    
         elif file_name.endswith('.xi'):
