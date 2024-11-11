@@ -161,8 +161,8 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     if armature:
         modifier = mesh_obj.modifiers.new(type="ARMATURE", name="Armature")
         modifier.object = armature
-        if bones:
-            for bone_crc32 in bones:
+        if bones and model_data["node_table"]:
+            for bone_crc32 in model_data["node_table"]:
                 bone_name = bones[bone_crc32]
                 if bone_name not in mesh_obj.vertex_groups:
                     mesh_obj.vertex_groups.new(name=bone_name)
