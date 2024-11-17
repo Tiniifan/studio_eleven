@@ -449,7 +449,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     txps = []
     if texprojs:
         for texproj in texprojs:
-            txps.append(txp.write(texproj[0], texproj[1])) 
+            txps.append(txp.write(texproj[0], texproj[1], texproj[2]))
     
     files = {}
     
@@ -610,8 +610,11 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
         default='RGBA8'
     )
 
+class TexprojPropertyGroup(bpy.types.PropertyGroup):
+    checked: bpy.props.BoolProperty(default=False, description="Texproj name")
+    name: bpy.props.StringProperty()
+
 class LibPropertyGroup(bpy.types.PropertyGroup):
-    texproj_name: bpy.props.StringProperty()
     name: bpy.props.StringProperty()
     textures: bpy.props.CollectionProperty(type=TexturePropertyGroup)
 
@@ -668,6 +671,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     )  
 
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
+    texproj_properties: bpy.props.CollectionProperty(type=TexprojPropertyGroup)
     libs: bpy.props.CollectionProperty(type=LibPropertyGroup)
     camera_properties: bpy.props.CollectionProperty(type=CameraPropertyGroup)
     archive_properties: bpy.props.CollectionProperty(type=ArchivePropertyGroup)
@@ -819,6 +823,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         libs = []
         self.mesh_properties.clear()
+        self.texproj_properties.clear()
         self.libs.clear()
         self.camera_properties.clear()
         context.scene.export_xc_animations_items.clear()
@@ -830,6 +835,10 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             item = self.mesh_properties.add()
             item.checked = True
             item.name = mesh.name
+            for uv_layer in mesh.data.uv_layers:
+                item = self.texproj_properties.add()
+                item.checked = True
+                item.name = uv_layer.name
 
             lib = {}
             lib['texture_name'] = []
@@ -878,7 +887,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         for index, value in enumerate(libs):
             item = self.libs.add()
             item.name = 'DefaultLib.' + str(index)
-            item.texproj_name =  item.name + "_texproj0"
             
             for texture_name in value['texture_name']:
                 texture = item.textures.add()
@@ -952,6 +960,10 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             row = mesh_group.row(align=True)
                             row.prop(self.mesh_properties[child.name], "checked", text=child.name)
                             row.prop(self.libs[self.mesh_properties[child.name].library_index], "name", text="", emboss=False)
+                            txp_group = mesh_group.box()
+                            for uv_layer in child.data.uv_layers:
+                                row = txp_group.row(align=True)
+                                row.prop(self.texproj_properties[uv_layer.name], "checked", text=uv_layer.name)
             elif self.export_option == 'ANIMATION':
                 options_box.prop(self, "animation_enum", text="Available animations")
                 options_box.prop(self, "attach_bone", text="Attach armature")
@@ -1109,14 +1121,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             # Check if the mesh has a library_name
                             if not lib.name:
                                 self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a library_name!")
-                                return {'FINISHED'}
-                                
-                           # Check if the mesh has a texproj_name
-                            if not lib.texproj_name:
-                                self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a texproj_name!")
-                                return {'FINISHED'}     
+                                return {'FINISHED'}    
                             
-                            texprojs.append([lib.texproj_name, lib.name])
+                            uvidx = 0
+                            for uv_layer in mesh.data.uv_layers:
+                                for txp_prop in self.texproj_properties:
+                                    if uv_layer.name == txp_prop.name:
+                                        if txp_prop.checked:
+                                            texprojs.append([txp_prop.name, lib.name, uvidx])
+                                        uvidx += 1
+                            
                             mesh_prop.library_name = lib.name
                                 
                             textures[lib.name] = []                              
