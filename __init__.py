@@ -75,6 +75,7 @@ def register():
     bpy.utils.register_class(MeshPropertyGroup)
     bpy.utils.register_class(CameraPropertyGroup)
     bpy.utils.register_class(ArchivePropertyGroup)
+    bpy.utils.register_class(TexprojPropertyGroup)
     bpy.types.Scene.export_xc_animations_items = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.utils.register_class(ExportXMTN)
     bpy.utils.register_class(ExportXC)
@@ -102,6 +103,7 @@ def unregister():
     bpy.utils.unregister_class(LibPropertyGroup)
     bpy.utils.unregister_class(MeshPropertyGroup)
     bpy.utils.unregister_class(CameraPropertyGroup)
+    bpy.utils.unregister_class(TexprojPropertyGroup)
     bpy.utils.unregister_class(ArchivePropertyGroup)
     del bpy.types.Scene.export_xc_animations_items
     bpy.utils.unregister_class(ExportXC_AddAnimationItem)

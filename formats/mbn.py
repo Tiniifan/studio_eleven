@@ -89,6 +89,21 @@ def open(data):
         quaternion_rotation = rotation_matrix.to_quaternion().inverted()
 
         scale = struct.unpack('<fff', stream.read(12))
+        
+        local_rotation_matrix = [
+            struct.unpack('<fff', stream.read(12)),
+            struct.unpack('<fff', stream.read(12)),
+            struct.unpack('<fff', stream.read(12))
+        ]
+        local_rotation_matrix = Matrix(local_rotation_matrix)
+        quaternion_local_rotation = local_rotation_matrix.to_quaternion().inverted()
+        
+        rotation_time_head = struct.unpack('<fff', stream.read(12))
+        first_column_local_matrix_rotation = struct.unpack('<fff', stream.read(12))
+        tail_min_head = struct.unpack('<fff', stream.read(12))
+        last_column_local_matrix_rotation = struct.unpack('<fff', stream.read(12))
+        head = struct.unpack('<fff', stream.read(12))
+        tail = tuple(tmh + h for tmh, h in zip(tail_min_head, head))
 
         # Remplissage du dictionnaire bone
         bone['crc32'] = bone_id
@@ -96,6 +111,9 @@ def open(data):
         bone['location'] = location
         bone['quaternion_rotation'] = quaternion_rotation
         bone['scale'] = scale
+        bone['quaternion_local_rotation'] = quaternion_local_rotation
+        bone['head'] = head
+        bone['tail'] = tail
 
     return bone
 
@@ -123,6 +141,7 @@ def write(armature, pose_bone):
         
     out += int(4).to_bytes(4, 'little')
     
+    print(pose_bone.name)
     out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
     
     return out

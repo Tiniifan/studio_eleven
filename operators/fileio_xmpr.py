@@ -128,11 +128,12 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     if normals:
         mesh.normals_split_custom_set_from_vertices(normals)
     
-    texprojs = ["UVMap0", "UVMap1"] # prm can't get more than 2 UVMaps
+    texprojs = ["UVMap0", "UVMap1"] # prm can't have more than 2 UVMaps
     if txp_data:
-        for i in txp_data:
-            if i[1] == model_data["material_name"]:
-                texprojs[i[2]] = i[0]
+        for txp in txp_data:
+            if txp[1] == model_data["material_name"]:
+                print(txp)
+                texprojs[txp[2]] = txp[0]
     
     if uv_data0:
         uv_layer0 = mesh.uv_layers.new(name=texprojs[0])
@@ -142,6 +143,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
                 uv_layer0.data[loop.index].uv = uv_data0[vertex_index]
         mesh_obj.modifiers.new(name=texprojs[0], type="UV_WARP")
         mesh_obj.modifiers[texprojs[0]].uv_layer = texprojs[0]
+        
     if uv_data1:
         uv_layer1 = mesh.uv_layers.new(name=texprojs[1])
         for loop in mesh.loops:
@@ -172,22 +174,22 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
                     bone_name = bones[bone_idx]
                     mesh_obj.vertex_groups[bone_name].add([vert_idx], weight, 'ADD')
         
-        if mesh_obj.vertex_groups:
-            bone_influences = {bone.name: 0.0 for bone in armature.data.bones}
-            for vertex in mesh_obj.data.vertices:
-                for group in vertex.groups:
-                    group_name = mesh_obj.vertex_groups[group.group].name
-                    if group_name in bone_influences:
-                        bone_influences[group_name] += group.weight
+        #if mesh_obj.vertex_groups:
+            #bone_influences = {bone.name: 0.0 for bone in armature.data.bones}
+            #for vertex in mesh_obj.data.vertices:
+                #for group in vertex.groups:
+                    #group_name = mesh_obj.vertex_groups[group.group].name
+                    #if group_name in bone_influences:
+                        #bone_influences[group_name] += group.weight
             
-            most_influential_bone = armature.pose.bones.get(max(bone_influences, key=bone_influences.get))
+            #most_influential_bone = armature.pose.bones.get(max(bone_influences, key=bone_influences.get))
             
-            bone_world_matrix = armature.matrix_world @ most_influential_bone.matrix
-            bone_world_location = bone_world_matrix.translation
+            #bone_world_matrix = armature.matrix_world @ most_influential_bone.matrix
+            #bone_world_location = bone_world_matrix.translation
             
             #print(mesh_obj.name, bone_world_location.x, bone_world_location.y, bone_world_location.z, most_influential_bone.name)
-            if bone_world_location.y > 400:
-                mesh_obj.location.y = bone_world_location.y
+            #if bone_world_location.y > 400:
+                #mesh_obj.location.y = bone_world_location.y
         
         bpy.ops.object.select_all(action='DESELECT')
         mesh_obj.select_set(True)
@@ -235,9 +237,14 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         if mesh.parent.type == 'ARMATURE':
             bone_names = list(get_bone_names(mesh.parent))
             
-    weights = dict(get_weights(mesh, bone_names))  
+    weights = dict(get_weights(mesh, bone_names))
+
+    single_bind = None
+    if mesh.parent_type == 'BONE':
+       if mesh.parent_bone:
+            single_bind = mesh.parent_bone
     
-    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode)
+    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind)
 
 def fileio_open_xmpr(context, filepath):
     # Extract the file name without extension

@@ -146,7 +146,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode):
+def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -173,8 +173,14 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
     # Material-------------------------------------------
     material = zlib.crc32(mesh_name.encode("shift-jis")).to_bytes(4, 'little')
     material += zlib.crc32(material_name.encode("shift-jis")).to_bytes(4, 'little')
-    material += bytes.fromhex(mode[0])
-    material += int(0).to_bytes(4, 'little')
+    
+    if single_bind:
+        material += bytes([int(x,0) for x in ["0xF1", "0x69", "0x7E", "0x54"] ])
+        material += zlib.crc32(single_bind.encode("shift-jis")).to_bytes(4, 'little')
+    else:
+        material += bytes.fromhex(mode[0])
+        material += int(0).to_bytes(4, 'little')
+        
     material += int(0).to_bytes(4, 'little')
     material += int(0).to_bytes(4, 'little')
     material += int(0).to_bytes(4, 'little')
@@ -183,15 +189,9 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
     material += struct.pack("f", dimensions[0]/2)
     material += struct.pack("f", dimensions[1]/2)
     material += struct.pack("f", dimensions[2]/2)
-    material += int(0).to_bytes(4, 'little')
+    material += int(21).to_bytes(4, 'little')
     material += int(mode[1]).to_bytes(4, 'little')
     material += int(len(bone_names)).to_bytes(4, 'little')
-    
-    #if template.name == "Yo-Kai Watch":
-        #material += int(0).to_bytes(4, 'little')
-        #material += int(0).to_bytes(4, 'little')
-        #material += int(0).to_bytes(4, 'little')
-        #material += int(0).to_bytes(4, 'little')
 
     # Node ------------------------------------------
     node = bytes()
@@ -282,6 +282,11 @@ def parse_buffer(reader, node_table):
     for i in range(vertex_count):
         for j in range(10):
             vbuffer.seek(i * stride + aOffset[j])
+            
+            # Ignore attributes without elements
+            if aCount[j] == 0:
+                continue
+            
             if j == 0:
                 vertices["positions"].append(
                     read_vertex(vbuffer, aCount[j], aType[j], aSize[j])[:3]
@@ -319,6 +324,7 @@ def parse_buffer(reader, node_table):
                 vertices["color_data"].append(
                     read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
                 )
+                
     vbuffer.close()
     reader.close()
 

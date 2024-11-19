@@ -47,7 +47,7 @@ def create_files_dict(extension, data_list):
         
     return output
 
-def create_bone(armature, bone_name, parent_name, relative_location, relative_rotation, scale):
+def create_bone(armature, bone_name, parent_name, relative_location, relative_rotation, scale, head, tail):
     # Select amature
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='EDIT')
@@ -56,6 +56,9 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     bpy.ops.armature.bone_primitive_add()
     new_bone = armature.data.edit_bones[-1]
     new_bone.name = bone_name
+    
+    new_bone.head = head
+    new_bone.tail = tail
     
     # Create a matrix based on the parent matrix if the parent exists
     if parent_name:
@@ -196,6 +199,8 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             bone_location = bones_data[i]['location']
             bone_rotation = bones_data[i]['quaternion_rotation']
             bone_scale = bones_data[i]['scale']
+            bone_head = bones_data[i]['head']
+            bone_tail = bones_data[i]['tail']
             
             # Get bone name
             bone_name = "bone_" + str(i)            
@@ -209,9 +214,9 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
             # Checks if the bone has a parent
             if bone_parent_crc32 == 0:
-                create_bone(armature, bone_name, False, bone_location, bone_rotation, bone_scale)
+                create_bone(armature, bone_name, False, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
             else:
-                create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_scale)
+                create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
                 
         # Set object mode
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -999,7 +1004,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         if index not in lib_indexes:
                             lib = self.libs[index]
                             groupbox = layout.box()
-                            groupbox.prop(lib, "texproj_name", text="")
                             box = groupbox.box()
                             box.prop(lib, "name", text="")
                                                         
@@ -1123,14 +1127,17 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                                 self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a library_name!")
                                 return {'FINISHED'}    
                             
-                            uvidx = 0
-                            for uv_layer in mesh.data.uv_layers:
+                            for i in range(len(mesh.data.uv_layers)):
+                                uv_layer = mesh.data.uv_layers[i]
+                                
                                 for txp_prop in self.texproj_properties:
                                     if uv_layer.name == txp_prop.name:
                                         if txp_prop.checked:
-                                            texprojs.append([txp_prop.name, lib.name, uvidx])
-                                        uvidx += 1
-                            
+                                            texproj = [txp_prop.name, lib.name, i]
+                                            
+                                            if texproj not in texprojs:
+                                                texprojs.append(texproj)
+                                                                
                             mesh_prop.library_name = lib.name
                                 
                             textures[lib.name] = []                              
