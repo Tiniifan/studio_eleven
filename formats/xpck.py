@@ -23,6 +23,7 @@ def fill(data):
         
 def fill_to_multiple_of_16(arr, pos):
     remainder = pos % 16
+    
     if remainder == 0:
         return arr
     
@@ -34,10 +35,12 @@ def fill_to_multiple_of_16(arr, pos):
 def open_file(file_item):
     files = {}
     
-    if isinstance(file_item, str):  # If the input is a filename
+    if isinstance(file_item, str):
+        # If the input is a filename
         with open(file_item, 'rb') as file:
             data = file.read()
-    elif isinstance(file_item, (bytearray, bytes)):  # If the input is a bytearray
+    elif isinstance(file_item, (bytearray, bytes)):
+        # If the input is a bytearray
         data = bytes(file_item)
     else:
         raise ValueError("Unsupported input type. Please provide a filename or a bytearray.")
@@ -95,18 +98,18 @@ def pack(files, output_file):
     sorted_files = {i: files[i] for i in file_names}
     files = sorted_files
     
-    # Modifie le dictionnaire
+    # Modify the dictionary
     for key, value in files.items():
         files[key] = {"data": fill(value), "offset": offset, "name_offset": name_offset}
         offset += len(fill(value))
         name_offset += len(key) + 1
 
-    # Encode les noms de fichier en UTF-8 et les compresse avec zlib
+    # Encodes filenames in UTF-8 and compresses them with zlib
     name_table = b''.join([filename.encode("utf-8") + b'\x00' for filename in list(files.keys())])
     compressed_name_table = lz10.compress(name_table)
     compressed_name_table = fill_to_multiple_of_16(compressed_name_table, 12 * len(file_names) + 20 + len(compressed_name_table))
 
-    # Écrit l'entête du fichier XPCK
+    # Writes XPCK file header
     with open(output_file, 'wb') as file:
         file.write(struct.pack("4s", "XPCK".encode()))
         file.write(struct.pack("<H", file_count_to_hex(len(files))))
@@ -127,7 +130,7 @@ def pack(files, output_file):
         for filename in list(files.keys()):
             key_crc32[zlib.crc32(filename.encode("utf-8"))] = filename
 
-        # Écrit les informations de fichier pour chaque fichier
+        # Writes file information for each file
         sorted_by_crc32 = sorted(list(files.keys()), key=lambda x: zlib.crc32(x.encode("utf-8")))
         for filename in sorted_by_crc32:
             name_crc = zlib.crc32(filename.encode("utf-8"))
@@ -147,10 +150,10 @@ def pack(files, output_file):
             file.write(struct.pack("<B", offset_lower))
             file.write(struct.pack("<B", size_lower))
 
-        # Écrit la table de noms
+        # Write name table
         file.write(compressed_name_table)
 
-        # Écrit les données de fichier compressées
+        # Writes compressed file data
         for filename in list(files.keys()):
             file_data = files[filename]["data"]
             file.write(file_data)

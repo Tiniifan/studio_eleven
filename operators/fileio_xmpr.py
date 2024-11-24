@@ -1,3 +1,4 @@
+import io
 import os
 
 import bpy
@@ -22,7 +23,7 @@ def get_bone_names(armature):
 
 def get_weights(mesh, bone_names):
     bone_indices = {name: i for i, name in enumerate(bone_names)}
-    vertices_dict = {}  # Dictionnaire pour stocker les indices de boucle par vertex
+    vertices_dict = {}
 
     for face in mesh.data.polygons:
         for loop_index in face.loop_indices:
@@ -30,7 +31,7 @@ def get_weights(mesh, bone_names):
             if vertex_index not in vertices_dict:
                 vertices_dict[vertex_index] = len(vertices_dict)
 
-    weights = {}  # Dictionnaire pour stocker les poids par vertex
+    weights = {}
     for vertex_index, vertex_dict_index in vertices_dict.items():
         vertex = mesh.data.vertices[vertex_index]
         weights[vertex_dict_index] = {}
@@ -132,7 +133,6 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     if txp_data:
         for txp in txp_data:
             if txp[1] == model_data["material_name"]:
-                print(txp)
                 texprojs[txp[2]] = txp[0]
     
     if uv_data0:
@@ -251,8 +251,8 @@ def fileio_open_xmpr(context, filepath):
     file_name = os.path.splitext(os.path.basename(filepath))[0]
 
     with open(filepath, 'rb') as file:
-        # Open the XMPr file and read model data
-        mesh_data = xmpr.open(file.read())
+        # Open the XMPR file and read model data
+        mesh_data = xmpr.open_xmpr(io.BytesIO(file.read()))
 
         # Create the mesh using the model data
         make_mesh(mesh_data)

@@ -146,7 +146,6 @@ def get_frame_count(cam_values):
     return max_key
 
 def write(animation_name, camera_speed, cam_values):
-    print(animation_name, "\n", camera_speed, "\n", cam_values)
     file_bytes = io.BytesIO()
 
     hash_name = zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')

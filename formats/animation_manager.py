@@ -8,11 +8,13 @@ from . import animation_support
 
 def ReadString(byte_io):
     bytes_list = []
+    
     while True:
         byte = byte_io.read(1)
         if byte == b'\x00':
             break
         bytes_list.append(byte)
+        
     name = b''.join(bytes_list).decode('shift-jis')
     return name
 
@@ -70,8 +72,10 @@ class AnimationManager:
     def Read(self, reader):
         # Read header
         header = animation_support.Header.Unpack(reader)
+        
         # Get format name
         self.Format = header.Magic.decode()
+        
         # Wrong header? Try the second pattern
         if header.DecompSize == 0:
             reader.seek(0)
@@ -81,26 +85,32 @@ class AnimationManager:
             header.CompDataOffset = header2.CompDataOffset
             header.Track1Count = header2.Track1Count
             header.Track2Count = header2.Track2Count
+            
             # Track3 and Track4 doesn't exist in this header
             header.Track3Count = -1
             header.Track4Count = -1
+            
         # Track 9 case
         maxNodeBeforeTrack4 = 0
         if header.NameOffset == 0x28 and header.CompDataOffset == 0x58:
             reader.seek(0x24)
             maxNodeBeforeTrack4 = unpack("<I", reader.read(4))[0]
+            
         # Get animation name
         reader.seek(header.NameOffset)
         animHash = unpack("<I", reader.read(4))[0]
         self.AnimationName = ReadString(reader)
+        
         # Get frame count
         reader.seek(header.CompDataOffset - 4)
         self.FrameCount = unpack("<I", reader.read(4))[0]
+        
         # Get decomp block
         reader = BytesIO(compressor.decompress(reader.read()))
         
         hashOffset = unpack("<I", reader.read(4))[0]
         trackoffset = unpack("<I", reader.read(4))[0]
+        
         reader.seek(0)
         if hashOffset == 0x0c:
             self.Version = "V2"
@@ -184,18 +194,22 @@ class AnimationManager:
     def GetAnimationDataV1(self, reader, header):
         trackIndex = 0
         tableOffset = 0
+        
         if header.Track1Count > 0:
             for i in range(header.Track1Count):
                 self.ReadFrameDataV1(reader, tableOffset, 0, trackIndex)
             trackIndex += 1
+            
         if header.Track2Count > 0:
             for i in range(header.Track2Count):
                 self.ReadFrameDataV1(reader, tableOffset, 1, trackIndex)
             trackIndex += 1
+            
         if header.Track3Count > 0:
             for i in range(header.Track3Count):
                 self.ReadFrameDataV1(reader, tableOffset, 2, trackIndex)
             trackIndex += 1
+            
         if header.Track4Count > 0:
             for i in range(header.Track4Count):
                 self.ReadFrameDataV1(reader, tableOffset, 3, trackIndex)
@@ -203,10 +217,12 @@ class AnimationManager:
     
     def GetAnimationDataV2(self, reader, header, maxNodeBeforeTrack4):
         dataHeader = animation_support.DataHeader.Unpack(reader)
+        
         # Get name hashes
         reader.seek(dataHeader.HashOffset)
         elementCount = (dataHeader.TrackOffset - dataHeader.HashOffset) // 4
         nameHashes = [unpack("<I", reader.read(4))[0] for i in range(elementCount)]
+        
         # Name information
         pos = 0
         nameDict = {
@@ -215,6 +231,7 @@ class AnimationManager:
             2: nameHashes,
             3: nameHashes,
         }
+        
         # Track information
         trackCountList = [
             header.Track1Count,
@@ -222,61 +239,75 @@ class AnimationManager:
             header.Track3Count,
             header.Track4Count,
         ]
+        
         trackCount = (1 if header.Track1Count != -1 else 0) + \
                      (1 if header.Track2Count != -1 else 0) + \
                      (1 if header.Track3Count != -1 else 0) + \
                      (1 if header.Track4Count != -1 else 0)
+                     
         tracks = []
         for i in range(trackCount):
             reader.seek(dataHeader.TrackOffset + 2 * i)
             reader.seek(unpack("<H", reader.read(2))[0])
             tracks.append(animation_support.Track.Unpack(reader))
+            
             if tracks[i].Type != 0:
                 self.Tracks.append(Track(animation_support.TrackType[tracks[i].Type], index=i))
+                
                 if i < 3 and trackCountList[i + 1] == 0 and i+1 != 3:
                     if maxNodeBeforeTrack4 < 1:
                         pos += trackCountList[i] * 4
+                        
                         for j in range(i + 1, trackCount):
                             nameDict[j] = None
                 elif tracks[i].Type == 9 and maxNodeBeforeTrack4 > 0:
                     nameDict[i] = None
                     pos += maxNodeBeforeTrack4 * 4
+                    
             if nameDict[i] is None:
                 reader.seek(dataHeader.HashOffset + pos)
                 nameDict[i] = [unpack("<I", reader.read(4))[0] for j in range(trackCountList[i])]
+                
         offset = 0
         index = 0
         trackIndex = 0
+        
         if header.Track1Count > 0:
             self.ReadFrameDataV2(reader, offset, header.Track1Count, dataHeader.DataOffset, nameDict[0], tracks[0], trackIndex)
             trackIndex += 1
         offset += header.Track1Count
         index += 1
+        
         if header.Track2Count > 0:
             self.ReadFrameDataV2(reader, offset, header.Track2Count, dataHeader.DataOffset, nameDict[1], tracks[1], trackIndex)
             trackIndex += 1
         offset += header.Track2Count
         index += 1
+        
         if header.Track3Count > 0:
             self.ReadFrameDataV2(reader, offset, header.Track3Count, dataHeader.DataOffset, nameDict[2], tracks[2], trackIndex)
             trackIndex += 1
         offset += header.Track3Count
         index += 1
+        
         if header.Track4Count > 0:
             self.ReadFrameDataV2(reader, offset, header.Track4Count, dataHeader.DataOffset, nameDict[3], tracks[3], trackIndex)
     
     def SaveAnimationDataV1(self, writerDecomp, header):
         if self.Tracks == None or len(self.Tracks) == 0:
             return
+            
         with BytesIO() as writer:
             hashCount = self.CountHashes()
             hashCountDistinct = self.GetDistincHashes()
             headerPos = 0
             nodeOffset = hashCount * 20
+            
             for i in range(4):
                 if i < len(self.Tracks):
                     track = self.Tracks[i]
                     self.FixNode(track.Nodes, self.FrameCount)
+                    
                     if len(track.Nodes) > 0:
                         for node in track.Nodes:
                             nameInt = int(node.Name, 16)
@@ -299,23 +330,29 @@ class AnimationManager:
                                 len(node.Frames) * 2,
                                 len(node.Frames) * dataVectorSize * dataByteSize
                             )
+                            
                             # Write node table
                             writer.seek(nodeOffset)
                             writer.write(nodeHeader.Pack())
+                            
                             # Write keyframe table
                             keyFrameOffset = writer.tell()
                             writer.write(b''.join(struct.pack("<H", x) for x in self.FillArray(
                                 [x.Key for x in node.Frames], self.FrameCount + 1))) # This was horrible
                             self.WriteAlignment(writer, 4, 0)
+                            
                             # Write different keyframe table
                             differentKeyFrameOffset = writer.tell()
                             writer.write(b''.join(struct.pack("<H", frame.Key) for frame in node.Frames))
                             self.WriteAlignment(writer, 4, 0)
+                            
                             # Write animation data
                             dataOffset = writer.tell()
                             writer.write(b''.join(frame.Value.ToBytes() for frame in node.Frames))
+                            
                             if animation_support.TrackDataSize[track.Name] != 4:
                                 self.WriteAlignment(writer, 4, 0)
+                                
                             tableHeader = animation_support.TableHeader(
                                 nodeOffset,
                                 keyFrameOffset,
@@ -323,12 +360,15 @@ class AnimationManager:
                                 dataOffset,
                                 0,
                             )
+                            
                             # Update offset
                             nodeOffset = writer.tell()
+                            
                             # Write header table
                             writer.seek(headerPos)
                             writer.write(tableHeader.Pack())
                             headerPos = writer.tell()
+                            
             header.DecompSize = len(writer.getvalue()) * 2
             writerDecomp.write(compress(writer.getvalue()))
     
@@ -425,28 +465,35 @@ class AnimationManager:
         reader.seek(tableOffset)
         tableHeader = animation_support.TableHeader.Unpack(reader)
         tableOffset = reader.tell()
+        
         # Read node
         reader.seek(tableHeader.NodeOffset)
         node = animation_support.Node.Unpack(reader)
+        
         # Add the track if it doesn't exist
         if all(t.Index != trackNum for t in self.Tracks) and node.NodeType != 0:
             self.Tracks.append(Track(animation_support.TrackType[node.NodeType], trackNum))
+            
         # Get data index for frame
         reader.seek(tableHeader.KeyFrameOffset)
         dummy = [unpack("<H", reader.read(2))[0] for i in range(node.DifferentFrameLength // 2)]
         dataIndexes = list(set(dummy))
+        
         # Get different frame index
         reader.seek(tableHeader.DifferentKeyFrameOffset)
         dummy = [unpack("<H", reader.read(2))[0] for i in range(node.FrameLength // 2)]
         differentFrames = list(set(dummy))
         frames = []
+        
         for j in range(len(differentFrames)):
             # Get frame
             frame = differentFrames[j]
             dataIndex = dataIndexes[j]
+            
             # Seek data offset
             reader.seek(tableHeader.DataOffset + j * node.DataVectorSize * node.DataByteSize)
             animData = [None] * node.DataVectorSize
+            
             # Decode animation data
             for k in range(node.DataVectorSize):
                 if node.DataType == 1:
@@ -459,7 +506,9 @@ class AnimationManager:
                     animData[k] = unpack("<b", reader.read(1))[0]
                 else:
                     raise Exception(f"Data type: {node.DataType} not implemented")
+
             frames.append(Frame(frame, self.ConvertAnimDataToObject(animData, node.NodeType)))
+
         self.Tracks[trackIndex].Nodes.append(Node(node.BoneNameHash, node.IsInMainTrack == 1, frames))
     
     def ReadFrameDataV2(self, reader, offset, count, dataOffset, nameHashes, track, trackIndex):
@@ -474,6 +523,7 @@ class AnimationManager:
             nameHash = nameHashes[index]
             lowFrameCount = unpack("<B", reader.read(1))[0]
             highFrameCount = unpack("<B", reader.read(1))[0]
+            
             keyFrameCount = 0
             if highFrameCount == 0:
                 isMainTrack = False
@@ -481,6 +531,7 @@ class AnimationManager:
             else:
                 highFrameCount -= 32
                 keyFrameCount = (highFrameCount << 8) | lowFrameCount
+                
             reader.seek(keyDataOffset)
             frames = []
             for k in range(keyFrameCount):
@@ -489,6 +540,7 @@ class AnimationManager:
                 frame = unpack("<H", reader.read(2))[0]
                 reader.seek(temp)
                 animData = [None] * track.DataCount
+                
                 for j in range(track.DataCount):
                     if track.DataType == 1:
                         animData[j] = unpack("<h", reader.read(2))[0] / 0x7FFF
@@ -500,7 +552,9 @@ class AnimationManager:
                         animData[j] = unpack("<b", reader.read(1))[0]
                     else:
                         raise Exception(f"Data type: {track.DataType} not implemented")
+
                 frames.append(Frame(frame, self.ConvertAnimDataToObject(animData, track.Type)))
+
             # Create node
             self.Tracks[trackIndex].Nodes.append(Node(nameHash, isMainTrack, frames))
     
@@ -531,8 +585,10 @@ class AnimationManager:
     
     def GetDistincHashes(self):
         hashes = set()
+        
         for track in self.Tracks:
             hashes.update(node.Name for node in track.Nodes)
+            
         return len(hashes)
     
     def CountHashes(self):
@@ -540,25 +596,31 @@ class AnimationManager:
     
     def GetNameHashes(self):
         nameHashes = []
+        
         for track in self.Tracks:
             for node in track.Nodes:
                 if node.Name not in nameHashes:
                     nameHashes.append(node.Name)
+                    
         return nameHashes
     
     def FillArray(self, inputArray: list, size):
         result = [int] * size
         lastIndex = 0
+        
         for i in range(len(inputArray)):
             nextValue = 0
             lastValue = inputArray[i]
+            
             if i != (len(inputArray) - 1):
                 nextValue = inputArray[i + 1]
             else:
                 nextValue = size
+                
             for j in range(lastValue, nextValue):
                 result[j] = lastIndex
             lastIndex += 1
+            
         return result
     
     def FixNode(self, nodes: list[Node], frameCount):
@@ -568,7 +630,9 @@ class AnimationManager:
     
     def WriteAlignment(self, writer, alignment=16, alignment_byte=0x0):
         remainder = writer.tell() % alignment
+        
         if remainder == 0:
             return
+            
         padding = alignment - remainder
         writer.write(bytes([alignment_byte] * padding))

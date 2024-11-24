@@ -1,5 +1,5 @@
-from math import sin, cos, atan2, asin
 import struct
+from math import sin, cos, atan2, asin
 
 class BoneRotation:
     def __init__(self, X, Y, Z, W=None):
@@ -22,14 +22,7 @@ class BoneRotation:
         return f"({self.X}, {self.Y}, {self.Z}, {self.W})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        same_y = self.Y == obj.Y
-        same_z = self.Z == obj.Z
-        same_w = self.W == obj.W
-        if (same_x == False or same_y == False or same_z == False or same_w == False):
-            return False
-        else:
-            return True
+        return (self.X, self.Y, self.Z, self.W) == (obj.X, obj.Y, obj.Z, obj.W)
     
     def ToBytes(self):
         return struct.pack("<hhhh", int(self.X * 32767), int(self.Y * 32767), int(self.Z * 32767), int(self.W * 32767))

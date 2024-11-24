@@ -1,21 +1,16 @@
 import struct
+
 class MaterialAttribute:
-    def __init__(self, X, Y, Z):
-        self.X = X
-        self.Y = Y
-        self.Z = Z
+    def __init__(self, hue, saturation, value):
+        self.hue = hue
+        self.saturation = saturation
+        self.value = value
     
     def __str__(self):
-        return f"({self.X}, {self.Y}, {self.Z})"
+        return f"({self.hue}, {self.saturation}, {self.value})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        same_y = self.Y == obj.Y
-        same_z = self.Z == obj.Z
-        if (same_x == False or same_y == False or same_z == False):
-            return False
-        else:
-            return True
+        return (self.hue, self.saturation, self.value) == (obj.hue, obj.saturation, obj.value)
     
     def ToBytes(self):
-        return struct.pack("<fff", float(self.X), float(self.Y), float(self.Z))
+        return struct.pack("<fff", float(self.hue), float(self.saturation), float(self.value))

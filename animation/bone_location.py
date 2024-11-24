@@ -10,7 +10,7 @@ class BoneLocation:
         return f"({self.X:.4f}, {self.Y:.4f}, {self.Z:.4f})"
     
     def __eq__(self, obj):
-        return self.X == obj.X and self.Y == obj.Y and self.Z == obj.Z
+        return (self.X, self.Y, self.Z) == (obj.X, obj.Y, obj.Z)
     
     def ToBytes(self):
         return struct.pack("<fff", self.X, self.Y, self.Z)

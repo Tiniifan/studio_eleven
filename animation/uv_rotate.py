@@ -1,4 +1,5 @@
 import struct
+
 class UVRotate:
     def __init__(self, X):
         self.X = X
@@ -7,11 +8,7 @@ class UVRotate:
         return f"({self.X})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        if (same_x == False):
-            return False
-        else:
-            return True
+        return (self.X, self.Y) == (obj.X, obj.Y)
     
     def ToBytes(self):
         return struct.pack("<f", float(self.X))

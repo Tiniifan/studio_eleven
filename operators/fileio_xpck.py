@@ -1,3 +1,4 @@
+import io
 import os
 import copy
 
@@ -9,11 +10,10 @@ import bmesh
 
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
-import io
 
 from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, animation_manager, animation_support
 from .fileio_xmpr import *
-from .fileio_xmtn import *
+from .fileio_animation_manager import *
 from .fileio_xcma import *
 from ..utils.img_format import *
 from ..utils.img_tool import *
@@ -128,30 +128,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
         elif file_name.endswith('.cmr2'):
             hash_name, cam_values = xcma.open(archive[file_name])
             camera_data[hash_name] = cam_values
-        elif file_name.endswith('.mtn2'):
-            #animation_data = {}
-            #
-            #name, frame_count, bone_name_hashes, data = xmtn.open_mtn2(archive[file_name])
-            #animation_data['name'] = name
-            #animation_data['frame_count'] = frame_count
-            #animation_data['bone_name_hashes'] = bone_name_hashes
-            #animation_data['data'] = data
-            anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
-            animations_data.append(anim)
-        elif file_name.endswith('.mtn3'):
-            animation_data = {}
-            
-            name, frame_count, bone_name_hashes, data = xmtn.open_mtn3(archive[file_name])
-            animation_data['name'] = name
-            animation_data['frame_count'] = frame_count
-            animation_data['bone_name_hashes'] = bone_name_hashes
-            animation_data['data'] = data
-            
-            animations_data.append(animation_data)
-        elif file_name.endswith('.imm2'):
-            anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
-            animations_data.append(anim)
-        elif file_name.endswith('.mtm2'):
+        elif file_name.endswith('.mtn2') or file_name.endswith('.imm2') or file_name.endswith('.mtm2'):
             anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
             animations_data.append(anim)
         elif file_name.endswith('mtninf') and not file_name.endswith('.mtninf2'):
@@ -243,7 +220,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                     image.alpha_mode = 'NONE'
 
                 # Assign pixel data to the image
-                image.pixels = texture_data
+                image.pixels.foreach_set(texture_data)
             
                 images[texture_crc32] = image
 

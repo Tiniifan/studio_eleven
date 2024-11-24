@@ -1,4 +1,5 @@
 import struct
+
 class BoneScale:
     def __init__(self, X, Y, Z):
         self.X = X
@@ -9,13 +10,7 @@ class BoneScale:
         return f"({self.X}, {self.Y}, {self.Z})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        same_y = self.Y == obj.Y
-        same_z = self.Z == obj.Z
-        if (same_x == False or same_y == False or same_z == False):
-            return False
-        else:
-            return True
+        return (self.X, self.Y, self.Z) == (obj.X, obj.Y, obj.Z)
     
     def ToBytes(self):
         return struct.pack("<fff", float(self.X), float(self.Y), float(self.Z))

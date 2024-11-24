@@ -1,4 +1,5 @@
 import struct
+
 class BoneBool:
     def __init__(self, X):
         self.X = X
@@ -7,11 +8,7 @@ class BoneBool:
         return f"({self.X})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        if (same_x == False):
-            return False
-        else:
-            return True
+        return self.X == obj.X
     
     def ToBytes(self):
         return struct.pack("<B", float(self.X))

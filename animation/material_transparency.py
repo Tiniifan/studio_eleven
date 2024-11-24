@@ -1,17 +1,14 @@
 import struct
+
 class Transparency:
-    def __init__(self, X):
-        self.X = X
+    def __init__(self, transparency):
+        self.transparency = transparency
     
     def __str__(self):
-        return f"({self.X})"
+        return f"({self.transparency})"
     
     def __eq__(self, obj):
-        same_x = self.X == obj.X
-        if (same_x == False):
-            return False
-        else:
-            return True
+        return self.transparency == obj.transparency
     
     def ToBytes(self):
-        return struct.pack("<f", float(self.X))
+        return struct.pack("<f", float(self.transparency))

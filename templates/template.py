@@ -59,4 +59,5 @@ def get_template_by_name(name):
     for template in templates:
         if template.name == name:
             return template
+
     return None    

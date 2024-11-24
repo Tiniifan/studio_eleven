@@ -105,7 +105,6 @@ def open(data):
         head = struct.unpack('<fff', stream.read(12))
         tail = tuple(tmh + h for tmh, h in zip(tail_min_head, head))
 
-        # Remplissage du dictionnaire bone
         bone['crc32'] = bone_id
         bone['parent_crc32'] = parent_index
         bone['location'] = location
@@ -141,7 +140,6 @@ def write(armature, pose_bone):
         
     out += int(4).to_bytes(4, 'little')
     
-    print(pose_bone.name)
     out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
     
     return out
