@@ -76,12 +76,32 @@ class Level5Material(PropertyGroup):
                         material.use_nodes = True
                         nodes = material.node_tree.nodes
                         links = material.node_tree.links
+                        
+                        # Get or create the Material Output node
+                        material_output = nodes.get("Material Output")
+                        if not material_output:
+                            material_output = nodes.new(type="ShaderNodeOutputMaterial")
+                            material_output.location = (400, 0)
 
                         # Get or create the Principled BSDF node
                         bsdf = nodes.get("Principled BSDF")
                         if not bsdf:
                             bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
                             bsdf.location = (0, 0)
+                            links.new(bsdf.outputs["BSDF"], material_output.inputs["Surface"])
+                            
+                        # Get or create the Mix Shader node
+                        mix_shader = nodes.get("Mix Shader")
+                        if not mix_shader:
+                            mix_shader = nodes.new(type="ShaderNodeMixShader")
+                            mix_shader.location = (200, 0)
+                            mix_shader.inputs[0].default_value = 0.2    
+                        
+                        # Get or create the Transparent BSDF node
+                        transparent_bsdf = nodes.get("Transparent BSDF")
+                        if not transparent_bsdf:
+                            transparent_bsdf = nodes.new(type="ShaderNodeBsdfTransparent")
+                            transparent_bsdf.location = (0, -200)
 
                         # Check if the Alpha Multiplier node exists
                         alpha_multiplier = nodes.get("Alpha Multiplier")
@@ -91,20 +111,33 @@ class Level5Material(PropertyGroup):
                             alpha_multiplier.name = "Alpha Multiplier"
                             alpha_multiplier.operation = 'MULTIPLY'
                             alpha_multiplier.location = (-300, 200)
-                            
-                            # Connect its output to the Alpha input of the BSDF
-                            links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
                         
-                        # Link texture alpha to alpha_multiplier and bsdf
+                        # Insert comment here
                         texture_node = nodes.get("Image Texture")
                         if texture_node:
-                            links.new(texture_node.outputs["Alpha"], alpha_multiplier.inputs[0])
+                            if texture_node.outputs["Alpha"].is_linked:
+                                # Set links for texture with alpha canal
+                                links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
+                                links.new(texture_node.outputs["Alpha"], alpha_multiplier.inputs[0])
+                                
+                                # Update dynamic alpha with self.color[3]-> transparency
+                                alpha_multiplier.inputs[1].default_value = self.color[3]
+                                
+                                material.show_transparent_back = True
+                            else:
+                                # Set links for texture without alpha canal
+                                links.new(mix_shader.outputs[0], material_output.inputs[0])
+                                links.new(bsdf.outputs[0], mix_shader.inputs[1])
+                                links.new(transparent_bsdf.outputs[0], mix_shader.inputs[2])
+                                
+                                # Update dynamic alpha with self.color[3]-> transparency
+                                bsdf.inputs["Alpha"].default_value = self.color[3]
+                                
+                                material.show_transparent_back = False
+                            
                             links.new(texture_node.outputs["Color"], bsdf.inputs["Base Color"])
                         else:
-                            alpha_multiplier.inputs[0].default_value = 1.0  # Default value if no texture
-
-                        # Update dynamic alpha with self.color[3]-> transparency
-                        alpha_multiplier.inputs[1].default_value = self.color[3]
+                            alpha_multiplier.inputs[0].default_value = 1.0  # Default value if no texture 
                         
                         # Update the emission with self.color[0], self.color[1], self.color[2] -> hsv
                         bsdf.inputs["Emission"].default_value = (self.color[0], self.color[1], self.color[2], 1.0)
@@ -114,7 +147,6 @@ class Level5Material(PropertyGroup):
                         material.shadow_method = 'CLIP'
                         material.alpha_threshold = 0.5
                         material.use_backface_culling = False
-                        material.show_transparent_back = True
 
     def get_name(self):
         for obj in bpy.data.objects:
@@ -192,8 +224,14 @@ def refresh_material_on_frame_change(scene):
     for obj in bpy.data.objects:
         if obj.type == 'MESH' and hasattr(obj.data, 'level5_settings'):
             material = obj.data.level5_settings.material
+            
             if material:
-                material.update_color(bpy.context)
+                # Check if there are keyframes on the color property
+                if obj.data.animation_data and obj.data.animation_data.action:
+                    for fcurve in obj.data.animation_data.action.fcurves:
+                        if fcurve.data_path.startswith('level5_settings.material.color'):
+                            material.update_color(bpy.context)
+                            break
 
 def register():
     # Level 5 Menu Export

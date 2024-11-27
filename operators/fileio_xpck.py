@@ -90,6 +90,57 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     # Set object mode
     bpy.ops.object.mode_set(mode='OBJECT')
 
+def setup_nla_tracks(mesh=None, armature=None):
+    """Create NLA tracks for all animations, playing only the first."""
+    if not armature and not mesh:
+        print("No mesh or armature provided.")
+        return
+
+    scene = bpy.context.scene
+    obj = armature if armature else mesh
+
+    if obj.animation_data is None:
+        print(f"No animation_data initialized for {obj.name}.")
+        return;
+
+    nla_tracks = obj.animation_data.nla_tracks
+    while nla_tracks:
+        nla_tracks.remove(nla_tracks[0])
+
+    # Collect relevant animations
+    print(len(bpy.data.actions), bpy.data.actions[0], bpy.data.actions[0].name)
+    print(obj.animation_data.action, obj.animation_data.action.name)
+    animations_data = [action for action in bpy.data.actions if obj.animation_data.action.name in action.name]
+    print(len(animations_data), animations_data[0].name)
+
+    if not animations_data:
+        print(f"No animations found for {obj.name}.")
+        return
+
+    max_frame = 0
+
+    # Create NLA tracks for all animations
+    for i, action in enumerate(animations_data):
+        track = nla_tracks.new()
+        track.name = f"{obj.name}_Track_{i}"
+        strip = track.strips.new(name=action.name, start=1, action=action)
+
+        # Set the frame range for the strip
+        strip.frame_end = action.frame_range[1]
+        strip.blend_type = 'REPLACE'
+
+        max_frame = int(max(max_frame, strip.frame_end))
+
+        # Disable playback for all but the first track
+        track.mute = i > 0
+
+    # Set the scene's frame range to match the first animation
+    scene.frame_start = 1
+    scene.frame_end = max_frame
+
+    # Play the animation
+    bpy.ops.screen.animation_play()
+
 def fileio_open_xpck(context, filepath, file_name = ""):
     scene = bpy.context.scene
     
@@ -332,8 +383,10 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                         if start_frame <= keyframe.co.x <= end_frame:
                             new_keyframe = new_fcurve.keyframe_points.insert(keyframe.co.x - start_frame, keyframe.co.y)
                             new_keyframe.interpolation = keyframe.interpolation            
-                       
+        
         scene.frame_end = max_frames
+        
+        #setup_nla_tracks(armature)
 
     # Make camera
     if len(camera_data) > 0 and len(camera_hashes):

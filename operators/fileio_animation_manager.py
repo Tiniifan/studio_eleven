@@ -134,8 +134,10 @@ def process_bone_track(track, node, armature, action):
     # Add fcurves and keyframes
     for index in indices:
         fcurve = action.fcurves.find(data_path=data_path, index=index)
+        
         if not fcurve:
             fcurve = action.fcurves.new(data_path=data_path, index=index)
+            
         for frame in node.Frames:
             frame_num = frame.Key
             value = frame.Value
@@ -150,52 +152,73 @@ def process_bone_track(track, node, armature, action):
                 transformation = calculate_transformed_scale(bone, Vector([value.X, value.Y, value.Z]))
                 fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
 
-def process_uv_track(track, node, armature=None, mesh=None):
-    """Process a track related to UVs or materials."""
+def process_uv_track(track, node, action, armature=None, mesh=None):
+    """Process a track related to UVs or materials using FCurves."""
     bpy.ops.object.mode_set(mode='OBJECT')
     
-    # Function to handle UV tracks for a specific mesh
-    def handle_uv_for_mesh(mesh, track, node):
+    # Function to handle UVs for a specific mesh
+    def handle_uv_for_mesh(mesh, track, node, action):
+        # Ensure the mesh has animation data and an action linked
+        if mesh.animation_data is None:
+            mesh.animation_data_create()
+        if mesh.animation_data.action is None:
+            mesh.animation_data.action = action
+            
         node_name = findCrc32(node.Name, modifier=mesh.modifiers)
         if not node_name:
             return
         
         modifier = mesh.modifiers.get(node_name)
+        if not modifier:
+            return
         
-        if modifier:
+        # Define the corresponding data paths
+        if track.Name == "UVMove":
+            data_path = f'modifiers["{node_name}"].offset'
+            indices = [0, 1]  # X, Y offsets
+        elif track.Name == "UVScale":
+            data_path = f'modifiers["{node_name}"].scale'
+            indices = [0, 1]  # X, Y scale
+        elif track.Name == "UVRotate":
+            data_path = f'modifiers["{node_name}"].rotation'
+            indices = [0]  # Rotation (single value)
+        else:
+            # Skip unknown UV tracks
+            return
+        
+        # Add FCurves and keyframes
+        for index in indices:
+            fcurve = action.fcurves.find(data_path=data_path, index=index)
+            
+            if not fcurve:
+                fcurve = action.fcurves.new(data_path=data_path, index=index)
+            
             for frame in node.Frames:
                 frame_num = frame.Key
                 value = frame.Value
                 
                 if track.Name == "UVMove":
-                    modifier.offset[0] = value.X
-                    modifier.offset[1] = value.Y
-                    modifier.keyframe_insert(data_path="offset", index=0, frame=frame_num)
-                    modifier.keyframe_insert(data_path="offset", index=1, frame=frame_num)
+                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
                 elif track.Name == "UVScale":
-                    modifier.scale[0] = value.X
-                    modifier.scale[1] = value.Y
-                    modifier.keyframe_insert(data_path="scale", index=0, frame=frame_num)
-                    modifier.keyframe_insert(data_path="scale", index=1, frame=frame_num)
+                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
                 elif track.Name == "UVRotate":
-                    modifier.rotation[0] = value.X
-                    modifier.keyframe_insert(data_path="rotation", index=0, frame=frame_num)
+                    fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
 
     # Process tracks
     if armature:
-        # based on armature
+        # Based on the armature
         for child in armature.children:
             if child.type == "MESH":
-                handle_uv_for_mesh(child, track, node)
+                handle_uv_for_mesh(child, track, node, action)
     elif mesh and mesh.type == "MESH":
-        # based on mesh
-        handle_uv_for_mesh(mesh, track, node)
+        # Based on the mesh
+        handle_uv_for_mesh(mesh, track, node, action)
 
-def process_material_track(track, node, armature=None, mesh=None):
+def process_material_track(track, node, action, armature=None, mesh=None):
     """Process a track related to material."""
     bpy.ops.object.mode_set(mode='OBJECT')
     
-    def handle_material_for_mesh(mesh, track, node):
+    def handle_material_for_mesh(mesh, track, node, action):
         node_name = findCrc32(node.Name, mesh=mesh)
         if not node_name:
             return
@@ -222,9 +245,9 @@ def process_material_track(track, node, armature=None, mesh=None):
     if armature:
         for child in armature.children:
             if child.type == "MESH":
-                handle_material_for_mesh(child, track, node)
+                handle_material_for_mesh(child, track, node, action)
     elif mesh and mesh.type == "MESH":
-        handle_material_for_mesh(mesh, track, node)
+        handle_material_for_mesh(mesh, track, node, action)
 
 def create_animation(animData, active_obj):
     # Define armature or mesh based on the type of the active object
@@ -238,12 +261,18 @@ def create_animation(animData, active_obj):
     
     # Create a new action for the animation
     action = bpy.data.actions.new(name=animData.AnimationName)
-    
+
+    # Assign the action to the armature's animation data
     if armature:
-        # Assign the action to the armature's animation data    
         if armature.animation_data is None:
             armature.animation_data_create()
         armature.animation_data.action = action
+    
+    # Assign the action to the mesh's animation data  
+    if mesh:
+        if mesh.animation_data is None:
+            mesh.animation_data_create()
+        mesh.animation_data.action = action  
 
     # Loop through each track in animdata
     for track in animData.Tracks:
@@ -254,9 +283,9 @@ def create_animation(animData, active_obj):
                 if armature:
                     process_bone_track(track, node, armature, action)
             elif track.Name.startswith("UV"):
-                    process_uv_track(track, node, armature=armature, mesh=mesh)
+                    process_uv_track(track, node, action, armature=armature, mesh=mesh)
             elif track.Name.startswith("Material"):
-                    process_material_track(track, node, armature=armature, mesh=mesh)
+                    process_material_track(track, node, action, armature=armature, mesh=mesh)
 
 def fileio_open_animation(operator, context, filepath):
     # Get file extension
