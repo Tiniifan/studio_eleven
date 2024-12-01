@@ -203,26 +203,76 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
             mesh_obj.rotation_euler = (0, 0, 0)
     
     if lib:
-        mat = bpy.data.materials.new(name=model_data['material_name'])
-        mat.use_nodes=True 
+        material = bpy.data.materials.new(name=model_data['material_name'])
+        material.use_nodes = True
+        nodes = material.node_tree.nodes
+        links = material.node_tree.links
         
-        material_output = mat.node_tree.nodes.get('Material Output')
-        principled_BSDF = mat.node_tree.nodes.get('Principled BSDF')
-        
+        # Get or create the Material Output node
+        material_output = nodes.get("Material Output")
+        if not material_output:
+            material_output = nodes.new(type="ShaderNodeOutputMaterial")
+            material_output.location = (400, 0)
+
+        # Get or create the Principled BSDF node
+        bsdf = nodes.get("Principled BSDF")
+        if not bsdf:
+            bsdf = nodes.new(type="ShaderNodeBsdfPrincipled")
+            bsdf.location = (0, 0)
+            bsdf.inputs["Alpha"].default_value = 1.0
+            bsdf.inputs["Emission"].default_value = (0, 0, 0, 1.0)
+            links.new(bsdf.outputs["BSDF"], material_output.inputs["Surface"])
+
+        # Get or create the Mix Shader node
+        mix_shader = nodes.get("Mix Shader")
+        if not mix_shader:
+            mix_shader = nodes.new(type="ShaderNodeMixShader")
+            mix_shader.location = (200, 0)
+            mix_shader.inputs[0].default_value = 0.2    
+
+        # Get or create the Transparent BSDF node
+        transparent_bsdf = nodes.get("Transparent BSDF")
+        if not transparent_bsdf:
+            transparent_bsdf = nodes.new(type="ShaderNodeBsdfTransparent")
+            transparent_bsdf.location = (0, -200)
+
+        # Get or create the Alpha Multiplier node
+        alpha_multiplier = nodes.get("Alpha Multiplier")
+        if not alpha_multiplier:
+            alpha_multiplier = nodes.new(type="ShaderNodeMath")
+            alpha_multiplier.name = "Alpha Multiplier"
+            alpha_multiplier.operation = 'MULTIPLY'
+            alpha_multiplier.location = (-300, 200)
+            alpha_multiplier.inputs[1].default_value = 1.0            
+
+        # Create texture node
+        texture_node = None
         for texture in lib:
-            tex_node = mat.node_tree.nodes.new('ShaderNodeTexImage')
-            tex_node.image = texture
-            
+            texture_node = material.node_tree.nodes.new('ShaderNodeTexImage')
+            texture_node.image = texture
+
+        # Link only the last texture to principled bsdf then to material
+        if texture_node:
             if texture.alpha_mode != "NONE":
-                principled_BSDF.inputs["Alpha"].default_value = 1.0
+                links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
+                links.new(texture_node.outputs["Alpha"], alpha_multiplier.inputs[0])           
+                material.show_transparent_back = True
+            else:
+                links.new(mix_shader.outputs[0], material_output.inputs[0])
+                links.new(bsdf.outputs[0], mix_shader.inputs[1])
+                links.new(transparent_bsdf.outputs[0], mix_shader.inputs[2])           
+                material.show_transparent_back = False
                 
-                mat.blend_method = 'BLEND'
-                
-                mat.node_tree.links.new(tex_node.outputs["Alpha"], principled_BSDF.inputs["Alpha"])
-            
-            mat.node_tree.links.new(tex_node.outputs[0], principled_BSDF.inputs[0])
+            material.node_tree.links.new(texture_node.outputs[0], bsdf.inputs[0])
         
-        mesh_obj.data.materials.append(mat)
+        # Set default material properties
+        material.blend_method = 'BLEND'
+        material.shadow_method = 'CLIP'
+        material.alpha_threshold = 0.5
+        material.use_backface_culling = False       
+        
+        # Add material
+        mesh_obj.data.materials.append(material)
     
     return mesh_obj
 

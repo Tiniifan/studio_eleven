@@ -1,3 +1,4 @@
+import re
 import io
 import os
 import zlib
@@ -15,6 +16,14 @@ from ..formats import  animation_manager, animation_support, res
 # XMTN Function
 ##########################################
 
+def get_real_name(name):
+    if name.count('.') > 0 and len(name) > 3:
+        if name[len(name)-4] == '.':
+            match = re.search(r"^(.*?)(\.\d+)$", name)
+            if match:
+                return match.group(1)
+    return name
+
 def crc32_hash(name):
     return zlib.crc32(name.encode())
 
@@ -30,9 +39,8 @@ def findCrc32(crc32, bones=None, modifier=None, mesh=None):
     
     if mesh:
         if mesh.data.materials:
-            if hasattr(mesh.data, 'level5_settings'):
-                material_name = mesh.data.level5_settings.material.get_name()
-                if crc32_hash(material_name) == crc32:
+            material_name = get_real_name(mesh.data.materials[0].name)
+            if crc32_hash(material_name) == crc32:
                     return mesh
   
     return None
@@ -218,35 +226,74 @@ def process_material_track(track, node, action, armature=None, mesh=None):
     """Process a track related to material."""
     bpy.ops.object.mode_set(mode='OBJECT')
     
+    # Function to handle UVs for a specific mesh
     def handle_material_for_mesh(mesh, track, node, action):
+        # Ensure the mesh has animation data and an action linked
         node_name = findCrc32(node.Name, mesh=mesh)
         if not node_name:
             return
-            
-        level5_settings = mesh.data.level5_settings
-        material = level5_settings.material
         
-        if material:
+        material = mesh.data.materials[0]
+        
+        # Ensure the material has animation data and an action linked
+        if material.animation_data is None:
+            material.animation_data_create()
+        if material.animation_data.action is None:
+            material.animation_data.action = bpy.data.actions.new(name="{material.name}.{action_name}")
+            action = material.animation_data.action
+        
+        # Define the corresponding data paths
+        if track.Name == "MaterialAttribute":
+            data_path = f'node_tree.nodes["Principled BSDF"].inputs[19].default_value'
+            indices = [0, 1, 2]
+        elif track.Name == "MaterialTransparency":
+            # Get texture node
+            nodes = material.node_tree.nodes
+            texture_node = nodes.get("Image Texture")
+            
+            # Changes the data_path if the texture has an alpha channel or not
+            if texture_node:
+                if texture_node.outputs["Alpha"].is_linked:
+                    data_path = f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value'
+                else:
+                    data_path = f'node_tree.nodes["Principled BSDF"].inputs[21].default_value' 
+            
+            indices = [0]
+        else:
+            # Skip unknown material tracks
+            return
+        
+        # Add FCurves and keyframes
+        for index in indices:
+            fcurve = action.fcurves.find(data_path=data_path, index=index)
+            
+            if not fcurve:
+                fcurve = action.fcurves.new(data_path=data_path, index=index)
+            
             for frame in node.Frames:
                 frame_num = frame.Key
                 material_value = frame.Value
                 
                 if track.Name == "MaterialAttribute":
-                    material.color[0] = material_value.hue
-                    material.color[1] = material_value.saturation
-                    material.color[2] = material_value.value
-                    material.keyframe_insert(data_path="color", index=0, frame=frame_num)
-                    material.keyframe_insert(data_path="color", index=1, frame=frame_num)
-                    material.keyframe_insert(data_path="color", index=2, frame=frame_num)
+                    fcurve.keyframe_points.insert(
+                        frame=frame_num, 
+                        value=(
+                            material_value.hue if index == 0 
+                            else material_value.saturation if index == 1 
+                            else material_value.value
+                        )
+                    )
                 elif track.Name == "MaterialTransparency":
-                    material.color[3] = material_value.transparency
-                    material.keyframe_insert(data_path="color", index=3, frame=frame_num)
+                    fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
 
+    # Process tracks
     if armature:
+        # Based on the armature
         for child in armature.children:
             if child.type == "MESH":
                 handle_material_for_mesh(child, track, node, action)
     elif mesh and mesh.type == "MESH":
+        # Based on the mesh
         handle_material_for_mesh(mesh, track, node, action)
 
 def create_animation(animData, active_obj):
