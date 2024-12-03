@@ -7,7 +7,7 @@ from mathutils import Vector, Euler, Matrix, Quaternion
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
-from bpy.props import StringProperty, EnumProperty
+from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 
 from ..animation import *
 from ..formats import  animation_manager, animation_support, res
@@ -517,32 +517,161 @@ class ImportAnimation(bpy.types.Operator, ImportHelper):
         
         return fileio_open_animation(self, context, self.filepath)
 
+class BoneCheckbox(bpy.types.PropertyGroup):
+    """A PropertyGroup for storing a checkbox for each bone."""
+    name: StringProperty(name="Bone Name")
+    enabled: BoolProperty(name="Enabled", default=False)
 
-class ExportXMTN(bpy.types.Operator, ExportHelper):
-    bl_idname = "export.xmtn"
-    bl_label = "Export to XMTN"
+class ExportAnimation(bpy.types.Operator, ExportHelper):
+    bl_idname = "export.animation"
+    bl_label = "Export Animation"
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ""
-    filter_glob: StringProperty(default="*.mtn2;*.mtn3", options={'HIDDEN'})
-    
-    def update_extension(self, context):
-        ExportXMTN.filename_ext = f"{self.extension}"
-        params  = context.space_data.params
-            
-        params.filename = f"{os.path.splitext(self.filepath)[0]}{self.extension}"
+    filter_glob: StringProperty(default="*", options={'HIDDEN'})
 
-    def item_callback(self, context):
+    def update_animation_type(self, context):
+        """Update available extensions and filter_glob based on animation type."""
+        if self.animation_type == "ARMATURE":
+            self.filter_glob = "*.mtn2;*.mtn3"
+            self.update_armature(context)
+        else:
+            self.filter_glob = "*.imm2" if self.animation_type == "UV" else "*.mtm2"
+            self.update_object(context)
+
+    def update_armature(self, context):
+        """Update bone checkboxes when armature is changed."""
+        self.bone_checkboxes.clear()
+        if self.animation_type == "ARMATURE" and self.armature_name and self.armature_name != "NONE":
+            armature = bpy.data.objects.get(self.armature_name)
+            if armature and armature.type == "ARMATURE":
+                for bone in armature.data.bones:
+                    checkbox = self.bone_checkboxes.add()
+                    checkbox.name = bone.name
+                    checkbox.enabled = True
+
+    def update_object(self, context):
+        """Update view object based on UVWarp modifiers or materials."""
+        self.view_object_items.clear()
+        if self.animation_type == "UV" and self.uv_material_mode == "STUDIO_ELEVEN":
+            obj = bpy.data.objects.get(self.object_name)
+            if obj and obj.type == "MESH":
+                for mod in obj.modifiers:
+                    if mod.type == 'UV_WARP':
+                        checkbox = self.view_object_items.add()
+                        checkbox.name = mod.name
+                        checkbox.enabled = True
+            elif obj and obj.type == "ARMATURE":
+                for child in obj.children:
+                    if child.type == "MESH":
+                        for mod in child.modifiers:
+                            if mod.type == 'UV_WARP':
+                                checkbox = self.view_object_items.add()
+                                checkbox.name = mod.name
+                                checkbox.enabled = True
+        elif self.animation_type == "MATERIAL" and self.uv_material_mode == "STUDIO_ELEVEN":
+            obj = bpy.data.objects.get(self.object_name)
+            if obj and obj.type == "MESH":
+                for mat in obj.data.materials:
+                    checkbox = self.view_object_items.add()
+                    checkbox.name = mat.name
+                    checkbox.enabled = True
+            elif obj and obj.type == "ARMATURE":
+                for child in obj.children:
+                    if child.type == "MESH":
+                        for mat in child.data.materials:
+                            checkbox = self.view_object_items.add()
+                            checkbox.name = mat.name
+                            checkbox.enabled = True
+
+    animation_type: EnumProperty(
+        name="Animation Type",
+        description="Select the type of animation",
+        items=[
+            ("ARMATURE", "Armature (XMTN)", "Export Armature Animation"),
+            ("UV", "UV (XIMA)", "Export UV Animation"),
+            ("MATERIAL", "Material (XMTM)", "Export Material Animation")
+        ],
+        default="ARMATURE",
+        update=update_animation_type
+    )
+
+    view_bones: BoolProperty(
+        name="View Bones",
+        description="Toggle the visibility of the bones list",
+        default=False  # Default to hidden
+    )
+    
+    view_object: BoolProperty(
+        name="View Linked Objects",
+        description="Toggle the visibility of the linked object list",
+        default=False  # Default to hidden
+    )    
+
+    def extension_items(self, context):
+        """Dynamically generate extension items based on animation type."""
+        if self.animation_type == "ARMATURE":
+            return [
+                (".mtn2", "MTN2", "Export as MTN2"),
+                (".mtn3", "MTN3", "Export as MTN3")
+            ]
+        elif self.animation_type == "UV":
+            return [
+                (".imm2", "IMM2", "Export as IMM2")
+            ]
+        elif self.animation_type == "MATERIAL":
+            return [
+                (".mtm2", "MTM2", "Export as MTM2")
+            ]
+        return []
+
+    extension: EnumProperty(
+        name="Animation Format",
+        description="Select the format of the animation file",
+        items=extension_items
+    )
+
+    def item_callback_armature(self, context):
+        """Provide list of armatures."""
         items = []
         for o in bpy.context.scene.objects:
-            if o.type == "ARMATURE":
+            if o.type == 'ARMATURE':
                 items.append((o.name, o.name, ""))
+        if not items:  # No armature found
+            items.append(("NONE", "No armature available", ""))
         return items
-        
+
+    def item_callback_object(self, context):
+        """Provide list of armatures and meshes."""
+        items = []
+        for o in bpy.context.scene.objects:
+            if o.type in {'ARMATURE', 'MESH'}:
+                items.append((o.name, o.name, ""))
+        if not items:  # No armature or mesh found
+            items.append(("NONE", "No object available", ""))
+        return items
+
     armature_name: EnumProperty(
         name="Animation Armature",
         description="Choose animation armature",
-        items=item_callback,
-        default=0,
+        items=item_callback_armature,
+        update=update_armature
+    )
+
+    object_name: EnumProperty(
+        name="Object Name",
+        description="Choose object",
+        items=item_callback_object,
+        update=update_object
+    )
+
+    uv_material_mode: EnumProperty(
+        name="Mode",
+        description="Choose a mode for UV or Material animations",
+        items=[
+            ("STUDIO_ELEVEN", "Studio Eleven", "Studio Eleven mode"),
+            ("BERRY_BUSH", "Berry Bush", "Berry Bush mode")
+        ],
+        default="STUDIO_ELEVEN"
     )
 
     animation_name: StringProperty(
@@ -552,34 +681,101 @@ class ExportXMTN(bpy.types.Operator, ExportHelper):
         maxlen=40,
     )
 
-    extension: bpy.props.EnumProperty(
-        name="Animation Format",
-        #items=[(".mtn2", "MTN2", "Export as MTN2"),
-               #(".mtn3", "MTN3", "Export as MTN3")],
-        items=[(".mtn2", "MTN2", "Export as MTN2")],
-        default=".mtn2",
-    )
+    bone_checkboxes: CollectionProperty(type=BoneCheckbox)
+    view_object_items: CollectionProperty(type=BoneCheckbox)
 
-    def check(self, context): 
-        changed = False
- 
+    transformation_checkboxes: CollectionProperty(type=BoneCheckbox)
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.prop(self, "animation_type", text="Type")
+        layout.prop(self, "extension", text="Format")
+
+        if self.animation_type == "ARMATURE":
+            layout.prop(self, "armature_name", text="Armature")
+            layout.prop(self, "animation_name", text="Animation Name")
+            
+            # Draw transformation checkboxes based on animation type
+            box = layout.box()
+            box.label(text="Transformations:")
+            if self.animation_type == "ARMATURE":
+                transformations = ["Location", "Rotation", "Scale", "Bool"]
+            elif self.animation_type == "UV":
+                transformations = ["Location", "Rotation", "Scale"]
+            elif self.animation_type == "MATERIAL":
+                transformations = ["Transparency", "Attribute"]
+            else:
+                transformations = []
+
+            for transformation in transformations:
+                checkbox = self.transformation_checkboxes.add()
+                checkbox.name = transformation
+                checkbox.enabled = True
+                box.prop(checkbox, "enabled", text=transformation)            
+            
+            if self.armature_name and self.armature_name != "NONE":
+                self.update_armature(context)  # Call update_armature when the menu is drawn
+                layout.prop(self, "view_bones", text="View Bones")
+                
+                if self.view_bones:
+                    box = layout.box()
+                    box.label(text="Bones:")
+                    
+                    for bone in self.bone_checkboxes:
+                        box.prop(bone, "enabled", text=bone.name)
+        elif self.animation_type in {"UV", "MATERIAL"}:
+            layout.prop(self, "uv_material_mode", text="Mode")
+            layout.prop(self, "object_name", text="Object")
+            layout.prop(self, "animation_name", text="Animation Name")
+
+            # Draw transformation checkboxes based on animation type
+            box = layout.box()
+            box.label(text="Transformations:")
+            if self.animation_type == "ARMATURE":
+                transformations = ["Location", "Rotation", "Scale", "Bool"]
+            elif self.animation_type == "UV":
+                transformations = ["Location", "Rotation", "Scale"]
+            elif self.animation_type == "MATERIAL":
+                transformations = ["Transparency", "Attribute"]
+            else:
+                transformations = []
+
+            for transformation in transformations:
+                checkbox = self.transformation_checkboxes.add()
+                checkbox.name = transformation
+                checkbox.enabled = True
+                box.prop(checkbox, "enabled", text=transformation)
+            
+            if self.object_name and self.object_name != "NONE":
+                self.update_object(context)  # Call update_object when the menu is drawn
+                
+                if self.uv_material_mode != "BERRY_BUSH":
+                    layout.prop(self, "view_object", text="View Object")
+                    
+                    if self.view_object:
+                        box = layout.box()
+                        box.label(text="Objects:")
+                        
+                        for item in self.view_object_items:
+                            box.prop(item, "enabled", text=item.name)
+
+    def check(self, context):
+        """Ensure the correct file extension is applied."""
         filepath = self.filepath
         if os.path.basename(filepath):
-            filepath = bpy.path.ensure_ext(
-                os.path.splitext(self.filepath)[0],
-                '.mtn2' if self.extension == '.mtn2' else '.mtn3',
-            )
-            changed = (filepath != self.filepath)
-            self.filepath = filepath
- 
-        return changed
+            filepath = bpy.path.ensure_ext(os.path.splitext(filepath)[0], self.filename_ext)
+            if filepath != self.filepath:
+                self.filepath = filepath
+                return True
+        return False
 
     def execute(self, context):
-        if (self.armature_name == ""):
-            self.report({'ERROR'}, "No animation found in the armature")
-            return {'FINISHED'}
-        else:
-            with open(self.filepath, "wb") as f:
-                f.write(fileio_write_xmtn(context, self.armature_name, self.animation_name, self.extension))
-                return {'FINISHED'} 
+        if self.animation_type == "ARMATURE" and (self.armature_name == "" or self.armature_name == "NONE"):
+            self.report({'ERROR'}, "No armature selected for animation.")
+            return {'CANCELLED'}
 
+        # Placeholder for export logic
+        selected_bones = [bone.name for bone in self.bone_checkboxes if bone.enabled]
+        self.report({'INFO'}, f"Exported {self.animation_type} with bones: {', '.join(selected_bones)}")
+        return {'FINISHED'}

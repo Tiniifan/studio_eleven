@@ -48,7 +48,7 @@ class Level5_Menu_Export(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        layout.operator(ExportXMTN.bl_idname, text="Animation (xmtn, xmtm, xima)", icon="POSE_HLT")
+        layout.operator(ExportAnimation.bl_idname, text="Animation (xmtn, xmtm, xima)", icon="POSE_HLT")
         layout.operator(ExportXPRM.bl_idname, text="Mesh (xprm)", icon="MESH_DATA")
         layout.operator(ExportXC.bl_idname, text="Archive (xpck)", icon="FILE_3D")
         layout.operator(ExportXCMA.bl_idname, text="Camera (xcma)", icon="OUTLINER_OB_CAMERA")
@@ -72,6 +72,7 @@ def draw_menu_import(self, context):
 
 def register():
     # Level 5 Menu Export
+    bpy.utils.register_class(BoneCheckbox)
     bpy.utils.register_class(ExportXC_AddAnimationItem)
     bpy.utils.register_class(ExportXC_RemoveAnimationItem)
     bpy.utils.register_class(AnimationItem)
@@ -82,7 +83,7 @@ def register():
     bpy.utils.register_class(ArchivePropertyGroup)
     bpy.utils.register_class(TexprojPropertyGroup)
     bpy.types.Scene.export_xc_animations_items = bpy.props.CollectionProperty(type=AnimationItem)
-    bpy.utils.register_class(ExportXMTN)
+    bpy.utils.register_class(ExportAnimation)
     bpy.utils.register_class(ExportXC)
     bpy.utils.register_class(ExportXPRM)
     bpy.utils.register_class(ExportXCMA) 
@@ -99,7 +100,8 @@ def register():
 
 def unregister():
     # Level 5 Menu Export
-    bpy.utils.unregister_class(ExportXMTN)
+    bpy.utils.unregister_class(BoneCheckbox)
+    bpy.utils.unregister_class(ExportAnimation)
     bpy.utils.unregister_class(ExportXC)
     bpy.utils.unregister_class(ExportXPRM)
     bpy.utils.unregister_class(ExportXCMA)
