@@ -494,7 +494,114 @@ def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
     
     # Save
     return animation.Save();
+
+def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None):
+    print(f"Context: {context}")
+    print(f"Armature: {armature_name}")
+    print(f"Object: {object_name}")
+    print(f"Animation Type: {animation_type}")
+    print(f"Animation Name: {animation_name}")
+    print(f"Selected Items: {selected_items}")
+    print(f"Transformations: {transformations}")
+    print(f"Extension: {extension}")
+
+    if animation_type == "ARMATURE":
+        if not armature_name:
+            raise ValueError("No armature specified for ARMATURE animation.")
         
+        armature = bpy.data.objects.get(armature_name)
+        if not armature or armature.type != 'ARMATURE':
+            raise ValueError("Specified armature does not exist or is invalid.")
+
+        return fileio_write_xmtn(context, armature, animation_name, transformations, bones=selected_items)
+    elif animation_type in {"UV", "MATERIAL"}:
+        if not object_name:
+            raise ValueError(f"No object specified for {animation_type} animation.")
+        
+        obj = bpy.data.objects.get(object_name)
+        if not obj or obj.type not in {"MESH", "ARMATURE"}:
+            raise ValueError("Specified object does not exist or is invalid.")
+
+        print(f"Processing {animation_type} animation for {object_name}.")
+    else:
+        raise ValueError(f"Unknown animation type: {animation_type}")
+
+
+def fileio_write_xmtn(context, armature, animation_name, transformations, bones):
+    print('MTN', transformations)
+    
+    scene = context.scene
+    armature.data.pose_position = 'POSE'
+    bpy.context.view_layer.objects.active = armature
+    bpy.ops.object.mode_set(mode='POSE')
+
+    tracks = {
+        'location': animation_manager.Track('BoneLocation', 0, []),
+        'rotation': animation_manager.Track('BoneRotation', 1, []),
+        'scale': animation_manager.Track('BoneScale', 2, []),
+    }
+
+    if armature.animation_data and armature.animation_data.action:
+        action = armature.animation_data.action
+        keyframes_data = {}
+
+        for fcurve in action.fcurves:
+            data_path = fcurve.data_path
+            bone_name = data_path.split('"')[1] if '"' in data_path else None
+
+            if bone_name and bone_name in bones:
+                transformation_type = next((t for t in transformations if t in data_path), None)
+                if not transformation_type:
+                    continue
+
+                sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
+                for keyframe in sorted_keyframes:
+                    frame = int(keyframe.co.x)
+                    keyframes_data.setdefault(frame, {}).setdefault(bone_name, []).append(transformation_type)
+
+        for frame, bones_data in keyframes_data.items():
+            scene.frame_set(frame)
+            for bone_name, bone_transformations in bones_data.items():
+                pose_bone = armature.pose.bones.get(bone_name)
+                if not pose_bone or not pose_bone.bone.use_deform:
+                    continue
+
+                pose_matrix = pose_bone.matrix
+                parent = pose_bone.parent
+                while parent and not parent.bone.use_deform:
+                    parent = parent.parent
+                if parent:
+                    pose_matrix = parent.matrix.inverted() @ pose_matrix
+
+                name_crc32 = zlib.crc32(bone_name.encode())
+                for transformation in bone_transformations:
+                    if not tracks[transformation].NodeExists(name_crc32):
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+
+                    if transformation == 'location':
+                        location = pose_matrix.to_translation()
+                        tracks['location'].GetNodeByName(name_crc32).add_frame(
+                            frame, BoneLocation(*map(float, location))
+                        )
+                    elif transformation == 'rotation':
+                        rotation = pose_matrix.to_euler()
+                        rotation = BoneRotation(*map(float, rotation))
+                        rotation.ToQuaternion()
+                        tracks['rotation'].GetNodeByName(name_crc32).add_frame(frame, rotation)
+                    elif transformation == 'scale':
+                        scale = pose_matrix.to_scale()
+                        tracks['scale'].GetNodeByName(name_crc32).add_frame(
+                            frame, BoneLocation(*map(float, scale))
+                        )
+
+    animation = animation_manager.AnimationManager(
+        Format='XMTN', Version='V2', AnimationName=animation_name,
+        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+    )
+    
+    return animation.Save()
+    
+ 
 ##########################################
 # Register class
 ##########################################
@@ -540,48 +647,51 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
 
     def update_armature(self, context):
         """Update bone checkboxes when armature is changed."""
-        self.bone_checkboxes.clear()
         if self.animation_type == "ARMATURE" and self.armature_name and self.armature_name != "NONE":
             armature = bpy.data.objects.get(self.armature_name)
             if armature and armature.type == "ARMATURE":
+                existing_bones = {checkbox.name: checkbox.enabled for checkbox in self.bone_checkboxes}
+                self.bone_checkboxes.clear()  # Effacer l'ancienne liste
+
                 for bone in armature.data.bones:
                     checkbox = self.bone_checkboxes.add()
                     checkbox.name = bone.name
-                    checkbox.enabled = True
+                    checkbox.enabled = existing_bones.get(bone.name, True)
 
     def update_object(self, context):
         """Update view object based on UVWarp modifiers or materials."""
-        self.view_object_items.clear()
-        if self.animation_type == "UV" and self.uv_material_mode == "STUDIO_ELEVEN":
+        if self.animation_type in {"UV", "MATERIAL"} and self.object_name and self.object_name != "NONE":
             obj = bpy.data.objects.get(self.object_name)
-            if obj and obj.type == "MESH":
-                for mod in obj.modifiers:
-                    if mod.type == 'UV_WARP':
-                        checkbox = self.view_object_items.add()
-                        checkbox.name = mod.name
-                        checkbox.enabled = True
-            elif obj and obj.type == "ARMATURE":
-                for child in obj.children:
-                    if child.type == "MESH":
-                        for mod in child.modifiers:
-                            if mod.type == 'UV_WARP':
-                                checkbox = self.view_object_items.add()
-                                checkbox.name = mod.name
-                                checkbox.enabled = True
-        elif self.animation_type == "MATERIAL" and self.uv_material_mode == "STUDIO_ELEVEN":
-            obj = bpy.data.objects.get(self.object_name)
-            if obj and obj.type == "MESH":
-                for mat in obj.data.materials:
-                    checkbox = self.view_object_items.add()
-                    checkbox.name = mat.name
-                    checkbox.enabled = True
-            elif obj and obj.type == "ARMATURE":
-                for child in obj.children:
-                    if child.type == "MESH":
-                        for mat in child.data.materials:
+            if obj:
+                existing_items = {checkbox.name: checkbox.enabled for checkbox in self.view_object_items}
+                self.view_object_items.clear()  # Effacer l'ancienne liste
+
+                if self.animation_type == "UV":
+                    for mod in obj.modifiers:
+                        if mod.type == 'UV_WARP':
                             checkbox = self.view_object_items.add()
-                            checkbox.name = mat.name
-                            checkbox.enabled = True
+                            checkbox.name = mod.name
+                            checkbox.enabled = existing_items.get(mod.name, True)  # Restaurer l'état ou activer par défaut
+
+                    for child in obj.children:
+                        if child.type == "MESH":
+                            for mod in child.modifiers:
+                                if mod.type == 'UV_WARP':
+                                    checkbox = self.view_object_items.add()
+                                    checkbox.name = mod.name
+                                    checkbox.enabled = existing_items.get(mod.name, True)
+                elif self.animation_type == "MATERIAL":
+                    for mat in obj.data.materials:
+                        checkbox = self.view_object_items.add()
+                        checkbox.name = mat.name
+                        checkbox.enabled = existing_items.get(mat.name, True)
+
+                    for child in obj.children:
+                        if child.type == "MESH":
+                            for mat in child.data.materials:
+                                checkbox = self.view_object_items.add()
+                                checkbox.name = mat.name
+                                checkbox.enabled = existing_items.get(mat.name, True)
 
     animation_type: EnumProperty(
         name="Animation Type",
@@ -686,6 +796,25 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
 
     transformation_checkboxes: CollectionProperty(type=BoneCheckbox)
 
+    def update_transformations(self):
+        """Update transformation checkboxes."""
+        existing_transformations = {checkbox.name: checkbox.enabled for checkbox in self.transformation_checkboxes}
+        self.transformation_checkboxes.clear()
+
+        if self.animation_type == "ARMATURE":
+            transformations = ["Location", "Rotation", "Scale", "Bool"]
+        elif self.animation_type == "UV":
+            transformations = ["Location", "Rotation", "Scale"]
+        elif self.animation_type == "MATERIAL":
+            transformations = ["Transparency", "Attribute"]
+        else:
+            transformations = []
+
+        for transformation in transformations:
+            checkbox = self.transformation_checkboxes.add()
+            checkbox.name = transformation
+            checkbox.enabled = existing_transformations.get(transformation, True)
+
     def draw(self, context):
         layout = self.layout
 
@@ -695,33 +824,23 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         if self.animation_type == "ARMATURE":
             layout.prop(self, "armature_name", text="Armature")
             layout.prop(self, "animation_name", text="Animation Name")
+
+            # Initialiser les transformations
+            self.update_transformations()
             
-            # Draw transformation checkboxes based on animation type
+            # Dessiner les cases des transformations
             box = layout.box()
             box.label(text="Transformations:")
-            if self.animation_type == "ARMATURE":
-                transformations = ["Location", "Rotation", "Scale", "Bool"]
-            elif self.animation_type == "UV":
-                transformations = ["Location", "Rotation", "Scale"]
-            elif self.animation_type == "MATERIAL":
-                transformations = ["Transparency", "Attribute"]
-            else:
-                transformations = []
-
-            for transformation in transformations:
-                checkbox = self.transformation_checkboxes.add()
-                checkbox.name = transformation
-                checkbox.enabled = True
-                box.prop(checkbox, "enabled", text=transformation)            
+            for checkbox in self.transformation_checkboxes:
+                box.prop(checkbox, "enabled", text=checkbox.name)
             
             if self.armature_name and self.armature_name != "NONE":
-                self.update_armature(context)  # Call update_armature when the menu is drawn
                 layout.prop(self, "view_bones", text="View Bones")
-                
+
                 if self.view_bones:
+                    self.update_armature(context)  # Mettre à jour uniquement si nécessaire
                     box = layout.box()
                     box.label(text="Bones:")
-                    
                     for bone in self.bone_checkboxes:
                         box.prop(bone, "enabled", text=bone.name)
         elif self.animation_type in {"UV", "MATERIAL"}:
@@ -729,36 +848,24 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
             layout.prop(self, "object_name", text="Object")
             layout.prop(self, "animation_name", text="Animation Name")
 
-            # Draw transformation checkboxes based on animation type
+            # Initialiser les transformations
+            self.update_transformations()
+
+            # Dessiner les cases des transformations
             box = layout.box()
             box.label(text="Transformations:")
-            if self.animation_type == "ARMATURE":
-                transformations = ["Location", "Rotation", "Scale", "Bool"]
-            elif self.animation_type == "UV":
-                transformations = ["Location", "Rotation", "Scale"]
-            elif self.animation_type == "MATERIAL":
-                transformations = ["Transparency", "Attribute"]
-            else:
-                transformations = []
+            for checkbox in self.transformation_checkboxes:
+                box.prop(checkbox, "enabled", text=checkbox.name)
 
-            for transformation in transformations:
-                checkbox = self.transformation_checkboxes.add()
-                checkbox.name = transformation
-                checkbox.enabled = True
-                box.prop(checkbox, "enabled", text=transformation)
-            
             if self.object_name and self.object_name != "NONE":
-                self.update_object(context)  # Call update_object when the menu is drawn
-                
-                if self.uv_material_mode != "BERRY_BUSH":
-                    layout.prop(self, "view_object", text="View Object")
-                    
-                    if self.view_object:
-                        box = layout.box()
-                        box.label(text="Objects:")
-                        
-                        for item in self.view_object_items:
-                            box.prop(item, "enabled", text=item.name)
+                layout.prop(self, "view_object", text="View Object")
+
+                if self.view_object:
+                    self.update_object(context)  # Mettre à jour uniquement si nécessaire
+                    box = layout.box()
+                    box.label(text="Objects:")
+                    for item in self.view_object_items:
+                        box.prop(item, "enabled", text=item.name)
 
     def check(self, context):
         """Ensure the correct file extension is applied."""
@@ -771,11 +878,72 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         return False
 
     def execute(self, context):
-        if self.animation_type == "ARMATURE" and (self.armature_name == "" or self.armature_name == "NONE"):
+        # Vérifier si armature_name est vide
+        if not self.armature_name or self.armature_name == "NONE":
             self.report({'ERROR'}, "No armature selected for animation.")
             return {'CANCELLED'}
 
-        # Placeholder for export logic
-        selected_bones = [bone.name for bone in self.bone_checkboxes if bone.enabled]
-        self.report({'INFO'}, f"Exported {self.animation_type} with bones: {', '.join(selected_bones)}")
+        # Vérifier si object_name est vide
+        if self.animation_type in {"UV", "MATERIAL"} and (not self.object_name or self.object_name == "NONE"):
+            self.report({'ERROR'}, "No object selected for animation.")
+            return {'CANCELLED'}
+
+        # Récupérer les transformations sélectionnées
+        selected_transformations = list(set(
+            transformation.name.lower() for transformation in self.transformation_checkboxes if transformation.enabled
+        ))
+
+        if not selected_transformations:
+            self.report({'ERROR'}, "No transformations selected for the animation.")
+            return {'CANCELLED'}
+
+        # Récupérer les données en fonction du type d'animation
+        selected_items = []
+        if self.animation_type == "ARMATURE":
+            selected_items = [bone.name for bone in self.bone_checkboxes if bone.enabled]
+            
+            if not selected_items:
+                self.report({'ERROR'}, "No bones selected for armature animation.")
+                return {'CANCELLED'}
+        elif self.animation_type == "UV":
+            selected_items = [uv.name for uv in self.view_object_items if uv.enabled]
+            
+            if not selected_items:
+                self.report({'ERROR'}, "No UV modifiers selected for UV animation.")
+                return {'CANCELLED'}
+        elif self.animation_type == "MATERIAL":
+            selected_items = [mat.name for mat in self.view_object_items if mat.enabled]
+            
+            if not selected_items:
+                self.report({'ERROR'}, "No materials selected for material animation.")
+                return {'CANCELLED'}
+
+        # Vérifier si une extension est sélectionnée
+        if not self.extension:
+            self.report({'ERROR'}, "No animation format selected.")
+            return {'CANCELLED'}
+
+        # Ajouter une extension au filepath si nécessaire
+        if not self.filepath.endswith(self.extension):
+            self.filepath += self.extension
+
+        # Appeler la fonction fileio_write_animation avec les données collectées
+        try:
+            with open(self.filepath, "wb") as f:
+                f.write(fileio_write_animation(
+                        context=context,
+                        armature_name=self.armature_name if self.animation_type == "ARMATURE" else None,
+                        object_name=self.object_name if self.animation_type in {"UV", "MATERIAL"} else None,
+                        animation_type=self.animation_type,
+                        animation_name=self.animation_name,
+                        selected_items=selected_items,
+                        transformations=selected_transformations,
+                        extension=self.extension
+                    )
+                )
+            self.report({'INFO'}, f"Successfully exported {self.animation_type} animation '{self.animation_name}' with format {self.extension}.")
+        except Exception as e:
+            self.report({'ERROR'}, f"An error occurred during export: {str(e)}")
+            return {'CANCELLED'}
+
         return {'FINISHED'}
