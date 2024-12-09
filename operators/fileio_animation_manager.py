@@ -495,7 +495,7 @@ def fileio_write_xmtn(context, armature_name, animation_name, animation_format):
     # Save
     return animation.Save();
 
-def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None):
+def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None, uv_material_mode=None):
     print(f"Context: {context}")
     print(f"Armature: {armature_name}")
     print(f"Object: {object_name}")
@@ -504,6 +504,7 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
     print(f"Selected Items: {selected_items}")
     print(f"Transformations: {transformations}")
     print(f"Extension: {extension}")
+    print(f"UV/Material Mode: {uv_material_mode}")
 
     if animation_type == "ARMATURE":
         if not armature_name:
@@ -513,19 +514,29 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
         if not armature or armature.type != 'ARMATURE':
             raise ValueError("Specified armature does not exist or is invalid.")
 
-        return fileio_write_xmtn(context, armature, animation_name, transformations, bones=selected_items)
-    elif animation_type in {"UV", "MATERIAL"}:
+        return fileio_write_xmtn(context, armature, animation_name, transformations, selected_items)
+    elif animation_type == "UV":
         if not object_name:
-            raise ValueError(f"No object specified for {animation_type} animation.")
+            raise ValueError("No object specified for UV animation.")
+            
+        obj = bpy.data.objects.get(object_name)
+        if not obj or obj.type not in {"MESH", "ARMATURE"}:
+            raise ValueError("Specified object doesn't exist or is invalid.")
+
+        is_studio_eleven = uv_material_mode == "STUDIO_ELEVEN"
+        
+        return fileio_write_imm(context, obj, animation_name, transformations, selected_items, is_studio_eleven)
+    elif animation_type == "MATERIAL":
+        if not object_name:
+            raise ValueError("No object specified for Material animation.")
         
         obj = bpy.data.objects.get(object_name)
         if not obj or obj.type not in {"MESH", "ARMATURE"}:
-            raise ValueError("Specified object does not exist or is invalid.")
+            raise ValueError("Specified object doesn't exist or is invalid.")
 
-        print(f"Processing {animation_type} animation for {object_name}.")
+        print('Todo')
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
-
 
 def fileio_write_xmtn(context, armature, animation_name, transformations, bones):
     print('MTN', transformations)
@@ -601,7 +612,112 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones)
     
     return animation.Save()
     
- 
+def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
+    print('IMM', transformations)
+    
+    scene = context.scene
+    bpy.context.view_layer.objects.active = focused_object
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    meshes_enabled = []
+    modifiers_enabled = []
+
+    tracks = {
+        'offset': animation_manager.Track('UVMove', 0, []),
+        'scale': animation_manager.Track('UVScale', 1, []),
+        'rotation': animation_manager.Track('UVRotate', 2, []),
+    }
+
+    # Vérifie si l'objet est une armature
+    if focused_object.type == 'ARMATURE':
+        for obj in context.scene.objects:
+            # Vérifie que l'objet est une mesh et qu'il est parenté à l'armature
+            if obj.type == 'MESH' and obj.parent == focused_object:
+                if is_studio_eleven:
+                    for modifier in obj.modifiers:
+                        if modifier.type == 'UV_WARP':
+                            if modifier.name in objects:
+                                if obj.animation_data and obj.animation_data.action:
+                                    modifiers_enabled.append(modifier)
+                else:
+                    meshes_enabled.append(obj)
+    elif focused_object.type == 'MESH':
+        if is_studio_eleven:
+            for modifier in focused_object.modifiers:
+                if modifier.type == 'UV_WARP':
+                    if modifier.name in objects:
+                        if obj.animation_data and obj.animation_data.action:
+                            modifiers_enabled.append(modifier)
+        else:
+            meshes_enabled.append(focused_object)
+
+    # Vérifie quel type d'objets est activé
+    if modifiers_enabled and not meshes_enabled:
+        print(f"Modifiers activés : {[mod.name for mod in modifiers_enabled]}")
+        
+        keyframes_data = {}  # Structure pour stocker les données des keyframes
+        
+        # Parcours des modifiers activés
+        for modifier in modifiers_enabled:
+            associated_mesh = modifier.id_data  # Récupère la mesh associée au modifier
+            if associated_mesh.animation_data and associated_mesh.animation_data.action:
+                action = associated_mesh.animation_data.action
+                
+                for fcurve in action.fcurves:
+                    if fcurve.data_path.startswith(f"modifiers[\"{modifier.name}\"]"):
+                        data_path = fcurve.data_path
+                        modifier_name = data_path.split('"')[1] if '"' in data_path else None
+
+                        transformation_type = next((t for t in transformations if t in data_path), None)
+                        if not transformation_type:
+                            continue
+
+                        sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
+                        for keyframe in sorted_keyframes:
+                            frame = int(keyframe.co.x)
+                            keyframes_data.setdefault(frame, {}).setdefault(modifier_name, []).append(transformation_type)
+
+        for frame, modifiers_data in keyframes_data.items():
+            scene.frame_set(frame)
+            for modifier_name, modifier_transformations in modifiers_data.items():
+                # Récupérer le modifier par son nom et l'objet associé
+                modifier = next((mod for mod in modifiers_enabled if mod.name == modifier_name), None)
+                if not modifier:
+                    continue
+
+                name_crc32 = zlib.crc32(modifier_name.encode())
+                for transformation in modifier_transformations:
+                    if not tracks[transformation].NodeExists(name_crc32):
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+
+                    if transformation == 'offset':
+                        location = modifier.offset  # Récupérer la valeur d'offset
+                        tracks['offset'].GetNodeByName(name_crc32).add_frame(
+                            frame, UVMove(*map(float, location))
+                        )
+                    elif transformation == 'scale':
+                        scale = modifier.scale  # Récupérer la valeur de scale
+                        tracks['scale'].GetNodeByName(name_crc32).add_frame(
+                            frame, UVScale(*map(float, scale))
+                        )
+                    elif transformation == 'rotation':
+                        rotation = modifier.rotation  # Récupérer la valeur de rotation
+                        tracks['rotation'].GetNodeByName(name_crc32).add_frame(
+                            frame, UVRotate(*map(float, rotation))
+                        )                      
+    elif meshes_enabled and not modifiers_enabled:
+        print(f"Meshes activées : {meshes_enabled}")
+    elif not modifiers_enabled and not meshes_enabled:
+        raise ValueError("Les listes 'modifiers_enabled' et 'meshes_enabled' sont toutes les deux vides. Aucune opération possible.")
+    else:
+        raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
+
+    animation = animation_manager.AnimationManager(
+        Format='XMTN', Version='V2', AnimationName=animation_name,
+        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+    )
+
+    return animation.Save()
 ##########################################
 # Register class
 ##########################################
@@ -804,7 +920,7 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         if self.animation_type == "ARMATURE":
             transformations = ["Location", "Rotation", "Scale", "Bool"]
         elif self.animation_type == "UV":
-            transformations = ["Location", "Rotation", "Scale"]
+            transformations = ["Offset", "Scale", "Rotation"]
         elif self.animation_type == "MATERIAL":
             transformations = ["Transparency", "Attribute"]
         else:
@@ -837,8 +953,8 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
             if self.armature_name and self.armature_name != "NONE":
                 layout.prop(self, "view_bones", text="View Bones")
 
+                self.update_armature(context)
                 if self.view_bones:
-                    self.update_armature(context)  # Mettre à jour uniquement si nécessaire
                     box = layout.box()
                     box.label(text="Bones:")
                     for bone in self.bone_checkboxes:
@@ -860,8 +976,8 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
             if self.object_name and self.object_name != "NONE":
                 layout.prop(self, "view_object", text="View Object")
 
+                self.update_object(context)
                 if self.view_object:
-                    self.update_object(context)  # Mettre à jour uniquement si nécessaire
                     box = layout.box()
                     box.label(text="Objects:")
                     for item in self.view_object_items:
@@ -878,17 +994,7 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         return False
 
     def execute(self, context):
-        # Vérifier si armature_name est vide
-        if not self.armature_name or self.armature_name == "NONE":
-            self.report({'ERROR'}, "No armature selected for animation.")
-            return {'CANCELLED'}
-
-        # Vérifier si object_name est vide
-        if self.animation_type in {"UV", "MATERIAL"} and (not self.object_name or self.object_name == "NONE"):
-            self.report({'ERROR'}, "No object selected for animation.")
-            return {'CANCELLED'}
-
-        # Récupérer les transformations sélectionnées
+        # Vérifier les transformations sélectionnées
         selected_transformations = list(set(
             transformation.name.lower() for transformation in self.transformation_checkboxes if transformation.enabled
         ))
@@ -901,19 +1007,19 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         selected_items = []
         if self.animation_type == "ARMATURE":
             selected_items = [bone.name for bone in self.bone_checkboxes if bone.enabled]
-            
+
             if not selected_items:
                 self.report({'ERROR'}, "No bones selected for armature animation.")
                 return {'CANCELLED'}
         elif self.animation_type == "UV":
             selected_items = [uv.name for uv in self.view_object_items if uv.enabled]
-            
+
             if not selected_items:
                 self.report({'ERROR'}, "No UV modifiers selected for UV animation.")
                 return {'CANCELLED'}
         elif self.animation_type == "MATERIAL":
             selected_items = [mat.name for mat in self.view_object_items if mat.enabled]
-            
+
             if not selected_items:
                 self.report({'ERROR'}, "No materials selected for material animation.")
                 return {'CANCELLED'}
@@ -926,6 +1032,20 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         # Ajouter une extension au filepath si nécessaire
         if not self.filepath.endswith(self.extension):
             self.filepath += self.extension
+            
+        with open(self.filepath, "wb") as f:
+            f.write(fileio_write_animation(
+                    context=context,
+                    armature_name=self.armature_name if self.animation_type == "ARMATURE" else None,
+                    object_name=self.object_name if self.animation_type in {"UV", "MATERIAL"} else None,
+                    animation_type=self.animation_type,
+                    animation_name=self.animation_name,
+                    selected_items=selected_items,
+                    transformations=selected_transformations,
+                    extension=self.extension,
+                    uv_material_mode=self.uv_material_mode
+                )
+            )            
 
         # Appeler la fonction fileio_write_animation avec les données collectées
         try:
@@ -938,7 +1058,8 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
                         animation_name=self.animation_name,
                         selected_items=selected_items,
                         transformations=selected_transformations,
-                        extension=self.extension
+                        extension=self.extension,
+                        uv_material_mode=self.uv_material_mode
                     )
                 )
             self.report({'INFO'}, f"Successfully exported {self.animation_type} animation '{self.animation_name}' with format {self.extension}.")
