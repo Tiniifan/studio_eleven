@@ -691,22 +691,57 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                         tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
 
                     if transformation == 'offset':
-                        location = modifier.offset  # Récupérer la valeur d'offset
+                        location = modifier.offset
                         tracks['offset'].GetNodeByName(name_crc32).add_frame(
                             frame, UVMove(*map(float, location))
                         )
                     elif transformation == 'scale':
-                        scale = modifier.scale  # Récupérer la valeur de scale
+                        scale = modifier.scale
                         tracks['scale'].GetNodeByName(name_crc32).add_frame(
                             frame, UVScale(*map(float, scale))
                         )
                     elif transformation == 'rotation':
-                        rotation = modifier.rotation  # Récupérer la valeur de rotation
+                        rotation = modifier.rotation
                         tracks['rotation'].GetNodeByName(name_crc32).add_frame(
-                            frame, UVRotate(*map(float, rotation))
+                            frame, UVRotate(rotation)
                         )                      
     elif meshes_enabled and not modifiers_enabled:
-        print(f"Meshes activées : {meshes_enabled}")
+        meshes_material_dict = {}
+        for i, obj in enumerate(context.scene.objects):
+            if obj.type == 'MESH':
+                meshes_material_dict[obj.name] = f"DefaultLib.{len(meshes_material_dict)}"
+        
+        for frame in range(scene.frame_start, scene.frame_end + 1):
+            scene.frame_set(frame)
+            
+            for mesh in meshes_enabled:
+                name_crc32 = zlib.crc32(meshes_material_dict[mesh.name].encode())
+                
+                if (len(mesh.material_slots) > 0):
+                    material = mesh.material_slots[0].material
+                    
+                    if hasattr(material, "brres"):
+                        material_transformation = material.brres.textures.coll_[0].transform
+                    
+                        for transformation in transformations:
+                            if not tracks[transformation].NodeExists(name_crc32):
+                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                                
+                            if transformation == 'offset':
+                                location = [material_transformation.translation[0], material_transformation.translation[1]]
+                                tracks['offset'].GetNodeByName(name_crc32).add_frame(
+                                    frame, UVMove(*map(float, location))
+                                )
+                            elif transformation == 'scale':
+                                scale = [material_transformation.scale[0], material_transformation.scale[1]]
+                                tracks['scale'].GetNodeByName(name_crc32).add_frame(
+                                    frame, UVScale(*map(float, scale))
+                                )
+                            elif transformation == 'rotation':
+                                rotation = material_transformation.rotation
+                                tracks['rotation'].GetNodeByName(name_crc32).add_frame(
+                                    frame, UVRotate(rotation)
+                                )    
     elif not modifiers_enabled and not meshes_enabled:
         raise ValueError("Les listes 'modifiers_enabled' et 'meshes_enabled' sont toutes les deux vides. Aucune opération possible.")
     else:
@@ -718,6 +753,10 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
     )
 
     return animation.Save()
+
+def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
+    pass
+    
 ##########################################
 # Register class
 ##########################################
@@ -1014,13 +1053,15 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         elif self.animation_type == "UV":
             selected_items = [uv.name for uv in self.view_object_items if uv.enabled]
 
-            if not selected_items:
+            # Ignore the error if uv_material_mode is BERRY_BUSH
+            if not selected_items and self.uv_material_mode != "BERRY_BUSH":
                 self.report({'ERROR'}, "No UV modifiers selected for UV animation.")
                 return {'CANCELLED'}
         elif self.animation_type == "MATERIAL":
             selected_items = [mat.name for mat in self.view_object_items if mat.enabled]
 
-            if not selected_items:
+            # Ignore the error if uv_material_mode is BERRY_BUSH
+            if not selected_items and self.uv_material_mode != "BERRY_BUSH":
                 self.report({'ERROR'}, "No materials selected for material animation.")
                 return {'CANCELLED'}
 
