@@ -82,7 +82,12 @@ def register():
     bpy.utils.register_class(CameraPropertyGroup)
     bpy.utils.register_class(ArchivePropertyGroup)
     bpy.utils.register_class(TexprojPropertyGroup)
-    bpy.types.Scene.export_xc_animations_items = bpy.props.CollectionProperty(type=AnimationItem)
+    
+    bpy.types.Scene.animation_items_armature = bpy.props.CollectionProperty(type=AnimationItem)
+    bpy.types.Scene.animation_items_uv = bpy.props.CollectionProperty(type=AnimationItem)
+    bpy.types.Scene.animation_items_material = bpy.props.CollectionProperty(type=AnimationItem)
+    bpy.types.Scene.animation_items_camera = bpy.props.CollectionProperty(type=AnimationItem)
+    
     bpy.utils.register_class(ExportAnimation)
     bpy.utils.register_class(ExportXC)
     bpy.utils.register_class(ExportXPRM)
@@ -113,7 +118,12 @@ def unregister():
     bpy.utils.unregister_class(CameraPropertyGroup)
     bpy.utils.unregister_class(TexprojPropertyGroup)
     bpy.utils.unregister_class(ArchivePropertyGroup)
-    del bpy.types.Scene.export_xc_animations_items
+    
+    del bpy.types.Scene.animation_items_armature
+    del bpy.types.Scene.animation_items_uv
+    del bpy.types.Scene.animation_items_material
+    del bpy.types.Scene.animation_items_camera
+    
     bpy.utils.unregister_class(ExportXC_AddAnimationItem)
     bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)    
     bpy.types.TOPBAR_MT_file_export.remove(draw_menu_export)

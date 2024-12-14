@@ -533,8 +533,10 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
         obj = bpy.data.objects.get(object_name)
         if not obj or obj.type not in {"MESH", "ARMATURE"}:
             raise ValueError("Specified object doesn't exist or is invalid.")
+            
+        is_studio_eleven = uv_material_mode == "STUDIO_ELEVEN"    
 
-        print('Todo')
+        return fileio_write_mtm(context, obj, animation_name, transformations, selected_items, is_studio_eleven)
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
 
@@ -748,14 +750,159 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
         raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
 
     animation = animation_manager.AnimationManager(
-        Format='XMTN', Version='V2', AnimationName=animation_name,
+        Format='XIMA', Version='V2', AnimationName=animation_name,
         FrameCount=scene.frame_end, Tracks=list(tracks.values())
     )
 
     return animation.Save()
 
 def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
-    pass
+    print('MTM', transformations)
+    
+    scene = context.scene
+    bpy.context.view_layer.objects.active = focused_object
+    bpy.ops.object.mode_set(mode='OBJECT')
+
+    meshes_enabled = []
+    materials_enabled = []
+
+    tracks = {
+        'transparency': animation_manager.Track('MaterialTransparency', 0, []),
+        'attribute': animation_manager.Track('MaterialAttribute', 1, []),
+    }
+
+    # Vérifie si l'objet est une armature
+    if focused_object.type == 'ARMATURE':
+        for obj in context.scene.objects:
+            # Vérifie que l'objet est une mesh et qu'il est parenté à l'armature
+            if obj.type == 'MESH' and obj.parent == focused_object:
+                if is_studio_eleven:
+                    if len(obj.data.materials) > 0:
+                        if obj.data.materials[0].name in objects:
+                            if obj.data.materials[0].animation_data and obj.data.materials[0].animation_data.action:
+                                materials_enabled.append(obj.data.materials[0])
+                else:
+                    meshes_enabled.append(obj)
+    elif focused_object.type == 'MESH':
+        if is_studio_eleven:
+            if len(focused_object.materials) > 0:
+                if focused_object.materials[0].name in objects:
+                    if focused_object.materials[0].animation_data and focused_object.materials[0].animation_data.action:
+                        materials_enabled.append(focused_object)
+        else:
+            meshes_enabled.append(focused_object)
+    
+    # Vérifie quel type d'objets est activé
+    if materials_enabled and not meshes_enabled:
+        print(f"materials activés : {[mat.name for mat in materials_enabled]}")
+        
+        keyframes_data = {}  # Structure pour stocker les données des keyframes
+        
+        # Parcours des modifiers activés
+        for material in materials_enabled:
+            if material.animation_data and material.animation_data.action:
+                action = material.animation_data.action
+                
+                for fcurve in action.fcurves:
+                    data_path = fcurve.data_path
+                    
+                    if data_path == f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value' or data_path == f'node_tree.nodes["Principled BSDF"].inputs[21].default_value':
+                        # Transparency
+                        transformation_type = 'transparency'
+                        if not 'transparency' in transformations:
+                            continue
+                        
+                    elif data_path == f'node_tree.nodes["Principled BSDF"].inputs[19].default_value':
+                        # Emission
+                        transformation_type = 'attribute'
+                        if not 'attribute' in transformations:
+                            continue
+                    else:
+                        continue
+                        
+                    sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
+                    for keyframe in sorted_keyframes:
+                        frame = int(keyframe.co.x)
+                        keyframes_data.setdefault(frame, {}).setdefault(material.name, []).append(transformation_type)
+
+        for frame, material_data in keyframes_data.items():
+            scene.frame_set(frame)
+            
+            for material_name, material_transformations in material_data.items():
+                # Récupérer le material par son nom et l'objet associé
+                material = next((mat for mat in materials_enabled if mat.name == material_name), None)
+                if not material:
+                    continue
+                
+                nodes = material.node_tree.nodes
+                name_crc32 = zlib.crc32(material_name.encode())
+                
+                for transformation in material_transformations:
+                    if not tracks[transformation].NodeExists(name_crc32):
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+
+                    if transformation == 'transparency':
+                        texture_node = nodes.get("Image Texture")
+                        if texture_node:
+                            transparency = 0
+                            
+                            if texture_node.outputs["Alpha"].is_linked:
+                                transparency = nodes["Alpha Multiplier"].inputs[1].default_value
+                            else:
+                                transparency = nodes["Principled BSDF"].inputs[21].default_value
+
+                            tracks['transparency'].GetNodeByName(name_crc32).add_frame(
+                                frame, Transparency(transparency)
+                            )
+                    elif transformation == 'attribute':
+                        emission = nodes["Principled BSDF"].inputs[19].default_value
+                        tracks['attribute'].GetNodeByName(name_crc32).add_frame(
+                            frame, MaterialAttribute(*map(float, emission))
+                        )                    
+    elif meshes_enabled and not materials_enabled:
+        meshes_material_dict = {}
+        for i, obj in enumerate(context.scene.objects):
+            if obj.type == 'MESH':
+                meshes_material_dict[obj.name] = f"DefaultLib.{len(meshes_material_dict)}"
+        
+        for frame in range(scene.frame_start, scene.frame_end + 1):
+            scene.frame_set(frame)
+            
+            for mesh in meshes_enabled:
+                name_crc32 = zlib.crc32(meshes_material_dict[mesh.name].encode())
+                
+                if (len(mesh.material_slots) > 0):
+                    material = mesh.material_slots[0].material
+                    
+                    if hasattr(material, "brres"):
+                        material = material.brres.lightChans.coll_[0]
+                        transparency = material.difColor[3]
+                        attribute = (material.difColor[0], material.difColor[1], material.difColor[2])
+                    
+                        for transformation in transformations:
+                            if not tracks[transformation].NodeExists(name_crc32):
+                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                                
+                            if transformation == 'transparency':
+                                tracks['transparency'].GetNodeByName(name_crc32).add_frame(
+                                    frame, Transparency(transparency)
+                                )
+                            elif transformation == 'attribute':
+                                tracks['attribute'].GetNodeByName(name_crc32).add_frame(
+                                    frame, MaterialAttribute(*map(float, attribute))
+                                ) 
+    elif not materials_enabled and not meshes_enabled:
+        raise ValueError("Les listes 'materials_enabled' et 'meshes_enabled' sont toutes les deux vides. Aucune opération possible.")
+    else:
+        raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
+
+    animation = animation_manager.AnimationManager(
+        Format='XMTM', Version='V2', AnimationName=animation_name,
+        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+    )
+
+    return animation.Save()
+    
     
 ##########################################
 # Register class
@@ -795,10 +942,8 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         """Update available extensions and filter_glob based on animation type."""
         if self.animation_type == "ARMATURE":
             self.filter_glob = "*.mtn2;*.mtn3"
-            self.update_armature(context)
         else:
             self.filter_glob = "*.imm2" if self.animation_type == "UV" else "*.mtm2"
-            self.update_object(context)
 
     def update_armature(self, context):
         """Update bone checkboxes when armature is changed."""
@@ -836,17 +981,18 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
                                     checkbox.name = mod.name
                                     checkbox.enabled = existing_items.get(mod.name, True)
                 elif self.animation_type == "MATERIAL":
-                    for mat in obj.data.materials:
-                        checkbox = self.view_object_items.add()
-                        checkbox.name = mat.name
-                        checkbox.enabled = existing_items.get(mat.name, True)
-
-                    for child in obj.children:
-                        if child.type == "MESH":
-                            for mat in child.data.materials:
-                                checkbox = self.view_object_items.add()
-                                checkbox.name = mat.name
-                                checkbox.enabled = existing_items.get(mat.name, True)
+                    if obj.type == "ARMATURE":
+                        for child in obj.children:
+                            if child.type == "MESH":
+                                for mat in child.data.materials:
+                                    checkbox = self.view_object_items.add()
+                                    checkbox.name = mat.name
+                                    checkbox.enabled = existing_items.get(mat.name, True)                       
+                    else:
+                        for mat in obj.data.materials:
+                            checkbox = self.view_object_items.add()
+                            checkbox.name = mat.name
+                            checkbox.enabled = existing_items.get(mat.name, True)
 
     animation_type: EnumProperty(
         name="Animation Type",
