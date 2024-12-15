@@ -361,151 +361,7 @@ def fileio_open_animation(operator, context, filepath):
     
     return {'FINISHED'}
 
-def fileio_write_xmtn(context, armature_name, animation_name, animation_format):   
-    scene = context.scene
-    
-    armature = bpy.data.objects[armature_name]
-    armature.data.pose_position = 'POSE'
-    bpy.context.view_layer.objects.active = armature
-    
-    bpy.ops.object.mode_set(mode='POSE')
-
-    # Create tracks
-    tracks = []
-    tracks.append(animation_manager.Track('BoneLocation', 0, []))
-    tracks.append(animation_manager.Track('BoneRotation', 1, []))
-    tracks.append(animation_manager.Track('BoneScale', 2, []))
-    
-    # Checks if the armature has an animation
-    if armature.animation_data and armature.animation_data.action:
-        action = armature.animation_data.action
-        
-        keyframes_data = {}
-
-        for fcurve in action.fcurves:
-            data_path = fcurve.data_path
-            bone_name = data_path.split('"')[1] if '"' in data_path else None
-
-            if bone_name:
-                # Determine the type of transformation
-                if 'location' in data_path:
-                    transformation_type = 'location'
-                elif 'rotation' in data_path:
-                    transformation_type = 'rotation'
-                elif 'scale' in data_path:
-                    transformation_type = 'scale'
-                else:
-                    continue
-
-                # Retrieve the sorted key points
-                sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
-
-                for keyframe in sorted_keyframes:
-                    frame = int(keyframe.co.x)
-
-                    # Ensure that the frame key exists in the dictionary
-                    if frame not in keyframes_data:
-                        keyframes_data[frame] = {}
-
-                    # Ensure that the bone name exists in the dictionary for this frame
-                    if bone_name not in keyframes_data[frame]:
-                        keyframes_data[frame][bone_name] = []
-
-                    # Add the transformation to the corresponding list only if it does not already exist
-                    if transformation_type not in keyframes_data[frame][bone_name]:
-                        keyframes_data[frame][bone_name].append(transformation_type)
-
-        for frame, bones in keyframes_data.items():
-            scene.frame_set(frame)
-
-            for bone_name, transformations in bones.items():
-                # Check that the bone is indeed present in the armature
-                if bone_name in armature.pose.bones:
-                    pose_bone = armature.pose.bones[bone_name]
-                    
-                    # Check if the bone is deformable
-                    if not pose_bone.bone.use_deform:
-                        continue
-                        
-                    # Loop to find the first deformable parent bone
-                    parent = pose_bone.parent	
-                    while parent:
-                        if parent.bone.use_deform:
-                            break
-                        parent = parent.parent   
-                    
-                    # Get the transformation matrix of the current pose bone
-                    pose_matrix = pose_bone.matrix
-                    name_crc32 = zlib.crc32(pose_bone.name.encode())
-                    
-                    # Merge parent matrix and bone matrix
-                    if parent:
-                        parent_matrix = parent.matrix
-                        pose_matrix = parent_matrix.inverted() @ pose_matrix                
-
-                    # If a location transformation is detected
-                    if 'location' in transformations:
-                        # Check if the node doesn't exist
-                        if not tracks[0].NodeExists(name_crc32):
-                            # Create it
-                            tracks[0].Nodes.append(animation_manager.Node(name_crc32, True, []))
-                        
-                        # Transform matrix to location                
-                        location = pose_matrix.to_translation()
-                        location = BoneLocation(float(location[0]), float(location[1]), float(location[2]))
-                        
-                        # Insert location transformation data
-                        node = tracks[0].GetNodeByName(name_crc32)
-                        node.add_frame(frame, location)
-
-                    # If a rotation transformation is detected            
-                    if 'rotation' in transformations:
-                        # Check if the node doesn't exist
-                        if not tracks[1].NodeExists(name_crc32):
-                            # Create it
-                            tracks[1].Nodes.append(animation_manager.Node(name_crc32, True, []))
-                        
-                        # Transform matrix to rotation
-                        rotation = pose_matrix.to_euler()
-                        rotation = BoneRotation(float(rotation[0]), float(rotation[1]), float(rotation[2]))
-                        rotation.ToQuaternion()
-                        
-                        # Insert rotation transformation data
-                        node = tracks[1].GetNodeByName(name_crc32)
-                        node.add_frame(frame, rotation)
-
-                    # If a scale transformation is detected
-                    if 'scale' in transformations:
-                        # Check if the node doesn't exist
-                        if not tracks[2].NodeExists(name_crc32):
-                            # Create it
-                            tracks[2].Nodes.append(animation_manager.Node(name_crc32, True, []))
-                        
-                        # Transform matrix to scale
-                        scale = pose_matrix.to_scale()
-                        scale = BoneLocation(float(scale[0]), float(scale[1]), float(scale[2]))
-                        
-                        # Insert scale transformation data
-                        node = tracks[2].GetNodeByName(name_crc32)
-                        node.add_frame(frame, scale)
-
-    # Create animation manager object
-    animation = animation_manager.AnimationManager(Format='XMTN', Version='V2', AnimationName=animation_name, FrameCount=scene.frame_end, Tracks=tracks)
-    
-    # Save
-    return animation.Save();
-
 def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None, uv_material_mode=None):
-    print(f"Context: {context}")
-    print(f"Armature: {armature_name}")
-    print(f"Object: {object_name}")
-    print(f"Animation Type: {animation_type}")
-    print(f"Animation Name: {animation_name}")
-    print(f"Selected Items: {selected_items}")
-    print(f"Transformations: {transformations}")
-    print(f"Extension: {extension}")
-    print(f"UV/Material Mode: {uv_material_mode}")
-
     if animation_type == "ARMATURE":
         if not armature_name:
             raise ValueError("No armature specified for ARMATURE animation.")
@@ -540,9 +396,7 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
 
-def fileio_write_xmtn(context, armature, animation_name, transformations, bones):
-    print('MTN', transformations)
-    
+def fileio_write_xmtn(context, armature, animation_name, transformations, bones):    
     scene = context.scene
     armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
@@ -615,8 +469,6 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones)
     return animation.Save()
     
 def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
-    print('IMM', transformations)
-    
     scene = context.scene
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -757,8 +609,6 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
     return animation.Save()
 
 def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
-    print('MTM', transformations)
-    
     scene = context.scene
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')

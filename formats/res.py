@@ -10,56 +10,58 @@ from ..compression import *
 ##########################################
 
 class RESType(Enum):
-    Bone = 110
-    Textproj = 140
-    BoundingBoxParameter = 200
-    Shading = 120
-    Material1 = 220
-    Material2 = 230
-    MeshName = 100
-    Texture = 240
-    MaterialData = 290
-    animation_mtn2 = 300
-    animation_mtn3 = 301
-    Animation2 = 310
-    mtninf = 400
-    mtninf2 = 401
-    AnimationSplit2 = 410
-    Null = 9999
-    MaterialTypeUnk1 = 0
-    MaterialTypeUnk2 = 1
-    NodeTypeUnk1 = 2
-    NodeTypeUnk2 = 3
-    NodeTypeUnk3 = 4
-    NodeTypeUnk4 = 460
-    NodeTypeUnk5 = 320
-    NodeTypeUnk6 = 420
-    NodeTypeUnk7 = 20
+    BONE = 110
+    TEXPROJ = 140
+    PROPERTIES = 200
+    SHADING = 120
+    MATERIAL_1 = 220
+    MATERIAL_2 = 230
+    MESH_NAME = 100
+    TEXTURE_DATA = 240
+    MATERIAL_DATA = 290
+    ANIMATION_MTN2 = 300
+    ANIMATION_MTN3 = 301
+    ANIMATION_IMM2 = 310
+    ANIMATION_MTM2 = 320
+    MTNINF = 400
+    MTNINF2 = 401
+    IMMINF = 410
+    MTMINF = 420
+    NULL = 9999
+    MATERIAL_TYPE_UNK1 = 0
+    MATERIAL_TYPE_UNK2 = 1
+    NODE_TYPE_UNK1 = 2
+    NODE_TYPE_UNK2 = 3
+    NODE_TYPE_UNK3 = 4
+    NODE_TYPE_UNK4 = 460
+    NODE_TYPE_UNK5 = 320
+    NODE_TYPE_UNK6 = 420
+    NODE_TYPE_UNK7 = 20
     
 materials_ordered = [
-    RESType.MaterialTypeUnk1,
-    RESType.Material1,
-    RESType.Material2,
-    RESType.Texture,
-    RESType.MaterialTypeUnk2,
-    RESType.MaterialData,
+    RESType.MATERIAL_TYPE_UNK1,
+    RESType.MATERIAL_1,
+    RESType.MATERIAL_2,
+    RESType.TEXTURE_DATA,
+    RESType.MATERIAL_TYPE_UNK2,
+    RESType.MATERIAL_DATA,
 ]
 
 nodes_ordered = [
-    RESType.MeshName,
-    RESType.Bone,
-    RESType.animation_mtn2,
-    RESType.animation_mtn3,
-    RESType.Animation2,
-    RESType.NodeTypeUnk1,
-    RESType.Shading,
-    RESType.NodeTypeUnk2,
-    RESType.BoundingBoxParameter,
-    RESType.mtninf,
-    RESType.mtninf2,
-    RESType.AnimationSplit2,
-    RESType.NodeTypeUnk3,
-    RESType.Textproj,
+    RESType.MESH_NAME,
+    RESType.BONE,
+    RESType.ANIMATION_MTN2,
+    RESType.ANIMATION_MTN3,
+    RESType.ANIMATION_IMM2,
+    RESType.ANIMATION_MTM2,
+    RESType.SHADING,
+    RESType.NODE_TYPE_UNK2,
+    RESType.PROPERTIES,
+    RESType.MTNINF,
+    RESType.MTNINF2,
+    RESType.IMMINF,
+    RESType.MTMINF,
+    RESType.TEXPROJ,
 ]
 
 ##########################################
@@ -198,44 +200,25 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
                 
                 items[RESType(_type)][object_crc32] = material_dict               
 
-def make_library(meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline_name = "", properties=[], texprojs=[]):
+def make_library(meshes = [], armature = None, textures = {}, animations = {}, outline_name = "", properties=[], texprojs=[]):
     items = {}
     string_table = bytes()
-        
-    if textures:
-        lib_names = []
-        textures_name = []
-        textures_data = []
-        
-        for key, value in textures.items():
-            lib_name = key.encode("shift-jis")
-            lib_name_crc32 = zlib.crc32(lib_name).to_bytes(4, 'little')
-            
-            lib_names.append(lib_name_crc32 + int(len(string_table)).to_bytes(4, 'little'))
-
-            texture_data = lib_name_crc32 + int(len(string_table)).to_bytes(4, 'little') + lib_name_crc32 + lib_name_crc32
-            for i in range(4):
-                if i < len(value):
-                    texture_name = value[i].name.encode("shift-jis")
-                    texture_data += zlib.crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
-                else:
-                    texture_data += bytes.fromhex("00000000000000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
-                    
-            textures_data.append(texture_data)
-            
-            string_table += lib_name + int(0).to_bytes(1, 'little')
-            
-            for texture in value:
-                texture_name = texture.name.encode("shift-jis")
-                textures_name.append(zlib.crc32(texture_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
-                string_table += texture_name + int(0).to_bytes(1, 'little')        
-            
-        items[RESType.Material1] = lib_names
-        items[RESType.Material2] = lib_names
-        items[RESType.Texture] = textures_name
-        items[RESType.MaterialData] = textures_data
-        
+    materials_offset = {}
+    
     if meshes:
+        # Add material name (twice time no idea why)
+        materials_name = []
+        
+        for mesh in meshes:
+            material_name = mesh.material_name.encode("shift-jis")
+            materials_name.append(zlib.crc32(material_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little')) 
+            materials_offset[material_name] = len(string_table)           
+            string_table += material_name + int(0).to_bytes(1, 'little')
+        
+        items[RESType.MATERIAL_1] = materials_name
+        items[RESType.MATERIAL_2] = materials_name
+        
+        # Add mesh name
         meshes_name = []
         
         for mesh in meshes:
@@ -243,7 +226,50 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             meshes_name.append(zlib.crc32(mesh_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))   
             string_table += mesh_name + int(0).to_bytes(1, 'little')
                 
-        items[RESType.MeshName] = meshes_name
+        items[RESType.MESH_NAME] = meshes_name
+
+    if textures:
+        # Add texture data (texture name and texture mode)
+        textures_data = [] 
+        
+        for texture_name, texture_data in textures.items():
+            texture_name_encoded = texture_name.encode("shift-jis")
+            textures_data.append(zlib.crc32(texture_name_encoded).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
+            string_table += texture_name_encoded + int(0).to_bytes(1, 'little')
+            
+        items[RESType.TEXTURE_DATA] = textures_data
+
+        # Add material data (texture used by the material)
+        materials_info = {}
+        
+        for texture_name, texture_data in textures.items():
+            for material_name in texture_data['linked_material']:
+                if material_name not in materials_info:
+                    materials_info[material_name] = []
+                
+                if texture_name not in materials_info[material_name]:
+                    materials_info[material_name].append(texture_name)
+
+        materials_data = []
+        for material_name, material_info in materials_info.items():
+            material_name_encoded = material_name.encode("shift-jis")
+            material_name_crc32 = zlib.crc32(material_name_encoded).to_bytes(4, 'little')
+            
+            if material_name in materials_offset:
+                material_data = material_name_crc32 + int(materials_offset[material_name]).to_bytes(4, 'little') + material_name_crc32 + material_name_crc32
+            else:
+                material_data = material_name_crc32 + int(0).to_bytes(4, 'little') + material_name_crc32 + material_name_crc32
+            
+            for i in range(4):
+                if i < len(material_info):
+                    texture_name = material_info[i].encode("shift-jis")
+                    material_data += zlib.crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
+                else:
+                    material_data += bytes.fromhex("00000000000000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
+                    
+            materials_data.append(material_data)
+        
+        items[RESType.MATERIAL_DATA] = materials_data
         
     if armature:
         bones_name = []
@@ -253,36 +279,68 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             bones_name.append(zlib.crc32(bone_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))    
             string_table += bone_name + int(0).to_bytes(1, 'little')
 
-        items[RESType.Bone] = bones_name
+        items[RESType.BONE] = bones_name
         
-    if animation:
-        animation_name = []
-        split_animation_name = []
+    if animations:
+        # Add animation name
+        animations_mtn2 = []
+        animations_imm2 = []
+        animations_mtm2 = []
+        animations_offset = {}
+        
+        for animation_type, animation_data in animations.items():
+            animation_name = animation_data['name']
+            animation_name_encoded = animation_name.encode("shift-jis")
+            
+            if animation_name not in animations_offset:
+                animations_offset[animation_name] = len(string_table)
+                string_table += animation_name + int(0).to_bytes(1, 'little')
+            
+            animation_bytes = zlib.crc32(animation_name_encoded).to_bytes(4, 'little') + int(animations_offset[animation_name]).to_bytes(4, 'little')
 
-        name = animation[0].encode("shift-jis")
-        animation_name.append(zlib.crc32(name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
-        string_table += name + int(0).to_bytes(1, 'little')
+            if animation_type == 'armature':
+               animations_mtn2.append(animation_bytes) 
+            elif animation_type == 'uv':
+                animations_imm2.append(animation_bytes) 
+            elif animation_type == 'material':
+                animations_mtm2.append(animation_bytes) 
         
-        for split_animation in split_animations:
-            split_name = split_animation.name.encode("shift-jis")
-            split_animation_name.append(zlib.crc32(split_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))   
-            string_table += split_name + int(0).to_bytes(1, 'little')
+        items[RESType.ANIMATION_MTN2] = animations_mtn2
+        items[RESType.ANIMATION_IMM2] = animations_imm2
+        items[RESType.ANIMATION_MTM2] = animations_mtm2        
+
+        # Add animation split name
+        mtninfs = []
+        immninfs = []
+        mtminfs = []
+        animations_split_offset = {}
         
-        if animation[1] == 'MTN2':
-            items[RESType.animation_mtn2] = animation_name
-        elif animation[1] == 'MTN3':
-            items[RESType.animation_mtn3] = animation_name
-        
-        if split_animations:
-            if animation[2] == 'MTNINF':
-                items[RESType.mtninf] = split_animation_name
-            elif animation[2] == 'MTNINF2':
-                items[RESType.mtninf2] = split_animation_name            
+        for animation_type, animation_data in animations.items():
+            for split_animation in animation_data['split_animation']['split']:
+                animation_split_name = split_animation.name
+                animation_split_name_encoded = animation_split_name.encode("shift-jis")
+                
+                if animation_split_name not in animations_split_offset:
+                    animations_split_offset[animation_split_name] = len(string_table)
+                    string_table += animation_split_name + int(0).to_bytes(1, 'little')
+                
+                animation_split_bytes = zlib.crc32(animation_split_name_encoded).to_bytes(4, 'little') + int(animations_split_offset[animation_split_name]).to_bytes(4, 'little')
+
+                if animation_type == 'armature':
+                   mtninfs.append(animation_split_bytes) 
+                elif animation_type == 'uv':
+                    immninfs.append(animation_split_bytes) 
+                elif animation_type == 'material':
+                    mtminfs.append(animation_split_bytes) 
+                
+        items[RESType.MTNINF] = mtninfs
+        items[RESType.IMMINF] = immninfs
+        items[RESType.MTMINF] = mtminfs          
 
     if outline_name:
         name = outline_name.encode("shift-jis")
         string_table += name + int(0).to_bytes(1, 'little')
-        items[RESType.Shading] = [name]
+        items[RESType.SHADING] = [name]
         
     if properties:
         properties_name = []
@@ -292,7 +350,7 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             properties_name.append(zlib.crc32(property_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += property_name + int(0).to_bytes(1, 'little')
             
-        items[RESType.BoundingBoxParameter] = properties_name
+        items[RESType.PROPERTIES] = properties_name
         
     if texprojs:
         texprojs_name = []
@@ -302,7 +360,7 @@ def make_library(meshes = [], armature = None, textures = {}, animation = {}, sp
             texprojs_name.append(zlib.crc32(texproj_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += texproj_name + int(0).to_bytes(1, 'little')
             
-        items[RESType.Textproj] = texprojs_name
+        items[RESType.TEXPROJ] = texprojs_name
         
     return items, string_table
                 

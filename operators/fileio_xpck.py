@@ -402,14 +402,14 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animation = {}, split_animations = [], outline = [], cameras=[], properties=[], texprojs=[]):    
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[]):    
     # Make meshes
     xmprs = []
     atrs = []
     mtrs = []
     if meshes:
         for mesh in meshes:
-            xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.library_name, template[0].modes[template[1]]))
+            xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.material_name, template[0].modes[template[1]]))
             atrs.append(bytes.fromhex(template[0].atr))
             mtrs.append(bytes.fromhex(template[0].mtr))
 
@@ -418,38 +418,43 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     if armature:
         for bone in armature.pose.bones:
             mbns.append(mbn.write(armature, bone))
-            
+ 
     # Make images
     imgcs = []
-    if textures:
-        linked_textures = []
+    for texture_name, texture_data in textures.items():
+        get_image_format = globals().get(texture_data['format'])
         
-        for texture in textures.values():
-            linked_textures.extend(texture)
-            
-        for texture in linked_textures:
-            get_image_format = globals().get(texture.format)
-            if get_image_format:
-                imgcs.append(imgc.write(bpy.data.images.get(texture.name), get_image_format()))
-            else:
-                operator.report({'ERROR'}, f"Class {texture.format} not found in img_format.")
-                return {'FINISHED'}
-                
+        if get_image_format:
+            imgcs.append(imgc.write(bpy.data.images.get(texture_name), get_image_format()))
+        else:
+            operator.report({'ERROR'}, f"Class {texture.format} not found in img_format.")
+            return {'FINISHED'}
+
     # Make animations
     mtns = []
-    minfs = []
-    if animation:
-        animation_name = animation[0]
-        animation_format = animation[1]
-        
-        if armature == None:
-            found_armature = find_armature_by_animation(animation[3])
-            mtns.append(fileio_write_xmtn(context, found_armature.name, animation_name, animation_format))
-        else:
-            mtns.append(fileio_write_xmtn(context, armature.name, animation_name, animation_format))
-        
-        for split_animation in split_animations:
-            minfs.append(minf.write_minf1(animation_name, split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+    imms = []
+    mtms = []
+    mtninfs = []
+    imminfs = []
+    mtminfs = []
+    for animation_type, animation_data in animations.items():
+        if animation_type == 'armature':
+            mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones']))
+            
+            for split_animation in animation_data['split_animation']['split']:
+                mtninfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+        elif animation_type == 'uv':
+            is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
+            imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven))
+            
+            for split_animation in animation_data['split_animation']['split']:
+                imminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+        elif animation_type == 'material':
+            is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
+            mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven))
+            
+            for split_animation in animation_data['split_animation']['split']:
+                mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
     
     # Make outline
     xcsls = []
@@ -526,16 +531,22 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             files.update(create_files_dict(".xi", imgcs))
 
         if mtns:
-            if animation[1] == 'MTN2':
-                files.update(create_files_dict(".mtn2", mtns))
-            elif animation[1] == 'MTN3':
-                files.update(create_files_dict(".mtn3", mtns))
+            files.update(create_files_dict(".mtn2", mtns))
+            
+        if imms:
+            files.update(create_files_dict(".imm2", imms))
 
-        if minfs:
-            if animation[2] == 'MTNINF':
-                files.update(create_files_dict(".mtninf", minfs))
-            elif animation[2] == 'MTNINF2':
-                files.update(create_files_dict(".mtninf2", minfs))
+        if mtms:
+            files.update(create_files_dict(".mtm2", mtms))
+
+        if mtninfs:
+            files.update(create_files_dict(".mtninf", mtninfs))
+ 
+        if imminfs:
+            files.update(create_files_dict(".imminf", imminfs))
+
+        if mtminfs:
+            files.update(create_files_dict(".mtminf", mtminfs))
 
         #if xcsls:
             #files.update(create_files_dict(".sil", xcsls))
@@ -568,7 +579,16 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             files.update(create_files_dict(".cmr2", xcmas))
 
     if mode != "CAMERA":
-        items, string_table = res.make_library(meshes = meshes, armature = armature, textures = textures, animation = animation, split_animations = split_animations, outline_name = "", properties=properties, texprojs=texprojs)
+        print('ok')
+        items, string_table = res.make_library(
+            meshes = meshes, 
+            armature = armature, 
+            textures = textures, 
+            animations = animations, 
+            outline_name = "", 
+            properties=properties, 
+            texprojs=texprojs
+        )
         files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
     else:
         if len(cameras_sorted) > 0:
@@ -648,10 +668,12 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
         ],
         default='RGBA8'
     )
+    mesh_name: bpy.props.StringProperty()
 
 class TexprojPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Texproj name")
     name: bpy.props.StringProperty()
+    mesh_name: bpy.props.StringProperty()
 
 class LibPropertyGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
@@ -661,8 +683,7 @@ class LibPropertyGroup(bpy.types.PropertyGroup):
 class MeshPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Mesh name")
     name: bpy.props.StringProperty()
-    library_index: bpy.props.IntProperty()
-    library_name: bpy.props.StringProperty()
+    material_name: bpy.props.StringProperty()
     
 # Define a Property Group to store camera information
 class CameraPropertyGroup(bpy.types.PropertyGroup):
@@ -722,7 +743,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
     texproj_properties: bpy.props.CollectionProperty(type=TexprojPropertyGroup)
-    libs: bpy.props.CollectionProperty(type=LibPropertyGroup)
+    texture_properties: bpy.props.CollectionProperty(type=TexturePropertyGroup)
     camera_properties: bpy.props.CollectionProperty(type=CameraPropertyGroup)
     archive_properties: bpy.props.CollectionProperty(type=ArchivePropertyGroup)
     
@@ -839,11 +860,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     
                 existing_materials = {checkbox.name: checkbox.enabled for checkbox in self.material_checkboxes}
                 self.material_checkboxes.clear()  # Effacer l'ancienne liste
-
-                for lib in self.libs:
-                    checkbox = self.material_checkboxes.add()
-                    checkbox.name = lib.name
-                    checkbox.enabled = existing_materials.get(lib.name, True)
+                
+                for child in armature.children:
+                    if child.type == "MESH":
+                        for mat in child.data.materials:
+                            checkbox = self.material_checkboxes.add()
+                            checkbox.name = mat.name
+                            checkbox.enabled = existing_materials.get(mat.name, True)   
 
     armature_enum: EnumProperty(
         name="Armatures",
@@ -1040,10 +1063,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     def invoke(self, context, event):
         wm = context.window_manager  
 
-        libs = []
         self.mesh_properties.clear()
         self.texproj_properties.clear()
-        self.libs.clear()
+        self.texture_properties.clear()
         self.camera_properties.clear()
         
         context.scene.animation_items_armature.clear()
@@ -1055,19 +1077,37 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         # Get meshes
         meshes = [obj for obj in bpy.data.objects if obj.type == 'MESH']
+        
+        # Déterminer si tous les meshes ont les mêmes noms d'UV maps
+        uv_map_names = [set(mesh.data.uv_layers.keys()) for mesh in meshes]
+        common_uv_maps = set.intersection(*uv_map_names) if uv_map_names else set()
+
         for mesh in meshes:
+            # Ajout des propriétés du mesh
             item = self.mesh_properties.add()
             item.checked = True
             item.name = mesh.name
-            for uv_layer in mesh.data.uv_layers:
-                item = self.texproj_properties.add()
-                item.checked = True
-                item.name = uv_layer.name
+            
+            if mesh.data.materials and len(mesh.data.materials) > 0:
+                item.material_name = mesh.data.materials[0].name
+            else:
+                item.material_name = f"DefaultLib.{mesh.name}"
 
-            lib = {}
-            lib['texture_name'] = []
-            lib['mesh_name'] = [mesh.name]
-            used_texture = []
+            # Gestion des UV layers
+            for index, uv_layer in enumerate(mesh.data.uv_layers):
+                item = self.texproj_properties.add()
+                item.mesh_name = mesh.name
+                item.checked = True
+
+                if uv_layer.name in common_uv_maps and len(common_uv_maps) > 0:
+                    # Format spécifique si les UV maps sont identiques entre tous les meshes
+                    item.name = f"{mesh.name}.texproj{index}"
+                else:
+                    # Nom par défaut
+                    if len(uv_map_names) == 1 and uv_layer.name == 'UVMap':
+                        item.name = "UVMap.texproj0"
+                    else:
+                        item.name = uv_layer.name
 
             # Get textures from materials
             for material_slot in mesh.material_slots:
@@ -1076,52 +1116,27 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     # If material uses nodes, iterate over the material nodes
                     for node in material.node_tree.nodes:
                         if node.type == 'TEX_IMAGE' and node.image:
-                            if node.image not in used_texture:
-                                texture_name = node.image.name
-                                lib['texture_name'].append(texture_name)
-                                used_texture.append(node.image)
+                            texture_name = node.image.name
+                            item = self.texture_properties.add()
+                            item.name = texture_name
+                            item.mesh_name = mesh.name
                 else:
                     # If material doesn't use nodes, try to access the texture from the diffuse shader
                     if hasattr(material, 'texture_slots'):
                         if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                            if texture not in used_texture:
-                                texture = material.texture_slots[0].texture
-                                texture_name = texture.name
-                                lib['texture_name'].append(texture_name)
-                                used_texture.append(texture)
+                            texture = material.texture_slots[0].texture
+                            texture_name = texture.name
+                            item = self.texture_properties.add()
+                            item.name = texture_name
+                            item.mesh_name = mesh.name
                     else:
                         # Enter in berry bush situation
                         for texture_berry_bush in material.brres.textures:
                             texture_name = texture_berry_bush.name
                             for image in texture_berry_bush.imgs:
-                                lib['texture_name'].append(texture_name)
-                                used_texture.append(image.img)
-
-            found = False
-            for key, value in enumerate(libs):
-                if value['texture_name'] == lib['texture_name']:
-                    found = True
-                    break
-            
-            if found:
-                libs[key]['mesh_name'].append(mesh.name)
-            else:
-                libs.append(lib)
-
-        for index, value in enumerate(libs):
-            item = self.libs.add()
-            item.name = 'DefaultLib.' + str(index)
-            
-            for texture_name in value['texture_name']:
-                texture = item.textures.add()
-                texture.name = texture_name           
-
-        for mesh_prop in self.mesh_properties:
-            for index, value in enumerate(libs):
-                for mesh_name in value['mesh_name']:
-                    if mesh_prop.name == mesh_name:
-                        mesh_prop.library_index = index
-                        break          
+                                item = self.texture_properties.add()
+                                item.name = texture_name
+                                item.mesh_name = mesh.name   
 
         # Get cameras
         for obj in bpy.context.scene.objects:
@@ -1183,15 +1198,17 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         if child.type == 'MESH':
                             row = mesh_group.row(align=True)
                             row.prop(self.mesh_properties[child.name], "checked", text=child.name)
-                            row.prop(self.libs[self.mesh_properties[child.name].library_index], "name", text="", emboss=False)
+                            row.label(text=self.mesh_properties[child.name].material_name)
+                            
                             txp_group = mesh_group.box()
-                            for uv_layer in child.data.uv_layers:
-                                row = txp_group.row(align=True)
-                                row.prop(self.texproj_properties[uv_layer.name], "checked", text=uv_layer.name)
+                            for texproj in self.texproj_properties:
+                                if texproj.mesh_name == child.name:
+                                    row = txp_group.row(align=True)
+                                    row.prop(texproj, "checked", text=texproj.name)
             elif self.export_option == 'ANIMATION':
                 options_box.prop(self, "animation_enum", text="Available animations")
                 options_box.prop(self, "attach_bone", text="Attach armature")
-                options_box.prop(self, "attach_texproj", text="Attach texproj")
+                #options_box.prop(self, "attach_texproj", text="Attach texproj")
             elif self.export_option == 'CAMERA':
                 camera_group = options_box.box()
                 for camera_prop in self.camera_properties:
@@ -1209,10 +1226,10 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     texture_box.label(text="Not available on camera mode")
             else:
                 meshes_props =[]
-                lib_indexes = []
+                same_texture = []
                 
                 if self.export_option == 'MESH':
-                    meshes_props = [mesh_prop for mesh_prop in self.mesh_properties if mesh_prop.checked]
+                    meshes_props = [mesh_prop.name for mesh_prop in self.mesh_properties if mesh_prop.checked]
                 elif self.export_option == 'ARMATURE':
                     if self.armature_enum and self.armature_enum != "None":
                         armature = bpy.data.objects.get(self.armature_enum)
@@ -1221,23 +1238,18 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             if mesh_prop.checked:
                                 mesh = bpy.data.objects.get(mesh_prop.name)
                                 if mesh and mesh in armature_meshes:     
-                                    meshes_props.append(mesh_prop)
-                                
-                for mesh_prop in meshes_props:
-                    if mesh_prop.checked:
-                        index = mesh_prop.library_index
-                        if index not in lib_indexes:
-                            lib = self.libs[index]
-                            groupbox = layout.box()
-                            box = groupbox.box()
-                            box.prop(lib, "name", text="")
-                                                        
-                            for texture in lib.textures:
-                                row = box.row(align=True)
-                                row.label(text=texture.name)
-                                row.prop(texture, "format", text="")
-                                
-                            lib_indexes.append(index)
+                                    meshes_props.append(mesh_prop.name)
+ 
+                groupbox = layout.box()
+                box = groupbox.box()
+ 
+                for texture_prop in self.texture_properties:
+                    if texture_prop.mesh_name in meshes_props:
+                        if texture_prop.name not in same_texture:
+                            row = box.row(align=True)
+                            row.label(text=texture_prop.name)
+                            row.prop(texture_prop, "format", text="")
+                            same_texture.append(texture_prop.name)
         elif self.export_tab_control == 'ANIMATION':
             anim_box = layout.box()
 
@@ -1421,12 +1433,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         armature = None
         meshes = []
         textures = {}
-        animation = []
         cameras = []
-        split_animations = []
         properties = []
         texprojs = []
         outline = [self.outline_thickness, self.outline_visibility]
+        
+        animations = {}
+        animation_uv = []
+        split_animations_uv = []
+        animation_material = []
+        split_animations_material = []
         
         if self.export_option == 'MESH':
             self.report({'ERROR'}, f"Mesh export not yet available!")
@@ -1434,6 +1450,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         elif self.export_option == 'ARMATURE':
             # Check that all meshes have a library name
             armature = bpy.data.objects.get(self.armature_enum)
+            
             if armature and armature.type == 'ARMATURE':
                 # Get the meshes associated with the selected armature
                 armature_meshes = [child for child in armature.children if child.type == 'MESH']
@@ -1442,62 +1459,33 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     if mesh_prop.checked:
                         # Check if the mesh is associated with the armature
                         mesh = bpy.data.objects.get(mesh_prop.name)
+                        
                         if mesh and mesh in armature_meshes:
-                            index = mesh_prop.library_index
-                            lib = self.libs[index]
+                            linked_texproj = [
+                                texproj for texproj in self.texproj_properties
+                                if texproj.mesh_name == mesh_prop.name
+                            ]
                             
-                            # Check if the mesh has a library_name
-                            if not lib.name:
-                                self.report({'ERROR'}, f"Mesh '{mesh_prop.name}' is checked but doesn't have a library_name!")
-                                return {'FINISHED'}    
+                            for i in range(len(linked_texproj)):
+                                name = linked_texproj[i].name
+                                texproj = [name, mesh_prop.material_name, i]
+                                texprojs.append(texproj)
+
+                            linked_textures = [
+                                texture for texture in self.texture_properties
+                                if texture.mesh_name == mesh_prop.name
+                            ]
                             
-                            for i in range(len(mesh.data.uv_layers)):
-                                uv_layer = mesh.data.uv_layers[i]
-                                
-                                for txp_prop in self.texproj_properties:
-                                    if uv_layer.name == txp_prop.name:
-                                        if txp_prop.checked:
-                                            texproj = [txp_prop.name, lib.name, i]
-                                            
-                                            if texproj not in texprojs:
-                                                texprojs.append(texproj)
-                                                                
-                            mesh_prop.library_name = lib.name
-                                
-                            textures[lib.name] = []                              
+                            for texture in linked_textures:
+                                if texture.name not in textures:
+                                    textures[texture.name] = {}
+                                    textures[texture.name]['format'] = texture.format
+                                    textures[texture.name]['linked_material'] = []
+                                else:
+                                    textures[texture.name]['linked_material'].append(mesh_prop.material_name)  
+                        
                             meshes.append(mesh_prop)
-                                
-                            # Get texture
-                            for texture in lib.textures:
-                                textures[lib.name].append(texture)
-
-                if self.include_animation:
-                    if not self.animation_name:
-                        self.report({'ERROR'}, "The animation doesn't have name")
-                        return {'FINISHED'}
-                        
-                    animation = [self.animation_name, self.animation_format, self.split_animation_format]
-                    
-                    for sub_animation in context.scene.export_xc_animations_items:
-                        if not sub_animation.name:
-                            self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
-                            return {'FINISHED'}
-                        else:
-                            split_animations.append(sub_animation)
         elif self.export_option == 'ANIMATION':
-            if not self.animation_name:
-                self.report({'ERROR'}, "The animation doesn't have name")
-                return {'FINISHED'}
-                        
-            animation = [self.animation_name, self.animation_format, self.split_animation_format, self.animation_enum]
-                    
-            for sub_animation in context.scene.export_xc_animations_items:
-                if not sub_animation.name:
-                    self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
-                    return {'FINISHED'}
-                else:
-                    split_animations.append(sub_animation)
-
             if self.attach_bone:
                 find_armature = find_armature_by_animation(self.animation_enum)
 
@@ -1506,6 +1494,10 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     return {'FINISHED'}
                 else:
                     armature = find_armature
+            
+            if self.attach_texproj:
+                # To do
+                pass
         elif self.export_option == 'CAMERA':
             camera_animation_names = []
             
@@ -1531,7 +1523,132 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 if archive_prop.checked:
                     properties.append([archive_prop.name, archive_prop.value])
 
-        return fileio_write_xpck(self, context, self.filepath, [get_template_by_name(self.template_name), self.template_mode_name], self.export_option,  armature=armature, meshes=meshes, textures=textures, animation=animation, split_animations=split_animations, outline=outline, cameras=cameras, properties=properties, texprojs=texprojs)
+        # Get animations
+        if self.export_option != 'CAMERA':
+            if self.include_animation_armature:
+                animation_armature = {}
+                split_animations_armature = {}
+                transformations = []
+                
+                if self.bone_transformation_location:
+                    transformations.append('location')
+                    
+                if self.bone_transformation_rotation:
+                    transformations.append('rotation')
+                    
+                if self.bone_transformation_scale:
+                    transformations.append('scale')
+                    
+                if self.bone_transformation_bool:
+                    transformations.append('bool')
+        
+                if not self.animation_name_armature:
+                    self.report({'ERROR'}, "The animation doesn't have name")
+                    return {'FINISHED'}
+
+                split_animations_armature['format'] = self.split_animation_format_armature
+                split_animations_armature['split'] = []
+                    
+                for sub_animation in context.scene.animation_items_armature:
+                    if not sub_animation.name:
+                        self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
+                        return {'FINISHED'}
+                    else:
+                        split_animations_armature['split'].append(sub_animation)	
+                
+                animation_armature['name'] = self.animation_name_armature       
+                animation_armature['format'] = self.animation_format_armature
+                animation_armature['transformations'] = transformations
+                animation_armature['bones'] = [bone.name for bone in self.bone_checkboxes if bone.enabled]
+                animation_armature['split_animation'] = split_animations_armature
+                animations['armature'] = animation_armature
+                
+            if self.include_animation_uv:
+                animation_uv = {}
+                split_animations_uv = {}
+                transformations = []
+                
+                if self.uv_transformation_location:
+                    transformations.append('offset')
+                    
+                if self.uv_transformation_rotation:
+                    transformations.append('rotation')
+                    
+                if self.uv_transformation_scale:
+                    transformations.append('scale')
+        
+                if not self.animation_name_uv:
+                    self.report({'ERROR'}, "The animation doesn't have name")
+                    return {'FINISHED'}
+
+                split_animations_uv['format'] = self.split_animation_format_uv
+                split_animations_uv['split'] = []
+                    
+                for sub_animation in context.scene.animation_items_uv:
+                    if not sub_animation.name:
+                        self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
+                        return {'FINISHED'}
+                    else:
+                        split_animations_uv['split'].append(sub_animation)	
+                
+                animation_uv['name'] = self.animation_name_uv       
+                animation_uv['format'] = self.animation_format_uv
+                animation_uv['transformations'] = transformations
+                animation_uv['mode'] = self.uv_mode
+                animation_uv['texprojs'] = [texproj.name for texproj in self.texjproj_checkboxes if texproj.enabled]
+                animation_uv['split_animation'] = split_animations_uv
+                animations['uv'] = animation_uv
+                
+            if self.include_animation_material:
+                animation_material = {}
+                split_animations_material = {}
+                transformations = []
+                
+                if self.uv_transformation_location:
+                    transformations.append('offset')
+                    
+                if self.uv_transformation_rotation:
+                    transformations.append('rotation')
+                    
+                if self.uv_transformation_scale:
+                    transformations.append('scale')
+        
+                if not self.animation_name_uv:
+                    self.report({'ERROR'}, "The animation doesn't have name")
+                    return {'FINISHED'}
+
+                split_animations_material['format'] = self.split_animation_format_material
+                split_animations_material['split'] = []
+                    
+                for sub_animation in context.scene.animation_items_material:
+                    if not sub_animation.name:
+                        self.report({'ERROR'}, f"splitted_animation_'{sub_animation.private_index}' doesn't have a a name!")
+                        return {'FINISHED'}
+                    else:
+                        split_animations_material['split'].append(sub_animation)	
+                
+                animation_material['name'] = self.animation_name_material       
+                animation_material['format'] = self.animation_format_material
+                animation_material['transformations'] = transformations
+                animation_material['mode'] = self.material_mode
+                animation_material['materials'] = [material.name for material in self.material_checkboxes if material.enabled]
+                animation_material['split_animation'] = split_animations_material
+                animations['material'] = animation_material                
+
+        return fileio_write_xpck(
+            self, context, 
+            self.filepath, 
+            [get_template_by_name(self.template_name), 
+            self.template_mode_name], self.export_option,  
+            armature=armature, 
+            meshes=meshes, 
+            textures=textures, 
+            animations=animations, 
+            outline=outline, 
+            cameras=cameras, 
+            properties=properties, 
+            texprojs=texprojs
+        )
         
 class ImportXC(bpy.types.Operator, ImportHelper):
     bl_idname = "import.xc"
