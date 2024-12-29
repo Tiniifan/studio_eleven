@@ -232,13 +232,13 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
             # Get bone name
             bone_name = "bone_" + str(i)            
-            if bone_crc32 in res_data[res.RESType.Bone]:
-                bone_name = res_data[res.RESType.Bone][bone_crc32]
+            if bone_crc32 in res_data[res.RESType.BONE]:
+                bone_name = res_data[res.RESType.BONE][bone_crc32]
 
             # Get parent name
             parent_name = None            
-            if bone_parent_crc32 in res_data[res.RESType.Bone]:
-                parent_name = res_data[res.RESType.Bone][bone_parent_crc32]
+            if bone_parent_crc32 in res_data[res.RESType.BONE]:
+                parent_name = res_data[res.RESType.BONE][bone_parent_crc32]
             
             # Checks if the bone has a parent
             if bone_parent_crc32 == 0:
@@ -255,14 +255,14 @@ def fileio_open_xpck(context, filepath, file_name = ""):
     # Make libs
     if len(textures_data) > 0 and res_data is not None:
         images = {}
-        res_textures_key = list(res_data[res.RESType.Texture])
+        res_textures_key = list(res_data[res.RESType.TEXTURE_DATA])
         
         # Make images
         for i in range(len(textures_data)):
             if textures_data[i] != None:
                 texture_data, width, height, has_alpha = textures_data[i]
                 texture_crc32 = res_textures_key[i]
-                texture_name = res_data[res.RESType.Texture][texture_crc32]['name']
+                texture_name = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['name']
 
                 # Create a new image
                 bpy.ops.image.new(name=texture_name, width=width, height=height, alpha=has_alpha)
@@ -276,7 +276,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
                 images[texture_crc32] = image
 
         # Make materials
-        for material_crc32, material_value in res_data[res.RESType.MaterialData].items():
+        for material_crc32, material_value in res_data[res.RESType.MATERIAL_DATA].items():
             material_name = material_value['name']
             material_textures_crc32 = material_value['textures']
             
@@ -293,11 +293,15 @@ def fileio_open_xpck(context, filepath, file_name = ""):
     # Make txps
     txps = []
     for i in range(len(txp_data)):
-        txps.append([
-            res_data[res.RESType.Textproj][txp_data[i][0]],
-            res_data[res.RESType.MaterialData][txp_data[i][1]]['name'],
-            txp_data[i][2], # UVMap index
-        ])
+        texproj_crc32 = txp_data[i][0]
+        material_crc32 = txp_data[i][1]
+        uv_map_index = txp_data[i][2]
+        
+        if texproj_crc32 in res_data[res.RESType.TEXPROJ]:
+            if material_crc32 in res_data[res.RESType.MATERIAL_DATA]:
+                textproj_name = res_data[res.RESType.TEXPROJ][texproj_crc32]
+                material_name = res_data[res.RESType.MATERIAL_DATA][material_crc32]['name']
+                txps.append([textproj_name, material_name, uv_map_index]) 
     
     # Make meshes
     if len(meshes_data) > 0:
@@ -312,12 +316,12 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
             # Get bones
             bones = None
-            if res.RESType.Bone in res_data:
-                bones = res_data[res.RESType.Bone]
+            if res.RESType.BONE in res_data:
+                bones = res_data[res.RESType.BONE]
             
             # Get single_bind
             if mesh_data["single_bind"] is not None:
-                mesh_data["single_bind"] = res_data[res.RESType.Bone][mesh_data["single_bind"]]
+                mesh_data["single_bind"] = res_data[res.RESType.BONE][mesh_data["single_bind"]]
                 
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps)

@@ -146,7 +146,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None):
+def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -189,7 +189,7 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
     material += struct.pack("f", dimensions[0]/2)
     material += struct.pack("f", dimensions[1]/2)
     material += struct.pack("f", dimensions[2]/2)
-    material += int(21).to_bytes(4, 'little')
+    material += int(draw_priority).to_bytes(4, 'little')
     material += int(mode[1]).to_bytes(4, 'little')
     material += int(len(bone_names)).to_bytes(4, 'little')
 
@@ -390,7 +390,8 @@ def open_xmpr(reader):
     mat_name_hash = struct.unpack("<I", reader.read(4))[0]
     unk_hash = struct.unpack("<I", reader.read(4))[0]
     mesh_name_split_hash = struct.unpack("<I", reader.read(4))[0]
-    reader.read(36) # unk
+    reader.read(32) # unk
+    draw_priority = struct.unpack("<I", reader.read(4))[0]
     unk_type = struct.unpack("<HH", reader.read(4))
     nodes_count = struct.unpack("<I", reader.read(4))[0]
     
@@ -420,4 +421,5 @@ def open_xmpr(reader):
         "name": mesh_name,
         "material_name": material_name,
         "single_bind": single_bind,
+        "draw_priority": draw_priority,
     }

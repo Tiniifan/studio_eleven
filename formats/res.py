@@ -17,6 +17,7 @@ class RESType(Enum):
     MATERIAL_1 = 220
     MATERIAL_2 = 230
     MESH_NAME = 100
+    MESH_GROUP = 210
     TEXTURE_DATA = 240
     MATERIAL_DATA = 290
     ANIMATION_MTN2 = 300
@@ -155,7 +156,10 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
         _type = header_table[2]
         length = header_table[3]
         
-        if RESType(_type) == RESType.Null:
+        if RESType(_type) == RESType.NULL:
+            continue
+        
+        if RESType(_type) == RESType.MESH_GROUP:
             continue
 
         if RESType(_type) not in items:
@@ -170,7 +174,7 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
             
             if length == 8:
                 items[RESType(_type)][object_crc32] = object_name
-            elif RESType(_type) == RESType.Texture:
+            elif RESType(_type) == RESType.TEXTURE_DATA:
                 type_reader.seek(8)
                 texture_unk = struct.unpack("<b", type_reader.read(1))[0]
                 next_facial_expression = struct.unpack("<b", type_reader.read(1))[0]
@@ -181,7 +185,7 @@ def read_section_table(reader, table_offset, table_count, items, string_table, t
                 texture_dict['next_facial_expression'] = next_facial_expression
                 
                 items[RESType(_type)][object_crc32] = texture_dict
-            elif RESType(_type) == RESType.MaterialData:
+            elif RESType(_type) == RESType.MATERIAL_DATA:
                 type_reader.seek(16)
                 linked_textures = []
                 

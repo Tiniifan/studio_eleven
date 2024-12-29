@@ -563,7 +563,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
         meshes_material_dict = {}
         for i, obj in enumerate(context.scene.objects):
             if obj.type == 'MESH':
-                meshes_material_dict[obj.name] = f"DefaultLib.{len(meshes_material_dict)}"
+                meshes_material_dict[obj.name] = f"{mesh.name}.texproj0"
         
         for frame in range(scene.frame_start, scene.frame_end + 1):
             scene.frame_set(frame)
@@ -713,7 +713,10 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
         meshes_material_dict = {}
         for i, obj in enumerate(context.scene.objects):
             if obj.type == 'MESH':
-                meshes_material_dict[obj.name] = f"DefaultLib.{len(meshes_material_dict)}"
+                if obj.data.materials and len(obj.data.materials) > 0:
+                    meshes_material_dict[obj.name] = obj.data.materials[0].name
+                else:
+                    meshes_material_dict[obj.name] = f"DefaultLib.{obj.name}"
         
         for frame in range(scene.frame_start, scene.frame_end + 1):
             scene.frame_set(frame)
@@ -759,7 +762,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
 ##########################################
 
 class ImportAnimation(bpy.types.Operator, ImportHelper):
-    bl_idname = "import.level5_animation"
+    bl_idname = "import_level5.animation"
     bl_label = "Import Level 5 Animation"
     bl_options = {'PRESET', 'UNDO'}
     
@@ -873,7 +876,7 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         if self.animation_type == "ARMATURE":
             return [
                 (".mtn2", "MTN2", "Export as MTN2"),
-                (".mtn3", "MTN3", "Export as MTN3")
+                #(".mtn3", "MTN3", "Export as MTN3")
             ]
         elif self.animation_type == "UV":
             return [

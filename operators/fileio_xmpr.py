@@ -123,13 +123,16 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     bone_indices = model_data["vertices"]["bone_indices"]
     color_data = model_data["vertices"]["color_data"]
     single_bind = model_data["single_bind"]
+    draw_priority = model_data["draw_priority"]
+    
+    mesh.level5_properties.draw_priority = draw_priority
     
     mesh.from_pydata(positions, [], model_data["triangles"])
     
     if normals:
         mesh.normals_split_custom_set_from_vertices(normals)
     
-    texprojs = ["UVMap0", "UVMap1"] # prm can't have more than 2 UVMaps
+    texprojs = ["UVMap0", "UVMap1", "UVMap2", "UVMap3"] # prm can't have more than 4 UVMaps
     if txp_data:
         for txp in txp_data:
             if txp[1] == model_data["material_name"]:
@@ -293,8 +296,10 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
     if mesh.parent_type == 'BONE':
        if mesh.parent_bone:
             single_bind = mesh.parent_bone
+            
+    draw_priority = mesh.level5_properties.draw_priority
     
-    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind)
+    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind, draw_priority)
 
 def fileio_open_xmpr(context, filepath):
     # Extract the file name without extension
@@ -331,12 +336,23 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         my_templates = get_templates()
         items = [(template.name, template.name, "") for template in my_templates]
         return items        
-        
+
+    def update_mesh_name(self, context):
+        """Update function for mesh_name property."""
+        obj = bpy.data.objects.get(self.mesh_name)  # Retrieve the mesh object by name
+        if obj and obj.type == 'MESH':
+            materials = obj.data.materials  # Access materials of the mesh
+            if materials and materials[0]:  # Check if at least one material exists
+                self.material_name = materials[0].name
+            else:
+                self.material_name = f"DefautLib.{self.mesh_name}"  # Default value if no material exists
+
     mesh_name: EnumProperty(
         name="Meshes",
         description="Choose mesh",
         items=item_callback,
         default=0,
+        update=update_mesh_name,  # Link the update function
     )
     
     template_name: EnumProperty(
@@ -346,28 +362,33 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         default=0,
     )
     
-    library_name: StringProperty(
-        name="Library",
-        description="Write a library name",
+    material_name: StringProperty(
+        name="Material",
+        description="Write a material name",
         default="",
     )    
 
     def execute(self, context):
-        if (self.mesh_name == ""):
+        if not self.mesh_name:
             self.report({'ERROR'}, "No mesh found")
             return {'FINISHED'}
             
-        if (self.template_name == ""):
+        if not self.template_name:
             self.report({'ERROR'}, "No template found")
             return {'FINISHED'}
             
-        if (self.library_name == ""):
-            self.report({'ERROR'}, "Library name cannot be null")
+        if not self.material_name:
+            self.report({'ERROR'}, "Material name cannot be null")
             return {'FINISHED'}               
             
         with open(self.filepath, "wb") as f:
-            f.write(fileio_write_xmpr(context, self.mesh_name, self.library_name, get_template_by_name(self.template_name)))
-            return {'FINISHED'}  
+            f.write(fileio_write_xmpr(context, self.mesh_name, self.material_name, get_template_by_name(self.template_name)))
+            return {'FINISHED'}
+
+    def invoke(self, context, event):
+        """Ensure the update function is called on the menu launch."""
+        self.update_mesh_name(context)  # Call the update function to initialize values
+        return super().invoke(context, event)
 
 class ImportXMPR(bpy.types.Operator, ImportHelper):
     bl_idname = "import.prm"
