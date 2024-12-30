@@ -297,7 +297,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
        if mesh.parent_bone:
             single_bind = mesh.parent_bone
             
-    draw_priority = mesh.level5_properties.draw_priority
+    draw_priority = mesh.data.level5_properties.draw_priority
     
     return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind, draw_priority)
 
@@ -337,6 +337,11 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         items = [(template.name, template.name, "") for template in my_templates]
         return items        
 
+    def template_mode_items_callback(self, context):
+        my_template = get_template_by_name(self.template_name)
+        items = [(mode, mode, "") for mode in my_template.modes.keys()]
+        return items
+
     def update_mesh_name(self, context):
         """Update function for mesh_name property."""
         obj = bpy.data.objects.get(self.mesh_name)  # Retrieve the mesh object by name
@@ -362,6 +367,13 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         default=0,
     )
     
+    template_mode_name: EnumProperty(
+        name="Mode",
+        description="Choose a mode",
+        items=template_mode_items_callback,
+        default=0,
+    ) 
+    
     material_name: StringProperty(
         name="Material",
         description="Write a material name",
@@ -382,7 +394,9 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
             return {'FINISHED'}               
             
         with open(self.filepath, "wb") as f:
-            f.write(fileio_write_xmpr(context, self.mesh_name, self.material_name, get_template_by_name(self.template_name)))
+            template = get_template_by_name(self.template_name)
+            mode = template.modes[self.template_mode_name]
+            f.write(fileio_write_xmpr(context, self.mesh_name, self.material_name, mode))
             return {'FINISHED'}
 
     def invoke(self, context, event):

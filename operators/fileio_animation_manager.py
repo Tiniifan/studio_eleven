@@ -563,7 +563,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
         meshes_material_dict = {}
         for i, obj in enumerate(context.scene.objects):
             if obj.type == 'MESH':
-                meshes_material_dict[obj.name] = f"{mesh.name}.texproj0"
+                meshes_material_dict[obj.name] = f"{obj.name}.texproj0"
         
         for frame in range(scene.frame_start, scene.frame_end + 1):
             scene.frame_set(frame)

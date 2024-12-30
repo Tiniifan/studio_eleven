@@ -180,6 +180,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             hash_name, cam_values = xcma.open(archive[file_name])
             camera_data[hash_name] = cam_values
         elif file_name.endswith('.mtn2') or file_name.endswith('.imm2') or file_name.endswith('.mtm2'):
+            print(file_name)
             anim = animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name]))
             animations_data.append(anim)
         elif file_name.endswith('mtninf') and not file_name.endswith('.mtninf2'):
@@ -1608,16 +1609,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 split_animations_material = {}
                 transformations = []
                 
-                if self.uv_transformation_location:
-                    transformations.append('offset')
+                if self.material_transformation_transparency:
+                    transformations.append('transparency')
                     
-                if self.uv_transformation_rotation:
-                    transformations.append('rotation')
-                    
-                if self.uv_transformation_scale:
-                    transformations.append('scale')
+                if self.material_transformation_attribute:
+                    transformations.append('attribute')
         
-                if not self.animation_name_uv:
+                if not self.animation_name_material:
                     self.report({'ERROR'}, "The animation doesn't have name")
                     return {'FINISHED'}
 

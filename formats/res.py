@@ -298,7 +298,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
             
             if animation_name not in animations_offset:
                 animations_offset[animation_name] = len(string_table)
-                string_table += animation_name + int(0).to_bytes(1, 'little')
+                string_table += animation_name_encoded + int(0).to_bytes(1, 'little')
             
             animation_bytes = zlib.crc32(animation_name_encoded).to_bytes(4, 'little') + int(animations_offset[animation_name]).to_bytes(4, 'little')
 
@@ -326,7 +326,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
                 
                 if animation_split_name not in animations_split_offset:
                     animations_split_offset[animation_split_name] = len(string_table)
-                    string_table += animation_split_name + int(0).to_bytes(1, 'little')
+                    string_table += animation_split_name_encoded + int(0).to_bytes(1, 'little')
                 
                 animation_split_bytes = zlib.crc32(animation_split_name_encoded).to_bytes(4, 'little') + int(animations_split_offset[animation_split_name]).to_bytes(4, 'little')
 
@@ -393,11 +393,16 @@ def write_res(magic, items, string_table):
                     header['_materialTableOffset'] = header_pos >> 2
 
                     for res_type, res_value in materials.items():
+                        res_value_length = 0
+                        
+                        if len(res_value) > 0:
+                            res_value_length = len(res_value[0])
+                            
                         material_header_table = {
                             '_dataOffset': data_pos >> 2,
                             'Count': len(res_value),
                             'Type': res_type.value,
-                            'Length': len(res_value[0]),
+                            'Length': res_value_length,
                         }
 
                         header_pos += 8
@@ -411,11 +416,16 @@ def write_res(magic, items, string_table):
                     header['_nodeOffset'] = header_pos >> 2
 
                     for res_type, res_value in nodes.items():
+                        res_value_length = 0
+                        
+                        if len(res_value) > 0:
+                            res_value_length = len(res_value[0])
+                        
                         node_header_table = {
                             '_dataOffset': data_pos >> 2,
                             'Count': len(res_value),
                             'Type': res_type.value,
-                            'Length': len(res_value[0]),
+                            'Length': res_value_length,
                         }
 
                         header_pos += 8

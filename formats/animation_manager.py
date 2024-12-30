@@ -151,16 +151,20 @@ class AnimationManager:
                 
             # Write bone count
             writer.seek(0x24)
-            writer.write(pack("<I", self.GetDistincHashes()))
-                
+            if self.Format != "XMTM":
+                writer.write(pack("<I", self.GetDistincHashes()))
+  
             # Write animation hash
-            writer.seek(0x28)
             writer.write(pack("<I", (crc32(self.AnimationName.encode("shift-jis")))))
             writer.write(self.AnimationName.encode("shift-jis"))
             
+            frame_offset = 0x54
+            if self.Format == "XMTM":
+                frame_offset = 0x50
+            
             # Get the current position
             current_position = writer.tell()  
-            num_bytes_to_write = 0x54 - current_position
+            num_bytes_to_write = frame_offset - current_position
     
             # Write the calculated number of zeros
             if num_bytes_to_write > 0:
@@ -188,7 +192,7 @@ class AnimationManager:
                 writer.write(header2.Pack())
             else:
                 writer.write(header.Pack())
-                
+            
             return writer.getvalue()
     
     def GetAnimationDataV1(self, reader, header):
