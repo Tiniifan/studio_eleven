@@ -39,6 +39,10 @@ def findCrc32(crc32, bones=None, modifier=None, mesh=None):
     
     if mesh:
         if mesh.data.materials:
+            material_name = mesh.data.materials[0].name
+            if crc32_hash(material_name) == crc32:
+                    return mesh
+                    
             material_name = get_real_name(mesh.data.materials[0].name)
             if crc32_hash(material_name) == crc32:
                     return mesh

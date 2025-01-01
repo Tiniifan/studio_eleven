@@ -1097,7 +1097,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 item.material_name = mesh.data.materials[0].name
             else:
                 item.material_name = f"DefaultLib.{mesh.name}"
-
+            
             # Gestion des UV layers
             for index, uv_layer in enumerate(mesh.data.uv_layers):
                 item = self.texproj_properties.add()
@@ -1486,8 +1486,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                                     textures[texture.name] = {}
                                     textures[texture.name]['format'] = texture.format
                                     textures[texture.name]['linked_material'] = []
-                                else:
-                                    textures[texture.name]['linked_material'].append(mesh_prop.material_name)  
+                                    
+                                textures[texture.name]['linked_material'].append(mesh_prop.material_name)  
                         
                             meshes.append(mesh_prop)
         elif self.export_option == 'ANIMATION':
