@@ -103,6 +103,7 @@ def register():
     bpy.utils.register_class(BoneCheckbox)
     bpy.utils.register_class(ExportXC_AddAnimationItem)
     bpy.utils.register_class(ExportXC_RemoveAnimationItem)
+    bpy.utils.register_class(Animation)
     bpy.utils.register_class(AnimationItem)
     bpy.utils.register_class(TexturePropertyGroup)
     bpy.utils.register_class(LibPropertyGroup)
@@ -111,6 +112,10 @@ def register():
     bpy.utils.register_class(ArchivePropertyGroup)
     bpy.utils.register_class(TexprojPropertyGroup)
     
+    bpy.types.Scene.animation_armature = bpy.props.CollectionProperty(type=Animation)
+    bpy.types.Scene.animation_uv = bpy.props.CollectionProperty(type=Animation)
+    bpy.types.Scene.animation_material = bpy.props.CollectionProperty(type=Animation)
+    bpy.types.Scene.animation_camera = bpy.props.CollectionProperty(type=Animation)
     bpy.types.Scene.animation_items_armature = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.types.Scene.animation_items_uv = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.types.Scene.animation_items_material = bpy.props.CollectionProperty(type=AnimationItem)
@@ -144,6 +149,7 @@ def unregister():
     bpy.utils.unregister_class(ExportXPRM)
     bpy.utils.unregister_class(ExportXCMA)
     bpy.utils.unregister_class(Level5_Menu_Export)
+    bpy.utils.unregister_class(Animation)
     bpy.utils.unregister_class(AnimationItem)
     bpy.utils.unregister_class(TexturePropertyGroup)
     bpy.utils.unregister_class(LibPropertyGroup)
@@ -152,6 +158,10 @@ def unregister():
     bpy.utils.unregister_class(TexprojPropertyGroup)
     bpy.utils.unregister_class(ArchivePropertyGroup)
     
+    del bpy.types.Scene.animation_armature
+    del bpy.types.Scene.animation_uv
+    del bpy.types.Scene.animation_material
+    del bpy.types.Scene.animation_camera
     del bpy.types.Scene.animation_items_armature
     del bpy.types.Scene.animation_items_uv
     del bpy.types.Scene.animation_items_material

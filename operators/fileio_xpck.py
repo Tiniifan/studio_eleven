@@ -608,6 +608,11 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
 # Register class
 ##########################################
 
+# Définition de la classe Animation
+class Animation(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty()
+    checked: bpy.props.BoolProperty(default=False, description="Include animation")
+
 # Définition de la classe AnimationItem
 class AnimationItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
@@ -1072,11 +1077,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         self.texproj_properties.clear()
         self.texture_properties.clear()
         self.camera_properties.clear()
-        
-        context.scene.animation_items_armature.clear()
-        context.scene.animation_items_uv.clear()
-        context.scene.animation_items_material.clear()
-        context.scene.animation_items_camera.clear()
         
         self.archive_properties.clear()
 

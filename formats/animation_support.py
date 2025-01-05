@@ -44,6 +44,28 @@ class Header2:
     def Pack(self):
         return pack(self.STRCT.format, self.Magic, self.EmptyBlock, self.DecompSize, self.NameOffset, self.CompDataOffset,
                 self.Track1Count, self.Track2Count)
+                
+class XIMAHeader:
+    STRCT = Struct("<8s IIIIIII")
+    def __init__(self, Magic, DecompSize, NameOffset, CompDataOffset,
+            Track1Count, EmptyTrack, Track2Count, Track3Count):
+        self.Magic = Magic
+        self.DecompSize = DecompSize
+        self.NameOffset = NameOffset
+        self.CompDataOffset = CompDataOffset
+        self.Track1Count = Track1Count
+        self.EmptyTrack = EmptyTrack
+        self.Track2Count = Track2Count
+        self.Track3Count = Track3Count
+    @classmethod
+    def Unpack(cls, data):
+        unpackedData = cls.STRCT.unpack_from(
+            data.read(cls.STRCT.size)
+        )
+        return cls(*unpackedData)
+    def Pack(self):
+        return pack(self.STRCT.format, self.Magic, self.DecompSize, self.NameOffset, self.CompDataOffset,
+                self.Track1Count, self.EmptyTrack, self.Track2Count, self.Track3Count)        
 
 class DataHeader:
     STRCT = Struct("<III")

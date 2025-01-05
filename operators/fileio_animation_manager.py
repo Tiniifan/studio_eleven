@@ -732,9 +732,15 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                     material = mesh.material_slots[0].material
                     
                     if hasattr(material, "brres"):
-                        material = material.brres.lightChans.coll_[0]
-                        transparency = material.difColor[3]
-                        attribute = (material.difColor[0], material.difColor[1], material.difColor[2])
+                        light_channel = material.brres.lightChans.coll_[0]
+                        color_register = material.brres.colorRegs
+                        
+                        if light_channel.alphaSettings.difFromReg == True:
+                            transparency = light_channel.difColor[3]
+                            attribute = (light_channel.difColor[0], light_channel.difColor[1], light_channel.difColor[2])
+                        else:
+                            transparency = color_register.constant2[3]
+                            attribute = (color_register.constant2[0], color_register.constant2[1], color_register.constant2[2])
                     
                         for transformation in transformations:
                             if not tracks[transformation].NodeExists(name_crc32):

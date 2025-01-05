@@ -151,16 +151,16 @@ class AnimationManager:
                 
             # Write bone count
             writer.seek(0x24)
-            if self.Format != "XMTM":
+            if self.Format == "XMTN":
                 writer.write(pack("<I", self.GetDistincHashes()))
   
             # Write animation hash
             writer.write(pack("<I", (crc32(self.AnimationName.encode("shift-jis")))))
             writer.write(self.AnimationName.encode("shift-jis"))
             
-            frame_offset = 0x54
-            if self.Format == "XMTM":
-                frame_offset = 0x50
+            frame_offset = 0x50
+            if self.Format == "XMTN":
+                frame_offset = 0x54
             
             # Get the current position
             current_position = writer.tell()  
@@ -190,6 +190,18 @@ class AnimationManager:
                     self.CountInTrack(1),
                 )
                 writer.write(header2.Pack())
+            elif self.Format == "XIMA":
+                xima_header = animation_support.XIMAHeader(
+                    str(self.Format).encode("shift-jis"),
+                    header.DecompSize,
+                    0x24,
+                    0x54,
+                    self.CountInTrack(0),
+                    self.CountInTrack(1),
+                    self.CountInTrack(2),
+                    0,
+                )
+                writer.write(xima_header.Pack())                
             else:
                 writer.write(header.Pack())
             
