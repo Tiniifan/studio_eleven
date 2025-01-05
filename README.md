@@ -1,38 +1,48 @@
+
+
 # Studio Eleven
-___________________________________________________________________________
-**Disclaimer**
+💡 **What is the project?**
 
-I'm not affiliated with Level-5, I'm a fan who wants to know how Level-5 files work.  
-
-**What is the project**
-
-Studio Eleven is a project to create an addon that can import and export some Level-5 files on Blender.  
+Studio Eleven is a project to create an addon that can import and export some Level-5 files from 3DS games on Blender.  
 The addon is written in Python and the project is Open Source, everyone can contribute.
 
-**Supported File**
+___________________________________________________________________________
+📂 **Supported File Formats**
 
-- XMTN (Animation)
-- XPRM (Mesh)
-- XPCK (Archive) 
-- XCMA (Camera)
+The addon supports importing and exporting the following file types:
 
-**Available Template for export**
+- **XPRM** (Mesh)
+- **XPCK** (Archive container)
+- **XMTN** (Bone animations)
+- **XIMA** (UV Animation)
+- **XMTM** (Material animation)
+- **XCMA** (Camera)
 
-- Inazuma Eleven Go (IEGOCS/IEGOGALAXY)
-- Yo-Kai Watch (YKW1/YKW2/YKW3/YKWB/YKWB2)
+___________________________________________________________________________
+🚀 **Available Templates for Export**
 
-**Special Thanks**  
+The addon includes templates for exporting files for these popular Level-5 games:
 
-My addon uses LZ10 compression code by RoadrunnerWMC and the triangle strop code by RuneBlade,  
-also the project couldn't have been done without the logic that I could learn by studying Metanoia and Kurriimu.
-- [RoadrunnerWMC (For LZ10)](https://github.com/RoadrunnerWMC/ndspy)
-- [Ploaj (For some logic about l5 files)](https://github.com/Ploaj/Metanoia/tree/master/Metanoia)
-- RuneBlade (For triangle strip)
+- **Inazuma Eleven Go** (IEGOCS/IEGOGALAXY)
+- **Yo-Kai Watch** (YKW1/YKW2/YKW3/YKWB/YKWB2)
+- **Professeur Layton vs. Phoenix Wright**
 
-**How to Install**
+___________________________________________________________________________
+🙏 **Special Thanks**  
 
-To install it you have to do:  
-- download the latest version [here](https://github.com/Tiniifan/studio_eleven/releases/latest)
-- wait the download process
-- now open Blender and on Blender click on "edit", "Preference", "Add-on", "install" and select the .zip you have downloaded
-- don't forget to enable the addon!
+This project couldn't have been accomplished without the valuable contributions of the following individuals and their open-source code:
+
+- **[RoadrunnerWMC (For LZ10)](https://github.com/RoadrunnerWMC/ndspy)** - For the LZ10 compression code.  
+- **[Ploaj (For some logic about L5 files)](https://github.com/Ploaj/Metanoia/tree/master/Metanoia)** - For the L5 file handling logic from Metanoia.  
+- **RuneBlade (For triangle strip)** - For implementing the triangle strip logic.
+
+___________________________________________________________________________
+⚙️ **How to Install**
+
+To install the addon:
+
+1. Download the latest version [here](https://github.com/Tiniifan/studio_eleven/releases/latest)
+2. Wait for the download to finish
+3. Open **Blender** and go to the top menu: **Edit** → **Preferences** → **Add-ons** → **Install**
+4. Select the downloaded `.zip` file
+5. Don't forget to enable the addon!
