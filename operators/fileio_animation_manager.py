@@ -586,7 +586,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                                 tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
                                 
                             if transformation == 'offset':
-                                location = [material_transformation.translation[0], material_transformation.translation[1]]
+                                location = [material_transformation.translation[0], - material_transformation.translation[1]]
                                 tracks['offset'].GetNodeByName(name_crc32).add_frame(
                                     frame, UVMove(*map(float, location))
                                 )
