@@ -138,7 +138,7 @@ def write(armature, pose_bone):
     else:
         out += int(0).to_bytes(4, 'little')
         
-    if pose_bone.name == "billboard":
+    if pose_bone.name == "billboard" or pose_bone.name == "cam_rot":
         out += int(5).to_bytes(4, "little")
     else:
         out += int(4).to_bytes(4, 'little')
