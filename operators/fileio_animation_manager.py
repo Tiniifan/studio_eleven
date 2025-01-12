@@ -125,6 +125,9 @@ def process_bone_track(track, node, armature, action):
     bpy.ops.object.mode_set(mode='POSE')
     
     bone_name = findCrc32(node.Name, armature.pose.bones)
+    if not bone_name:
+        return
+
     bone = armature.pose.bones.get(bone_name)
     if not bone:
         return
