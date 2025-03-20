@@ -1,6 +1,6 @@
 import io
-import zlib
-import struct
+from zlib import crc32
+from struct import pack, unpack, unpack_from, Struct
 
 from enum import Enum
 from ..compression import *
@@ -66,143 +66,222 @@ nodes_ordered = [
 ]
 
 ##########################################
-# Read String
-##########################################
-    
-def read_string(byte_io):
-    bytes_list = []
-    
-    while True:
-        byte = byte_io.read(1)
-        if byte == b'\x00':
-            break
-        bytes_list.append(byte)
-    
-    name = b''.join(bytes_list).decode('shift-jis')
-    return name    
-
-##########################################
 # RES
 ##########################################
 
-def open_res(stream=None, data=None, string_table=None, items=None):
-    string_table = string_table or {}
-    items = items or {}
+class ResHeader:
+    def __init__(self, data):
+        strct = Struct("<HhHHHH")
+        _stringOffset, self.Unk1, _materialTableOffset, self.MaterialTableCount, _nodeOffset, self.NodeCount = \
+            strct.unpack_from(data, 0)
+        self.StringOffset = _stringOffset << 2
+        self.MaterialTableOffset = _materialTableOffset << 2
+        self.NodeOffset = _nodeOffset << 2
 
-    if stream:
-        with io.BytesIO(compressor.decompress(stream.read())) as reader:
-            read_data(reader, string_table, items)
+class ResHeaderTable:
+    def __init__(self, data, offset):
+        strct = Struct("<HHHH")
+        _dataOffset, self.Count, self.Type, self.Length = \
+            strct.unpack_from(data, offset)
+        self.DataOffset = _dataOffset << 2
 
-    elif data:
-        with io.BytesIO(compressor.decompress(data)) as reader:
-            read_data(reader, string_table, items)
+def read_string_table(data):
+    string_table = {}
+    text = b""
+    for i in range(len(data)):
+        char = data[i].to_bytes(1, "little")
+        if char == b"\x00":
+            text = text.decode("shift-jis")
+            if text != "":
+                if text not in string_table:
+                    string_table[crc32(text.encode("shift-jis"))] = text
+                
+                splitting = [".", "_"]
+                for j in splitting:
+                    splitted = text.split(j)
+                    for k in splitted:
+                        if k not in string_table:
+                            string_table[crc32(k.encode("shift-jis"))] = k
+            text = b""
+        else:
+            text += char
+    return string_table
 
-    elif string_table and items:
-        pass  # Already provided, no need to read data
-
+def open_res(data):
+    data = compressor.decompress(data)
+    
+    magic = data[:4]
+    if magic == b"XRES":
+        return open_xres(data)
+    
+    items = {}
+    
+    header = ResHeader(data[8:])
+    
+    text_section = data[header.StringOffset:len(data)]
+    string_table = read_string_table(text_section)
+    
+    def read_section_table(data, tableOffset, tableCount):
+        for i in range(tableCount):
+            pos = tableOffset + i * 8
+            
+            headerTable = ResHeaderTable(data, pos)
+            pos += 8
+            
+            if RESType(headerTable.Type) == RESType.NULL:       continue
+            if RESType(headerTable.Type) == RESType.MESH_GROUP: continue
+            if RESType(headerTable.Type) not in items:
+                items[RESType(headerTable.Type)] = {}
+            
+            for j in range(headerTable.Count):
+                pos = headerTable.DataOffset + j * headerTable.Length
+                section = data[pos:pos+headerTable.Length]
+                
+                pos = 0
+                obj_hash = unpack_from("<I", section, pos)[0]
+                obj_name = string_table[obj_hash]
+                
+                if headerTable.Length == 8:
+                    items[RESType(headerTable.Type)][obj_hash] = obj_name
+                
+                elif RESType(headerTable.Type) == RESType.TEXTURE_DATA:
+                    pos = 8
+                    
+                    items[RESType(headerTable.Type)][obj_hash] = \
+                        {"name": obj_name,
+                         "unk1": unpack_from("<b", section, pos),
+                         "unk2": unpack_from("<b", section, pos+1)}
+                
+                elif RESType(headerTable.Type) == RESType.MATERIAL_DATA:
+                    pos = 16
+                    linked_textures = []
+                    max_texture = (headerTable.Length - 16) // 52
+                    for k in range(max_texture):
+                        texture_hash = unpack_from("<I", section, pos)[0]
+                        pos += 4
+                        
+                        if texture_hash != 0:
+                            linked_textures.append(texture_hash)
+                        
+                        pos += 48
+                    
+                    items[RESType(headerTable.Type)][obj_hash] = {"name": obj_name, "textures": linked_textures}
+    
+    read_section_table(data, header.MaterialTableOffset, header.MaterialTableCount)
+    read_section_table(data, header.NodeOffset, header.NodeCount)
+    
     return items
 
-def read_data(reader, string_table, items):
-    header = struct.unpack("<qhhhhhh", reader.read(20))
-    string_offset = header[1] << 2
-    material_table_offset = header[3] << 2
-    material_table_count = header[4]
-    node_offset = header[5] << 2
-    node_count = header[6]
+##########################################
+# XRES
+##########################################
 
-    reader.seek(string_offset)
-    text_reader = io.BytesIO(reader.read())
-    text_section = text_reader.read().decode("shift-jis").split("\x00")
-    for text in text_section:
-        if text == "":
-            continue
-        
-        crc32text = zlib.crc32(text.encode("shift-jis"))
-        if crc32text not in string_table:
-            string_table[crc32text] = text
-        
-        text_split = text.split(".")
-        for t in text_split:
-            crc32text_split = zlib.crc32(t.encode("shift-jis"))
-            if crc32text_split not in string_table:
-                string_table[crc32text_split] = t
-        
-        text_split = text.split("_")
-        for t in text_split:
-            crc32text_split = zlib.crc32(t.encode("shift-jis"))
-            if crc32text_split not in string_table:
-                string_table[crc32text_split] = t
+class XRESHeader:
+    def __init__(self, data):
+        self.StringOffset, unk = unpack_from("<HH", data[1])
+        self.MATERIAL_TYPE_UNK1 = HeaderTable(data[5])
+        self.MATERIAL_1 =         HeaderTable(data[6])
+        self.MATERIAL_2 =         HeaderTable(data[7])
+        self.TEXTURE_DATA =       HeaderTable(data[8])
+        self.MATERIAL_TYPE_UNK2 = HeaderTable(data[9])
+        self.MATERIAL_DATA =      HeaderTable(data[11])
+        self.MESH_NAME =          HeaderTable(data[13])
+        self.BONE =               HeaderTable(data[14])
+        self.ANIMATION_MTN2 =     HeaderTable(data[15])
+        self.ANIMATION_IMM2 =     HeaderTable(data[16])
+        self.ANIMATION_MTM2 =     HeaderTable(data[17])
+        self.SHADING =            HeaderTable(data[18])
+        self.NODE_TYPE_UNK2 =     HeaderTable(data[19])
+        self.PROPERTIES =         HeaderTable(data[20])
+        self.MTNINF =             HeaderTable(data[21])
+        self.IMMINF =             HeaderTable(data[22])
+        self.MTMINF =             HeaderTable(data[23])
+        self.TEXPROJ =            HeaderTable(data[24])
+
+class HeaderTable:
+    def __init__(self, data):
+        self.DataOffset, self.Count = unpack_from("<HH", data)
+
+type_length = {
+    RESType.BONE: 8,
+    RESType.TEXPROJ: 8,
+    RESType.PROPERTIES: 8,
+    RESType.SHADING: 8,
+    RESType.MATERIAL_1: 8,
+    RESType.MATERIAL_2: 8,
+    RESType.MESH_NAME: 8,
+    RESType.TEXTURE_DATA: 32,
+    RESType.MATERIAL_DATA: 224,
+    RESType.ANIMATION_MTN2: 8,
+    RESType.ANIMATION_IMM2: 8,
+    RESType.ANIMATION_MTM2: 8,
+    RESType.MTNINF: 8,
+    RESType.IMMINF: 8,
+    RESType.MTMINF: 8,
+}
+
+def open_xres(data):
+    items = {}
     
-    read_section_table(reader, material_table_offset, material_table_count, items, string_table, text_reader)
-    read_section_table(reader, node_offset, node_count, items, string_table, text_reader)
+    header = XRESHeader([data[i:i+4] for i in range(0, len(data), 4)])
     
-def get_object_name(type_reader, text_reader, string_table):
-    material_crc32 = struct.unpack("<I", type_reader.read(4))[0]
-                
-    if material_crc32 in string_table:
-        return string_table[material_crc32]
-    else:
-        text_reader.seek(struct.unpack("<I", type_reader.read(4))[0])
-        name = read_string(text_reader)
-        return name    
-
-def read_section_table(reader, table_offset, table_count, items, string_table, text_reader):
-    for i in range(table_count):
-        reader.seek(table_offset + i * 8)
-        header_table = struct.unpack("<hhhh", reader.read(8))
-
-        data_offset = header_table[0] << 2
-        count = header_table[1]
-        _type = header_table[2]
-        length = header_table[3]
+    text_section = data[header.StringOffset:len(data)]
+    string_table = read_string_table(text_section)
+    
+    def read_type(data, headerTable, Type):
+        if Type not in items:
+            items[Type] = {}
         
-        if RESType(_type) == RESType.NULL:
-            continue
-        
-        if RESType(_type) == RESType.MESH_GROUP:
-            continue
-
-        if RESType(_type) not in items:
-            items[RESType(_type)] = {}
-
-        for j in range(count):
-            reader.seek(data_offset + j * length)
-            type_reader = io.BytesIO(reader.read(length))
+        for i in range(headerTable.Count):
+            pos = headerTable.DataOffset + i * type_length[Type]
+            section = data[pos:pos+type_length[Type]]
             
-            object_name = get_object_name(type_reader, text_reader, string_table)
-            object_crc32 = zlib.crc32(object_name.encode("shift-jis"))
+            pos = 0
+            obj_hash = unpack_from("<I", section, pos)[0]
+            obj_name = string_table[obj_hash]
             
-            if length == 8:
-                items[RESType(_type)][object_crc32] = object_name
-            elif RESType(_type) == RESType.TEXTURE_DATA:
-                type_reader.seek(8)
-                texture_unk = struct.unpack("<b", type_reader.read(1))[0]
-                next_facial_expression = struct.unpack("<b", type_reader.read(1))[0]
-                
-                texture_dict = {}
-                texture_dict['name'] = object_name
-                texture_dict['texture_unk'] = texture_unk
-                texture_dict['next_facial_expression'] = next_facial_expression
-                
-                items[RESType(_type)][object_crc32] = texture_dict
-            elif RESType(_type) == RESType.MATERIAL_DATA:
-                type_reader.seek(16)
+            if Type == RESType.TEXTURE_DATA:
+                pos = 8
+                items[Type][obj_hash] = \
+                    {"name": obj_name,
+                     "unk1": unpack_from("<b", section, pos),
+                     "unk2": unpack_from("<b", section, pos+1)}
+            
+            elif Type == RESType.MATERIAL_DATA:
+                pos = 16
                 linked_textures = []
-                
-                max_texture = (length-16) // 52
+                max_texture = (type_length[Type] - 16) // 52
                 for k in range(max_texture):
-                    texture_crc32 = struct.unpack("<I", type_reader.read(4))[0]
+                    texture_hash = unpack_from("<I", section, pos)[0]
+                    pos += 4
                     
-                    if texture_crc32 != 0:    
-                        linked_textures.append(hex(texture_crc32))
-                                        
-                    type_reader.seek(type_reader.tell() + 48)        
+                    if texture_hash != 0:
+                        linked_textures.append(texture_hash)
+                    
+                    pos += 48
                 
-                material_dict = {}
-                material_dict['name'] = object_name
-                material_dict['textures'] = linked_textures
-                
-                items[RESType(_type)][object_crc32] = material_dict               
+                items[Type][obj_hash] = {"name": obj_name, "textures": linked_textures}
+            
+            else:
+                items[Type][obj_hash] = obj_name
+    
+    read_type(data, header.BONE,           RESType.BONE)
+    read_type(data, header.TEXPROJ,        RESType.TEXPROJ)
+    read_type(data, header.PROPERTIES,     RESType.PROPERTIES)
+    read_type(data, header.SHADING,        RESType.SHADING)
+    read_type(data, header.MATERIAL_1,     RESType.MATERIAL_1)
+    read_type(data, header.MATERIAL_2,     RESType.MATERIAL_2)
+    read_type(data, header.MESH_NAME,      RESType.MESH_NAME)
+    read_type(data, header.TEXTURE_DATA,   RESType.TEXTURE_DATA)
+    read_type(data, header.MATERIAL_DATA,  RESType.MATERIAL_DATA)
+    read_type(data, header.ANIMATION_MTN2, RESType.ANIMATION_MTN2)
+    read_type(data, header.ANIMATION_IMM2, RESType.ANIMATION_IMM2)
+    read_type(data, header.ANIMATION_MTM2, RESType.ANIMATION_MTM2)
+    read_type(data, header.MTNINF,         RESType.MTNINF)
+    read_type(data, header.IMMINF,         RESType.IMMINF)
+    read_type(data, header.MTMINF,         RESType.MTMINF)
+    
+    return items
 
 def make_library(meshes = [], armature = None, textures = {}, animations = {}, outline_name = "", properties=[], texprojs=[]):
     items = {}
@@ -215,7 +294,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for mesh in meshes:
             material_name = mesh.material_name.encode("shift-jis")
-            materials_name.append(zlib.crc32(material_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little')) 
+            materials_name.append(crc32(material_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little')) 
             materials_offset[material_name] = len(string_table)           
             string_table += material_name + int(0).to_bytes(1, 'little')
         
@@ -227,7 +306,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for mesh in meshes:
             mesh_name = mesh.name.encode("shift-jis")
-            meshes_name.append(zlib.crc32(mesh_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))   
+            meshes_name.append(crc32(mesh_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))   
             string_table += mesh_name + int(0).to_bytes(1, 'little')
                 
         items[RESType.MESH_NAME] = meshes_name
@@ -238,7 +317,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for texture_name, texture_data in textures.items():
             texture_name_encoded = texture_name.encode("shift-jis")
-            textures_data.append(zlib.crc32(texture_name_encoded).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
+            textures_data.append(crc32(texture_name_encoded).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
             string_table += texture_name_encoded + int(0).to_bytes(1, 'little')
             
         items[RESType.TEXTURE_DATA] = textures_data
@@ -257,7 +336,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         materials_data = []
         for material_name, material_info in materials_info.items():
             material_name_encoded = material_name.encode("shift-jis")
-            material_name_crc32 = zlib.crc32(material_name_encoded).to_bytes(4, 'little')
+            material_name_crc32 = crc32(material_name_encoded).to_bytes(4, 'little')
             
             if material_name in materials_offset:
                 material_data = material_name_crc32 + int(materials_offset[material_name]).to_bytes(4, 'little') + material_name_crc32 + material_name_crc32
@@ -267,7 +346,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
             for i in range(4):
                 if i < len(material_info):
                     texture_name = material_info[i].encode("shift-jis")
-                    material_data += zlib.crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
+                    material_data += crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                 else:
                     material_data += bytes.fromhex("00000000000000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                     
@@ -280,7 +359,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for bone in armature.pose.bones:
             bone_name = bone.name.encode("shift-jis")
-            bones_name.append(zlib.crc32(bone_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))    
+            bones_name.append(crc32(bone_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))    
             string_table += bone_name + int(0).to_bytes(1, 'little')
 
         items[RESType.BONE] = bones_name
@@ -300,7 +379,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
                 animations_offset[animation_name] = len(string_table)
                 string_table += animation_name_encoded + int(0).to_bytes(1, 'little')
             
-            animation_bytes = zlib.crc32(animation_name_encoded).to_bytes(4, 'little') + int(animations_offset[animation_name]).to_bytes(4, 'little')
+            animation_bytes = crc32(animation_name_encoded).to_bytes(4, 'little') + int(animations_offset[animation_name]).to_bytes(4, 'little')
 
             if animation_type == 'armature':
                animations_mtn2.append(animation_bytes) 
@@ -328,7 +407,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
                     animations_split_offset[animation_split_name] = len(string_table)
                     string_table += animation_split_name_encoded + int(0).to_bytes(1, 'little')
                 
-                animation_split_bytes = zlib.crc32(animation_split_name_encoded).to_bytes(4, 'little') + int(animations_split_offset[animation_split_name]).to_bytes(4, 'little')
+                animation_split_bytes = crc32(animation_split_name_encoded).to_bytes(4, 'little') + int(animations_split_offset[animation_split_name]).to_bytes(4, 'little')
 
                 if animation_type == 'armature':
                    mtninfs.append(animation_split_bytes) 
@@ -351,7 +430,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for archive_property in properties:
             property_name = archive_property[0].encode("shift-jis")
-            properties_name.append(zlib.crc32(property_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            properties_name.append(crc32(property_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += property_name + int(0).to_bytes(1, 'little')
             
         items[RESType.PROPERTIES] = properties_name
@@ -361,7 +440,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for texproj in texprojs:
             texproj_name = texproj[0].encode("shift-jis")
-            texprojs_name.append(zlib.crc32(texproj_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            texprojs_name.append(crc32(texproj_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += texproj_name + int(0).to_bytes(1, 'little')
             
         items[RESType.TEXPROJ] = texprojs_name
@@ -408,7 +487,7 @@ def write_res(magic, items, string_table):
                         header_pos += 8
                         data_pos += sum(len(byte_array) for byte_array in res_value)
 
-                        writer_table.write(struct.pack('<hhhh', *material_header_table.values()))
+                        writer_table.write(pack('<hhhh', *material_header_table.values()))
                         writer_data.write(b''.join(res_value))
 
                 # Node - Header table
@@ -431,7 +510,7 @@ def write_res(magic, items, string_table):
                         header_pos += 8
                         data_pos += sum(len(byte_array) for byte_array in res_value)
 
-                        writer_table.write(struct.pack('<hhhh', *node_header_table.values()))
+                        writer_table.write(pack('<hhhh', *node_header_table.values()))
                         writer_data.write(b''.join(res_value))
 
                 # String table
@@ -445,13 +524,8 @@ def write_res(magic, items, string_table):
                     writer_res.write(padding)                        
 
                 writer_res.seek(0)
-                writer_res.write(struct.pack('<qhhhhhh', *header.values()))
+                writer_res.write(pack('<qhhhhhh', *header.values()))
                 writer_res.write(writer_table.getvalue())
                 writer_res.write(writer_data.getvalue())
                 
                 return compress(writer_res.getvalue())
-
-##########################################
-# XRES
-##########################################
-
