@@ -102,7 +102,7 @@ class RGBA4:
 
         return data
 
-    def decode(self, data):
+    def decode(self, data, index):
         rgba4 = (data[1] << 8) | data[0]
 
         r = (rgba4 >> 12) & 0xF
@@ -127,7 +127,7 @@ class RGBA8:
         argb = (color.a << 24) | (color.r << 16) | (color.g << 8) | color.b
         return bytes([(argb >> 24) & 0xFF, argb & 0xFF, (argb >> 8) & 0xFF, (argb >> 16) & 0xFF])       
        
-    def decode(self, data):
+    def decode(self, data, index):
         if len(data) < 4:
             return Color([0, 0, 0, 0])
 
@@ -143,7 +143,7 @@ class RBGR888:
     def encode(self, color):
         return bytes([(color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF])
 
-    def decode(self, data):
+    def decode(self, data, index):
         if len(data) < 3:
             return Color([0, 0, 0])
 
@@ -169,14 +169,26 @@ class RGBA4444:
 
 class RGBA5551:
     name = "RGBA5551"
+    size = 2
+    has_alpha = True
+    type = 2
     
     def encode(self, color):
         val = (((c >> 24) & 0xFF) > 0x80 or 0)
         val += convert8to5(((c >> 16) & 0xFF)) << 11
         val += convert8to5(((c >> 8) & 0xFF)) << 6
         val += convert8to5(((c) & 0xFF)) << 1
-        v = pack('H', val);è
+        v = pack('H', val)
         return bytes([(val & 0xFF), (byte)(val >> 8)])
+    
+    def decode(self, data, index):
+        b1, b2 = unpack('2B', data)
+        
+        r = ((b1 >> 3) & 0x1F)
+        g = (b1 & 0x07) | ((b2 >> 6) & 0x03)
+        b = (b2 >> 1) & 0x1F
+        a = (b2 & 0x01) * 255
+        return Color([r, g, b, a])
 
 class RGB565:
     name = "RGB565"
@@ -191,7 +203,7 @@ class RGB565:
         val = (r << 11) | (g << 5) | b
         return pack('H', val);
         
-    def decode(self, data):
+    def decode(self, data, index):
         if not data:
             return Color((0, 0, 0, 255))
 
@@ -207,7 +219,7 @@ class RGB565:
 
         return Color((r, g, b, 255))   
 
-class RBGR555:
+class RBG555:
     name = "RGB565"
     
     def encode(self, color):
@@ -218,9 +230,17 @@ class RBGR555:
 
 class LA8:
     name = "LA8"
+    size = 2
+    has_alpha = True
+    type = 0x0A
     
     def encode(self, color):
         return bytes([(((0x4CB2 * (color & 0xFF) + 0x9691 * ((color >> 8) & 0xFF) + 0x1D3E * ((color >> 8) & 0xFF)) >> 16) & 0xFF)])
+    
+    def decode(self, data, index):
+        l, a = unpack("2B", data)
+        r = g = b = l
+        return Color([r, g, b, a])
 
 class HILO8:
     name = "HILO8"
@@ -230,21 +250,44 @@ class HILO8:
 
 class L8:
     name = "L8"
+    size = 1
+    has_alpha = False
+    type = 0x0C
     
     def encode(self, color):
         return bytes([(((0x4CB2 * (color & 0xFF) + 0x9691 * ((color >> 8) & 0xFF) + 0x1D3E * ((color >> 8) & 0xFF)) >> 16) & 0xFF)])
+    
+    def decode(self, data, index):
+        r = g = b = unpack("B", data)[0]
+        return Color([r, g, b, 255])
 
 class A8:
     name = "A8"
+    size = 1
+    has_alpha = True
+    type = 0x0E
     
     def encode(self, color):
         return bytes([((color >> 24) & 0xFF)])
+    
+    def decode(self, data, index):
+        a = unpack("B", data)[0]
+        return Color([255, 255, 255, a])
 
 class LA4:
     name = "LA4"
+    size = 1
+    has_alpha = True
+    type = 0x0B
     
     def encode(self, color):
-        return bytes([((color >> 24) & 0xFF), ((color) & 0xFF), ((color >> 8) & 0xFF), ((color >> 16) & 0xFF)]);
+        return bytes([((color >> 24) & 0xFF), ((color) & 0xFF), ((color >> 8) & 0xFF), ((color >> 16) & 0xFF)])
+    
+    def decode(self, data, index):
+        la = unpack("B", data)[0]
+        r = g = b = ((la >> 4) & 0x0F) * 0x11
+        a = (la & 0x0F) * 0x11
+        return Color([r, g, b, a])
 
 class L4:
     name = "L4"
@@ -255,19 +298,27 @@ class L4:
     def encode(self, color_a, color_b):
         return bytes([(L8().encode(color_a)[0] / 0x11) & 0xF  | (L8().encode(color_b)[0] / 0x11) << 4])
         
-    def decode(self, data):
-        if len(data) < 1:
-            return Color(0, 0, 0, 0)
-
-        color_a = (data[0] & 0xF) * 0x11
-        color_b = (data[0] >> 4) * 0x11
-        return Color([color_a, color_a, color_a, color_b])        
+    def decode(self, data, index):
+        l = data[index // 2]
+        shift = (index & 1) * 4
+        r = g = b = ((l >> shift) & 0x0F) * 0x11
+        return Color([r, g, b, 255])
 
 class A4:
     name = "A4"
+    size = 1
+    has_alpha = True
+    type = 0x0F
     
     def encode(self, color_a, color_b):
         return bytes([(A8().encode(color_a)[0] / 0x11) & 0xF  | (A8().encode(color_b)[0] / 0x11) << 4])
+    
+    def decode(self, data, index):
+        byte = ord(pack("B", data[index // 2]))
+        shift = (index & 1) * 4
+        a = ((byte >> shift) & 0x0F) * 0x11
+        r = g = b = 255
+        return Color([r, g, b, a])
 
 class ETC1:
     name = "ETC1"
@@ -275,17 +326,16 @@ class ETC1:
     type = 27
     has_alpha = False
 
-    def decode(self, data):
+    def decode(self, data, index):
         r, g, b = data[0], data[1], data[2]
         return Color([r, g, b, 255]) 
-        
+
 class ETC1A4:
     name = "ETC1A4"
     size = 4
     type = 28
     has_alpha = True
 
-    def decode(self, data):
+    def decode(self, data, index):
         r, g, b, a = data[0], data[1], data[2], data[3]
         return Color([r, g, b, a])
-        
