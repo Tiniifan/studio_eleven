@@ -426,7 +426,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[], attach_bone=False):    
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[]):    
     # Make meshes
     xmprs = []
     atrs = []
@@ -461,21 +461,23 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     mtninfs = []
     imminfs = []
     mtminfs = []
+    
+    anim_version = "V1" if template[0].name == "Inazuma Eleven Go" else "V2"
     for animation_type, animation_data in animations.items():
         if animation_type == 'armature':
-            mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones']))
+            mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version))
             
             for split_animation in animation_data['split_animation']['split']:
                 mtninfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
         elif animation_type == 'uv':
             is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-            imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven))
+            imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven, anim_version))
             
             for split_animation in animation_data['split_animation']['split']:
                 imminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
         elif animation_type == 'material':
             is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-            mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven))
+            mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven, anim_version))
             
             for split_animation in animation_data['split_animation']['split']:
                 mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
@@ -581,27 +583,20 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if txps:
             files.update(create_files_dict(".txp", txps))
     elif mode == "ANIMATION":
-        if attach_bone:
-            if mbns:
-                files.update(create_files_dict(".mbn", mbns))
+        if mbns:
+            files.update(create_files_dict(".mbn", mbns))
             
         if mtns:
-            files.update(create_files_dict(".mtn2", mtns))
-            
-        if imms:
-            files.update(create_files_dict(".imm2", imms))
+            if animation[1] == 'MTN2':
+                files.update(create_files_dict(".mtn2", mtns))
+            elif animation[1] == 'MTN3':
+                files.update(create_files_dict(".mtn3", mtns))
 
-        if mtms:
-            files.update(create_files_dict(".mtm2", mtms))
-
-        if mtninfs:
-            files.update(create_files_dict(".mtninf", mtninfs))
- 
-        if imminfs:
-            files.update(create_files_dict(".imminf", imminfs))
-
-        if mtminfs:
-            files.update(create_files_dict(".mtminf", mtminfs))
+        if minfs:
+            if animation[2] == 'MTNINF':
+                files.update(create_files_dict(".mtninf", minfs))
+            elif animation[2] == 'MTNINF2':
+                files.update(create_files_dict(".mtninf2", minfs))
                 
         if cmns:
             files.update(create_files_dict(".cmn", cmns))  
@@ -609,7 +604,8 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if xcmas:
             files.update(create_files_dict(".cmr2", xcmas))
 
-    if mode == 'ARMATURE':
+    if mode != "CAMERA":
+        print('ok')
         items, string_table = res.make_library(
             meshes = meshes, 
             armature = armature, 
@@ -619,28 +615,16 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             properties=properties, 
             texprojs=texprojs
         )
-        
-        files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
-    elif mode == "ANIMATION":
-        if attach_bone == False:
-            armature = None
-            
-        items, string_table = res.make_library(
-            armature = armature, 
-            animations = animations,  
-            properties=properties,
-        )
-        
-        files["RES.bin"] = res.write_res(bytes.fromhex("4348524330300000"), items, string_table)
-    elif mode == "MESH":
-        pass
-        # Not implemented     
-    elif mode == "CAMERA":
+        if template[0].name == "Inazuma Eleven Go":
+            files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
+        else: 
+            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
+    else:
         if len(cameras_sorted) > 0:
             files["CMR.bin"] = xcmt.write(cameras_sorted)
     
     # Create xpck
-    xpck.pack(files, filepath)
+    xpck.pack_archive(files, filepath)
     
     return {'FINISHED'}
 
