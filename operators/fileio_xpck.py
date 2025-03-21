@@ -47,24 +47,6 @@ def create_files_dict(extension, data_list):
         
     return output
 
-def sort_nodes(node_list):
-    node_map = {node["crc32"]: node for node in node_list}
-    sorted_list = []
-    
-    def visit(node):
-        if node not in visited:
-            visited.add(node)
-            parent = node_map[node]["parent_crc32"]
-            if parent and parent in node_map:
-                visit(parent)
-            sorted_list.append(node_map[node])
-    
-    visited = set()
-    for node in node_map:
-        visit(node)
-    
-    return sorted_list
-
 def create_bone(armature, bone_name, parent_name, relative_location, relative_rotation, scale, head, tail):
     # Select amature
     bpy.context.view_layer.objects.active = armature
@@ -223,8 +205,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
 
     if bpy.context.scene.objects:
         bpy.ops.object.mode_set(mode='OBJECT')
-
-    bones_data = sort_nodes(bones_data)
+    
     # Make amature
     if len(bones_data) > 0 and res_data is not None:
         # Create a new amature
