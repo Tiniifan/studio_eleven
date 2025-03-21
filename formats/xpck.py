@@ -78,7 +78,11 @@ def open_file(file_item):
             
             files[name] = file_data
             
-        return files
+        file_names = list(files.keys())
+        file_names.sort()
+        sorted_files = {i: files[i] for i in file_names}
+        
+        return sorted_files
     elif magic == b"XPCK":
         file_count = unpack("<H", data[4:6])[0] & 0xFFF
         file_info_offset = unpack("<H", data[6:8])[0] * 4
