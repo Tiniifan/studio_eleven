@@ -176,7 +176,7 @@ def open_res(data):
 # XRES
 ##########################################
 
-class XRESHeader:
+class XRESHeader:    
     def __init__(self, data):
         self.StringOffset, unk = unpack_from("<HH", data[1])
         self.MATERIAL_TYPE_UNK1 = HeaderTable(data[5])
@@ -423,7 +423,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
     if outline_name:
         name = outline_name.encode("shift-jis")
         string_table += name + int(0).to_bytes(1, 'little')
-        items[RESType.SHADING] = [name]
+        items[RESType.SHADING] = [crc32(name) + int(len(string_table)).to_bytes(4, 'little')]
         
     if properties:
         properties_name = []
@@ -524,8 +524,92 @@ def write_res(magic, items, string_table):
                     writer_res.write(padding)                        
 
                 writer_res.seek(0)
+                print(header)
                 writer_res.write(pack('<qhhhhhh', *header.values()))
                 writer_res.write(writer_table.getvalue())
                 writer_res.write(writer_data.getvalue())
                 
                 return compress(writer_res.getvalue())
+
+type_order = [
+    RESType.MATERIAL_TYPE_UNK1,
+    RESType.MATERIAL_1,
+    RESType.MATERIAL_2,
+    RESType.TEXTURE_DATA,
+    RESType.MATERIAL_TYPE_UNK2,
+    RESType.MATERIAL_DATA,
+    RESType.MESH_NAME,
+    RESType.BONE,
+    RESType.ANIMATION_MTN2,
+    RESType.ANIMATION_IMM2,
+    RESType.ANIMATION_MTM2,
+    RESType.SHADING,
+    RESType.NODE_TYPE_UNK1,
+    RESType.PROPERTIES,
+    RESType.MTNINF,
+    RESType.IMMINF,
+    RESType.MTMINF,
+    RESType.TEXPROJ,
+]
+
+data_order = [
+    RESType.TEXTURE_DATA,
+    RESType.MATERIAL_1,
+    RESType.MATERIAL_2,
+    RESType.MATERIAL_TYPE_UNK1,
+    RESType.MATERIAL_TYPE_UNK2,
+    RESType.MATERIAL_DATA,
+    RESType.MESH_NAME,
+    RESType.BONE,
+    RESType.ANIMATION_MTN2,
+    RESType.ANIMATION_IMM2,
+    RESType.ANIMATION_MTM2,
+    RESType.SHADING,
+    RESType.NODE_TYPE_UNK1,
+    RESType.PROPERTIES,
+    RESType.MTNINF,
+    RESType.IMMINF,
+    RESType.MTMINF,
+    RESType.TEXPROJ,
+]
+
+def write_xres(magic, items, string_table):
+    data = bytes()
+    
+    for res_type in type_order:
+        if res_type in items:
+            for i in range(len(items[res_type])):
+                if type_length[res_type] != len(items[res_type][i]):
+                    resized_array = items[res_type][i].ljust(type_length[res_type], b'\x00')
+                    items[res_type][i] = resized_array
+    
+    string_offset = 0x64 + sum(len(item) for sublist in items.values() for item in sublist)
+    
+    data += magic
+    data += pack("<H", string_offset)
+    data += pack("<H", 0x01)
+    data += bytes(0x0C)
+    
+    data_offset = 0x64
+    for res_type in type_order:
+        if res_type in items:
+            data += pack("<H", data_offset)
+            data += pack("<H", len(items[res_type]))
+            data_offset += sum(len(item) for item in items[res_type])
+        else:
+            data += pack("<HH", 0x64, 0)
+        
+        if res_type in (RESType.MATERIAL_TYPE_UNK2, RESType.MATERIAL_DATA):
+            data += pack("<I", 0x00)
+    
+    for res_type in type_order:
+        if res_type in items:
+            for item in items[res_type]:
+                data += item
+    
+    data += string_table
+    
+    while len(data) % 4 != 0:
+        data += b"\x00"
+    
+    return compress(data)
