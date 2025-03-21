@@ -403,7 +403,7 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
 
-def fileio_write_xmtn(context, armature, animation_name, transformations, bones):    
+def fileio_write_xmtn(context, armature, animation_name, transformations, bones, version="V2"):    
     scene = context.scene
     armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
@@ -475,7 +475,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones)
     
     return animation.Save()
     
-def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
+def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2"):
     scene = context.scene
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -615,7 +615,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
 
     return animation.Save()
 
-def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven):
+def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2"):
     scene = context.scene
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')
