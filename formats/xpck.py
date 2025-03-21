@@ -121,7 +121,7 @@ def open_file(file_item):
     else:
         raise Exception(f"Unknown xc magic: {magic}")
 
-def pack(files, output_file):
+def pack_archive(files, output_file):
     offset = 0
     name_offset = 0
     
