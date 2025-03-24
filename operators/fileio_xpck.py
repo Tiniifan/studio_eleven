@@ -407,8 +407,7 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[]):    
-    # Make meshes
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[], attach_bone=False): # Make meshes
     xmprs = []
     atrs = []
     mtrs = []
@@ -564,29 +563,35 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if txps:
             files.update(create_files_dict(".txp", txps))
     elif mode == "ANIMATION":
-        if mbns:
-            files.update(create_files_dict(".mbn", mbns))
+        if attach_bone:
+            if mbns:
+                files.update(create_files_dict(".mbn", mbns))
             
         if mtns:
-            if animation[1] == 'MTN2':
-                files.update(create_files_dict(".mtn2", mtns))
-            elif animation[1] == 'MTN3':
-                files.update(create_files_dict(".mtn3", mtns))
+            files.update(create_files_dict(".mtn2", mtns))
+            
+        if imms:
+            files.update(create_files_dict(".imm2", imms))
 
-        if minfs:
-            if animation[2] == 'MTNINF':
-                files.update(create_files_dict(".mtninf", minfs))
-            elif animation[2] == 'MTNINF2':
-                files.update(create_files_dict(".mtninf2", minfs))
+        if mtms:
+            files.update(create_files_dict(".mtm2", mtms))
+
+        if mtninfs:
+            files.update(create_files_dict(".mtninf", mtninfs))
+ 
+        if imminfs:
+            files.update(create_files_dict(".imminf", imminfs))
+
+        if mtminfs:
+            files.update(create_files_dict(".mtminf", mtminfs))
                 
         if cmns:
-            files.update(create_files_dict(".cmn", cmns))  
+            files.update(create_files_dict(".cmn", cmns))
     elif mode == "CAMERA":
         if xcmas:
             files.update(create_files_dict(".cmr2", xcmas))
-
-    if mode != "CAMERA":
-        print('ok')
+    
+    if mode == 'ARMATURE':
         items, string_table = res.make_library(
             meshes = meshes, 
             armature = armature, 
@@ -596,11 +601,31 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             properties=properties, 
             texprojs=texprojs
         )
+        
         if template[0].name == "Inazuma Eleven Go":
             files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
         else: 
             files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
-    else:
+    
+    elif mode == "ANIMATION":
+        if attach_bone == False:
+            armature = None
+            
+        items, string_table = res.make_library(
+            armature = armature, 
+            animations = animations,  
+            properties=properties,
+        )
+        
+        if template[0].name == "Inazuma Eleven Go":
+            files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
+        else: 
+            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
+    
+    elif mode == "MESH":
+        pass
+        # Not implemented     
+    elif mode == "CAMERA":
         if len(cameras_sorted) > 0:
             files["CMR.bin"] = xcmt.write(cameras_sorted)
     
