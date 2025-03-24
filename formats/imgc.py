@@ -75,13 +75,19 @@ class IMGCSupport:
             self.TileSize2 = header_bytes[9]
             self.ImageSize = header_bytes[10]
             self.ImageFormats = {
-                0: img_format.RGBA8(),
-                1: img_format.RGBA4(),
-                3: img_format.RBGR888(),
-                4: img_format.RGB565(),
-                14: img_format.L4(),
-                27: img_format.ETC1(),
-                28: img_format.ETC1A4(),
+                0x00: img_format.RGBA8(),
+                0x01: img_format.RGBA4(),
+                0x02: img_format.RGBA5551(),
+                0x03: img_format.RBGR888(),
+                0x04: img_format.RGB565(),
+                0x0A: img_format.LA8(),
+                0x0B: img_format.LA4(),
+                0x0C: img_format.L8(),
+                0x0D: img_format.L4(),
+                0x0E: img_format.A8(),
+                0x0F: img_format.A4(),
+                0x1B: img_format.ETC1(),
+                0x1C: img_format.ETC1A4(),
             }
 
 ##########################################

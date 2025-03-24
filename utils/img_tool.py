@@ -98,7 +98,11 @@ def decode_image(tile, image_data, image_format, width, height, bit_depth):
     for i, swizzled_point in zip(range(pixel_count), imgc_swizzle.get_point_sequence()):
         dataIndex = i * image_format.size
         group = image_data_after_swizzle[dataIndex:dataIndex + image_format.size]
-        color = image_format.decode(group)
+        color = Color([0, 0, 0, 0])
+        if image_format.name == "L4" or image_format.name == "A4":
+            color = image_format.decode(image_data_after_swizzle, dataIndex)
+        else:
+            color = image_format.decode(group, dataIndex)
 
         # Calculer les indices x, y pour accéder directement à la position dans le tableau pixels
         x, y = swizzled_point.X, swizzled_point.Y
