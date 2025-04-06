@@ -95,12 +95,17 @@ def open(data):
         # Decompress block data
         with io.BytesIO(compressor.decompress(data_stream.read(block_length - decomp_offset))) as cam_data_stream:
             values = {}
+            frames_count = 0
             
             # Read header
             bone_index = struct.unpack("<h", cam_data_stream.read(2))[0]
             low_frame_count = struct.unpack("<B", cam_data_stream.read(1))[0]
-            high_frame_count = struct.unpack("<B", cam_data_stream.read(1))[0] - 32
-            frames_count = (high_frame_count << 8) | low_frame_count
+            high_frame_count = struct.unpack("<B", cam_data_stream.read(1))[0]
+            if high_frame_count == 0:
+                frames_count = low_frame_count
+            else:
+                high_frame_count -= 32
+                frames_count = (high_frame_count << 8) | low_frame_count
             
             # Read frame indexes
             frames_indexes = struct.unpack(f'{frames_count}h', cam_data_stream.read(2 * frames_count))
