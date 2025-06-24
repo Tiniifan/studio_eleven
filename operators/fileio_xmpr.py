@@ -50,58 +50,85 @@ def get_mesh_information(mesh):
     normal_dict = {}
     color_dict = {}
     face_indices = []
-
     vertices_info = {}
     uv_info = {}
     normal_info = {}
     color_info = {}
     
+    # Check if mesh is valid
+    if not mesh or not mesh.data:
+        print("Error: Invalid mesh")
+        return face_indices, vertices_info, uv_info, normal_info, color_info
+    
     obj_matrix = mesh.matrix_world
-
-    if mesh.data.vertex_colors.active is not None:
+    
+    # Check for vertex colors availability
+    has_vertex_colors = (hasattr(mesh.data, 'vertex_colors') and 
+                        mesh.data.vertex_colors and 
+                        mesh.data.vertex_colors.active is not None)
+    if has_vertex_colors:
         vertex_colors = mesh.data.vertex_colors.active.data
-
+    
+    # Check for UV layers availability
+    has_uv_layers = (hasattr(mesh.data, 'uv_layers') and 
+                    mesh.data.uv_layers and 
+                    mesh.data.uv_layers.active is not None)
+    if has_uv_layers:
+        uv_data = mesh.data.uv_layers.active.data
+    
     for face in mesh.data.polygons:
         face_index = {}
         indices = []
         vt_indices = []
         vn_indices = []
         color_indices = []
-
+        
         for loop_index in face.loop_indices:
             vertex_index = mesh.data.loops[loop_index].vertex_index
             
+            # Handle vertices
             if vertex_index not in vertices_dict:
                 vertices_dict[vertex_index] = len(vertices_dict)
                 vertices_info[vertices_dict[vertex_index]] = mesh.data.vertices[vertex_index].co 
-
             indices.append(vertices_dict[vertex_index])
-
-            uv = tuple(mesh.data.uv_layers.active.data[loop_index].uv)
-            if uv not in uv_dict:
-                uv_dict[uv] = len(uv_dict)
-                uv_info[uv_dict[uv]] = uv
-            vt_indices.append(uv_dict[uv])
-
+            
+            # Handle UVs (with safety check)
+            if has_uv_layers:
+                uv = tuple(uv_data[loop_index].uv)
+                if uv not in uv_dict:
+                    uv_dict[uv] = len(uv_dict)
+                    uv_info[uv_dict[uv]] = uv
+                vt_indices.append(uv_dict[uv])
+            else:
+                # Default UV if no UV layer exists
+                default_uv = (0.0, 0.0)
+                if default_uv not in uv_dict:
+                    uv_dict[default_uv] = len(uv_dict)
+                    uv_info[uv_dict[default_uv]] = default_uv
+                vt_indices.append(uv_dict[default_uv])
+            
+            # Handle normals
             normal = tuple(mesh.data.vertices[vertex_index].normal)
             if normal not in normal_dict:
                 normal_dict[normal] = len(normal_dict)
                 normal_info[normal_dict[normal]] = normal
             vn_indices.append(normal_dict[normal])
-
-            if mesh.data.vertex_colors.active is not None:
+            
+            # Handle colors (with safety check)
+            if has_vertex_colors:
                 color = vertex_colors[loop_index].color
                 if color not in color_dict:
                     color_dict[color] = len(color_dict)
                     color_info[color_dict[color]] = color
                 color_indices.append(color_dict[color])
-
+            
         face_index["v"] = indices
         face_index["vt"] = vt_indices
         face_index["vn"] = vn_indices
-        face_index["vc"] = color_indices
+        if has_vertex_colors:
+            face_index["vc"] = color_indices
         face_indices.append(face_index)
-
+    
     return face_indices, vertices_info, uv_info, normal_info, color_info
 
 def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
