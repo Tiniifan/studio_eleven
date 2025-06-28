@@ -276,20 +276,30 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
                 images[texture_crc32] = image
 
-        # Make materials
-        for material_crc32, material_value in res_data[res.RESType.MATERIAL_DATA].items():
-            material_name = material_value['name']
-            material_textures_crc32 = material_value['textures']
-            
-            material_textures = []
-            
-            for i in range(len(material_textures_crc32)):
-                material_texture_crc32 = material_textures_crc32[i]
+            # Make materials
+            for material_crc32, material_value in res_data[res.RESType.MATERIAL_DATA].items():
+                material_name = material_value['name']
+                material_textures_crc32 = material_value['textures']
                 
-                if int(material_texture_crc32, 16) in images:
-                    material_textures.append(images[int(material_texture_crc32, 16)])
-                                
-            libs[material_name] = material_textures
+                print(material_name, material_textures_crc32)
+                
+                material_textures = []
+                
+                for i in range(len(material_textures_crc32)):
+                    material_texture_crc32 = material_textures_crc32[i]
+                    
+                    # Check type and convert if necessary
+                    if isinstance(material_texture_crc32, str):
+                        # If it's a string, convert from hexadecimal
+                        texture_key = int(material_texture_crc32, 16)
+                    else:
+                        # If it's already an integer, use it directly
+                        texture_key = material_texture_crc32
+                        
+                    if texture_key in images:
+                        material_textures.append(images[texture_key])
+                                    
+                libs[material_name] = material_textures
     
     # Make txps
     txps = []

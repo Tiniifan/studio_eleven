@@ -50,6 +50,14 @@ class Level5MeshProperties(bpy.types.PropertyGroup):
         min=0,
         max=65535
     )
+    
+    mesh_type: IntProperty(
+        name="Mesh Type",
+        description="Type of the mesh",
+        default=1,
+        min=0,
+        max=65535
+    )
 
 class Level5_Panel(bpy.types.Panel):
     bl_label = "Level 5"
@@ -67,6 +75,7 @@ class Level5_Panel(bpy.types.Panel):
         mesh = context.mesh
         if hasattr(mesh, "level5_properties"):
             layout.prop(mesh.level5_properties, "draw_priority")
+            layout.prop(mesh.level5_properties, "mesh_type")
         else:
             layout.label(text="No Level 5 properties found.")
 

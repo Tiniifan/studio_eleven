@@ -146,7 +146,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21):
+def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21, mesh_type = 1):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -183,14 +183,14 @@ def write(mesh_name, dimensions, indices, vertices, uvs, normals, colors, weight
         
     material += int(0).to_bytes(4, 'little')
     material += int(0).to_bytes(4, 'little')
-    material += int(0).to_bytes(4, 'little')
-    material += int(0).to_bytes(4, 'little')
-    material += int(0).to_bytes(4, 'little')
-    material += struct.pack("f", dimensions[0]/2)
-    material += struct.pack("f", dimensions[1]/2)
-    material += struct.pack("f", dimensions[2]/2)
+    material += struct.pack("f", texspace[0][0]) # texspace_location x
+    material += struct.pack("f", texspace[0][1]) # texspace_location y
+    material += struct.pack("f", texspace[0][2]) # texspace_location z
+    material += struct.pack("f", texspace[1][0]) # texspace_size x
+    material += struct.pack("f", texspace[1][1]) # texspace_size y
+    material += struct.pack("f", texspace[1][2]) # texspace_size z
     material += int(draw_priority).to_bytes(4, 'little')
-    material += int(mode[1]).to_bytes(4, 'little')
+    material += int(mesh_type).to_bytes(4, 'little')
     material += int(len(bone_names)).to_bytes(4, 'little')
 
     # Node ------------------------------------------
@@ -392,7 +392,8 @@ def open_xmpr(reader):
     mesh_name_split_hash = struct.unpack("<I", reader.read(4))[0]
     reader.read(32) # unk
     draw_priority = struct.unpack("<I", reader.read(4))[0]
-    unk_type = struct.unpack("<HH", reader.read(4))
+    mesh_type = struct.unpack("<H", reader.read(2))[0]
+    mesh_unk = struct.unpack("<H", reader.read(2))[0]
     nodes_count = struct.unpack("<I", reader.read(4))[0]
     
     reader.seek(nodes_offset)
@@ -422,4 +423,5 @@ def open_xmpr(reader):
         "material_name": material_name,
         "single_bind": single_bind,
         "draw_priority": draw_priority,
+        "mesh_type": mesh_type,
     }

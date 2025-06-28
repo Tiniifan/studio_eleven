@@ -151,8 +151,10 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     color_data = model_data["vertices"]["color_data"]
     single_bind = model_data["single_bind"]
     draw_priority = model_data["draw_priority"]
+    mesh_type = model_data["mesh_type"]
     
     mesh.level5_properties.draw_priority = draw_priority
+    mesh.level5_properties.mesh_type = mesh_type
     
     mesh.from_pydata(positions, [], model_data["triangles"])
     
@@ -325,8 +327,16 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
             single_bind = mesh.parent_bone
             
     draw_priority = mesh.data.level5_properties.draw_priority
+    mesh_type = mesh.data.level5_properties.mesh_type
     
-    return xmpr.write(mesh.name_full, mesh.dimensions, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind, draw_priority)
+    texspace_array = [
+        list(mesh.data.texspace_location),
+        list(mesh.data.texspace_size)
+    ]
+    
+    print(texspace_array)
+    
+    return xmpr.write(mesh.name_full, texspace_array, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind, draw_priority, mesh_type)
 
 def fileio_open_xmpr(context, filepath):
     # Extract the file name without extension
