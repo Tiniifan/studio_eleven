@@ -181,11 +181,11 @@ def write(animation_name, camera_speed, cam_values):
 
         cam_data_stream += b'\xFF\xFF'
         if (len(cam_value) < 255):
-            cam_data_stream += pack("<BB", len(cam_value), 0x00)
+            cam_data_stream += struct.pack("<BB", len(cam_value), 0x00)
         else:
             lowFrameCount = len(cam_value) & 0xFF
             highFrameCount = 32 + (len(cam_value) >> 8) & 0xFF
-            cam_data_stream += pack("<BB", lowFrameCount, highFrameCount)
+            cam_data_stream += struct.pack("<BB", lowFrameCount, highFrameCount)
 
         frames_indexes = [key for key in cam_value.keys()]
         cam_data_stream += struct.pack(f'{len(frames_indexes)}h', *frames_indexes)
