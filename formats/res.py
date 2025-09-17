@@ -359,7 +359,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for bone in armature.pose.bones:
             bone_name = bone.name.encode("shift-jis")
-            bones_name.append(crc32(bone_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))    
+            bones_name.append(crc32(bone_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += bone_name + int(0).to_bytes(1, 'little')
 
         items[RESType.BONE] = bones_name
@@ -423,7 +423,8 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
     if outline_name:
         name = outline_name.encode("shift-jis")
         string_table += name + int(0).to_bytes(1, 'little')
-        items[RESType.SHADING] = [crc32(name) + int(len(string_table)).to_bytes(4, 'little')]
+        items[RESType.SHADING] = [crc32(name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little')]
+        print(items[RESType.SHADING][0].hex())
         
     if properties:
         properties_name = []
