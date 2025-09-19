@@ -138,8 +138,12 @@ def open_res(data):
                 section = data[pos:pos+headerTable.Length]
                 
                 pos = 0
+                
                 obj_hash = unpack_from("<I", section, pos)[0]
-                obj_name = string_table[obj_hash]
+                if obj_hash in string_table:
+                    obj_name = string_table[obj_hash]
+                else:
+                    obj_name = f"0x{obj_hash:08X}"
                 
                 if headerTable.Length == 8:
                     items[RESType(headerTable.Type)][obj_hash] = obj_name
