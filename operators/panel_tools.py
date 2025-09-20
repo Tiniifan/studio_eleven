@@ -2,13 +2,14 @@ import re
 import bpy
 import bmesh
 import mathutils
+import math
+
 from mathutils import Vector
-
-
 from bpy.types import Operator
 from bpy.props import IntProperty, StringProperty
 
-# Operator for converting single bind to vertex group
+from ..utils.mesh_faces_utils import MeshFaceUtils
+
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
     bl_idname = "object.convert_single_bind_to_vertex_group"
     bl_label = "Single Bind to Vertex Group"
@@ -33,24 +34,24 @@ class ConvertSingleBindToVertexGroup(bpy.types.Operator):
 
             for obj in bpy.context.scene.objects:
                 if obj.parent == armature and obj.parent_type == 'BONE':
-                    # Conserver la matrice monde
+                    # Keep the world matrix
                     world_matrix = obj.matrix_world.copy()
                     parent_bone_name = obj.parent_bone
 
-                    # Modifier la parenté
+                    # Change relationship
                     obj.parent = armature
                     obj.parent_type = 'OBJECT'
                     obj.matrix_world = world_matrix
                     
-                    # Sélectionner l'objet
-                    bpy.ops.object.select_all(action='DESELECT')  # Désélectionner tout
-                    obj.select_set(True)  # Sélectionner l'objet
-                    bpy.context.view_layer.objects.active = obj  # Définir comme actif
+                    # Select the object
+                    bpy.ops.object.select_all(action='DESELECT')
+                    obj.select_set(True)
+                    bpy.context.view_layer.objects.active = obj 
 
-                    # Appliquer les transformations
+                    # Apply transformations
                     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
-                    # Ajouter les groupes de sommets et le modificateur
+                    # Add vertex groups and modifier
                     if obj.type == 'MESH' and parent_bone_name:
                         if parent_bone_name not in obj.vertex_groups:
                             vg = obj.vertex_groups.new(name=parent_bone_name)
@@ -67,7 +68,6 @@ class ConvertSingleBindToVertexGroup(bpy.types.Operator):
             self.report({'ERROR'}, f"Error: {e}")
             return {'CANCELLED'}
 
-# Operator for changing all draw priorities
 class ChangeAllDrawPriority(bpy.types.Operator):
     bl_idname = "object.change_all_draw_priority"
     bl_label = "Change All Draw Priority"
@@ -80,7 +80,7 @@ class ChangeAllDrawPriority(bpy.types.Operator):
         return (obj_location - ref_point).length
 
     def execute(self, context):
-        # Parcourir tous les objets de type 'MESH' dans la scène
+        # Browse all objects of type ‘MESH’ in the scene
         meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
         
         for mesh in meshes:
@@ -91,7 +91,6 @@ class ChangeAllDrawPriority(bpy.types.Operator):
         self.report({'INFO'}, f"The draw priority of Berry Bush has been transferred to Studio Eleven")
         return {'FINISHED'}
 
-# Operator to read animation items from a configuration file
 class AnimationItemsReader(bpy.types.Operator):
     bl_idname = "object.animation_items_reader"
     bl_label = "Animation Items Reader"
@@ -118,7 +117,8 @@ class AnimationItemsReader(bpy.types.Operator):
         for section in sections[1:]:  # Skip the first empty section
             lines = section.strip().splitlines()
 
-            animation_type = lines[0].strip("]")  # Extract the animation type (Armature, UV, Material)
+            # Extract the animation type (Armature, UV, Material)
+            animation_type = lines[0].strip("]")  
             name = None
             splits = {}
 
@@ -219,7 +219,6 @@ class AnimationItemsReader(bpy.types.Operator):
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 
-# Operator for adapting material names
 class AdaptMaterialName(bpy.types.Operator):
     bl_idname = "object.adapt_material_name"
     bl_label = "Adapt Material Name"
@@ -243,14 +242,12 @@ class CalculateDrawPriority(bpy.types.Operator):
     bl_label = "Calculate Draw Priority"
     bl_description = "Calculate and set draw priority based on distance to the selected camera."
 
-    # Méthodes pour les événements de changement
     def on_change_get_berry_bush_draw_prioty(self, context):
         self.calculate_draw_prioty_from_camera = not(self.get_berry_bush_draw_prioty)
 
     def on_change_calculate_draw_prioty_from_camera(self, context):
         self.get_berry_bush_draw_prioty = not(self.calculate_draw_prioty_from_camera)
     
-    # Définir les propriétés Bool avec la fonction update
     get_berry_bush_draw_prioty: bpy.props.BoolProperty(
         name="Get draw priority from Berry Bush", 
         update=on_change_get_berry_bush_draw_prioty
@@ -268,24 +265,24 @@ class CalculateDrawPriority(bpy.types.Operator):
             bpy.ops.object.change_all_draw_priority()
             return {'FINISHED'}
         else:
-            # Vérifier si une caméra est sélectionnée
+            # Check if a camera is selected
             camera = context.view_layer.objects.active
             
             if not camera or camera.type != 'CAMERA':
                 self.report({'ERROR'}, "Please select a camera.")
                 return {'CANCELLED'}
 
-            # Parcourir tous les objets mesh dans la scène
+            # Browse all mesh objects in the scene
             meshes = [obj for obj in bpy.context.scene.objects if obj.type == 'MESH']
             if not meshes:
                 self.report({'INFO'}, "No meshes found in the scene.")
                 return {'CANCELLED'}
 
-            # Calculer les distances entre la caméra et chaque mesh
+            # Calculate the distances between the camera and each mesh
             distances = []
             camera_location = camera.matrix_world.translation
             for mesh in meshes:
-                # Obtenez la position de la mesh
+                # Get the position of the mesh
                 world_matrix = mesh.matrix_world
                 depsgraph = context.evaluated_depsgraph_get()
                 bm = bmesh.new()
@@ -322,7 +319,7 @@ class CalculateDrawPriority(bpy.types.Operator):
             if self.merge_with_berry_bush == False:               
                 distances.reverse()
 
-            # Réattribuer les draw priorities
+            # Reassign draw priorities
             draw_priority = 0
             last_distance = None
 
@@ -351,7 +348,62 @@ class CalculateDrawPriority(bpy.types.Operator):
         self.calculate_draw_prioty_from_camera = True
         return context.window_manager.invoke_props_dialog(self)
 
-# Custom panel
+class DuplicateFaceModel(bpy.types.Operator):
+    bl_idname = "object.duplicate_face_model"
+    bl_label = "Duplicate Selected Mesh (for outline)"
+    bl_description = "Duplicate the faces of the model to make the model compatible with Auto Outline."
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            self.report({'ERROR'}, "No mesh object selected")
+            return {'CANCELLED'}
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        duplicated_faces, non_duplicated_faces = MeshFaceUtils.get_face_duplicates_info(obj)
+
+        if not non_duplicated_faces:
+            self.report({'WARNING'}, "All faces are already duplicated.")
+            return {'CANCELLED'}
+
+        original_face_count = len(non_duplicated_faces) + len(duplicated_faces)
+        MeshFaceUtils.edit_faces(obj, non_duplicated_faces, action='DUPLICATE')
+        obj.data.calc_normals_split()
+        MeshFaceUtils.preserve_vertex_colors(obj, original_face_count, highlight_new_faces=True)
+
+        self.report({'INFO'}, f"Duplicated {len(non_duplicated_faces)} missing faces. Mesh '{obj.name}' ready for outlines.")
+        return {'FINISHED'}
+
+class RemoveDuplicateFaceModel(bpy.types.Operator):
+    bl_idname = "object.remove_duplicate_face_model"
+    bl_label = "Remove Duplicate Selected Mesh"
+    bl_description = "Remove the duplicate faces of the model"
+
+    def execute(self, context):
+        obj = context.active_object
+        if not obj or obj.type != 'MESH':
+            self.report({'ERROR'}, "No mesh object selected")
+            return {'CANCELLED'}
+
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+        duplicated_faces, non_duplicated_faces = MeshFaceUtils.get_face_duplicates_info(obj, remove_first_duplicate=True)
+
+        if not duplicated_faces:
+            self.report({'INFO'}, f"No duplicate faces found in mesh '{obj.name}'.")
+            return {'FINISHED'}
+
+        original_face_count = len(duplicated_faces) + len(non_duplicated_faces)
+        MeshFaceUtils.edit_faces(obj, duplicated_faces, action='DELETE')
+        obj.data.calc_normals_split()
+        MeshFaceUtils.preserve_vertex_colors(obj, original_face_count)
+
+        remaining_face_count = len(obj.data.polygons)
+        removed_count = original_face_count - remaining_face_count
+        self.report({'INFO'}, f"Removed {removed_count} duplicate faces from mesh '{obj.name}'. {remaining_face_count} faces remaining.")
+        return {'FINISHED'}
+
 class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -361,22 +413,21 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
     def draw(self, context):
         layout = self.layout
 
-        # Single Bind to Vertex Group
-        row = layout.row()
-        row.operator("object.convert_single_bind_to_vertex_group", text="Single Bind to Vertex Group")
-        
-        # Calculate Draw Priority
-        row = layout.row()
-        row.operator("object.calculate_draw_priority", text="Calculate Draw Priority")
-        
-        # Adapt Material Name
-        row = layout.row()
-        row.operator("object.adapt_material_name", text="Format Material Names")
+        box = layout.box()
+        box.label(text="Single Bind")
+        box.operator("object.convert_single_bind_to_vertex_group", text="Single Bind to Vertex Group")
 
-        # Animation Items Reader
-        row = layout.row()
-        row.operator("object.animation_items_reader", text="Load Animation Config")       
+        box = layout.box()
+        box.label(text="Mesh")
+        box.operator("object.calculate_draw_priority", text="Calculate Draw Priority")
+        box.operator("object.adapt_material_name", text="Format Material Names")
+        box.operator("object.duplicate_face_model", text="Duplicate Selected Mesh")
+        box.operator("object.remove_duplicate_face_model", text="Remove Duplicate Face")
 
+        box = layout.box()
+        box.label(text="Animation")
+        box.operator("object.animation_items_reader", text="Load Animation Config")
+  
 def register():
     bpy.types.Scene.merge_with_berry_bush = bpy.props.BoolProperty(
         name="Merge with Berry Bush",
@@ -401,6 +452,8 @@ def register():
     bpy.utils.register_class(AnimationItemsReader)
     bpy.utils.register_class(AdaptMaterialName)
     bpy.utils.register_class(CalculateDrawPriority)
+    bpy.utils.register_class(DuplicateFaceModel)
+    bpy.utils.register_class(RemoveDuplicateFaceModel)
     bpy.utils.register_class(VIEW3D_PT_my_custom_panel)  
 
 def unregister():
@@ -409,6 +462,8 @@ def unregister():
     bpy.utils.unregister_class(AnimationItemsReader)
     bpy.utils.unregister_class(AdaptMaterialName)
     bpy.utils.unregister_class(CalculateDrawPriority)
+    bpy.utils.unregister_class(DuplicateFaceModel)
+    bpy.utils.unregister_class(RemoveDuplicateFaceModel)
     bpy.utils.unregister_class(VIEW3D_PT_my_custom_panel)
     
     del bpy.types.Scene.merge_with_berry_bush

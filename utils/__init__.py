@@ -7,3 +7,5 @@ from .img_format import *
 from .img_swizzle import *
 
 from .properties import *
+
+from .mesh_faces_utils import *
