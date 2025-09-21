@@ -21,116 +21,110 @@ def get_bone_names(armature):
     for bone in armature.pose.bones:
         yield(bone.name)
 
-def get_weights(mesh, bone_names):
-    bone_indices = {name: i for i, name in enumerate(bone_names)}
-    vertices_dict = {}
-
-    for face in mesh.data.polygons:
-        for loop_index in face.loop_indices:
-            vertex_index = mesh.data.loops[loop_index].vertex_index
-            if vertex_index not in vertices_dict:
-                vertices_dict[vertex_index] = len(vertices_dict)
-
-    weights = {}
-    for vertex_index, vertex_dict_index in vertices_dict.items():
-        vertex = mesh.data.vertices[vertex_index]
-        weights[vertex_dict_index] = {}
-        for group in vertex.groups:
-            if group.weight != 0:
-                bone_name = mesh.vertex_groups[group.group].name
-                bone_index = bone_indices.get(bone_name)
-                if bone_index is not None:
-                    weights[vertex_dict_index][bone_index] = group.weight
-
-    return weights
-            
-def get_mesh_information(mesh):
-    vertices_dict = {}
-    uv_dict = {}
-    normal_dict = {}
-    color_dict = {}
+def get_mesh_info_and_weights(mesh, bone_names=None):
+    vertex_map = {}
+    vertices_info = []
+    uv_info = []
+    normal_info = []
+    color_info = []
     face_indices = []
-    vertices_info = {}
-    uv_info = {}
-    normal_info = {}
-    color_info = {}
-    
-    # Check if mesh is valid
+
     if not mesh or not mesh.data:
-        print("Error: Invalid mesh")
-        return face_indices, vertices_info, uv_info, normal_info, color_info
-    
-    obj_matrix = mesh.matrix_world
-    
-    # Check for vertex colors availability
-    has_vertex_colors = (hasattr(mesh.data, 'vertex_colors') and 
-                        mesh.data.vertex_colors and 
-                        mesh.data.vertex_colors.active is not None)
+        return face_indices, vertices_info, uv_info, normal_info, color_info, {}
+
+    # Vertex colors
+    has_vertex_colors = hasattr(mesh.data, 'vertex_colors') and mesh.data.vertex_colors and mesh.data.vertex_colors.active
     if has_vertex_colors:
         vertex_colors = mesh.data.vertex_colors.active.data
-    
-    # Check for UV layers availability
-    has_uv_layers = (hasattr(mesh.data, 'uv_layers') and 
-                    mesh.data.uv_layers and 
-                    mesh.data.uv_layers.active is not None)
+
+    # UVs
+    has_uv_layers = hasattr(mesh.data, 'uv_layers') and mesh.data.uv_layers and mesh.data.uv_layers.active
     if has_uv_layers:
         uv_data = mesh.data.uv_layers.active.data
-    
+
+    mesh.data.calc_normals()
+    mesh.data.calc_normals_split()
+
+    vertex_to_unique_indices = {}
+
+    # Bone indices mapping
+    bone_indices = {name: i for i, name in enumerate(bone_names)} if bone_names else {}
+
+    weights = {}
+
     for face in mesh.data.polygons:
-        face_index = {}
-        indices = []
-        vt_indices = []
-        vn_indices = []
-        color_indices = []
-        
+        face_idx = []
         for loop_index in face.loop_indices:
             vertex_index = mesh.data.loops[loop_index].vertex_index
-            
-            # Handle vertices
-            if vertex_index not in vertices_dict:
-                vertices_dict[vertex_index] = len(vertices_dict)
-                vertices_info[vertices_dict[vertex_index]] = mesh.data.vertices[vertex_index].co 
-            indices.append(vertices_dict[vertex_index])
-            
-            # Handle UVs (with safety check)
-            if has_uv_layers:
-                uv = tuple(uv_data[loop_index].uv)
-                if uv not in uv_dict:
-                    uv_dict[uv] = len(uv_dict)
-                    uv_info[uv_dict[uv]] = uv
-                vt_indices.append(uv_dict[uv])
-            else:
-                # Default UV if no UV layer exists
-                default_uv = (0.0, 0.0)
-                if default_uv not in uv_dict:
-                    uv_dict[default_uv] = len(uv_dict)
-                    uv_info[uv_dict[default_uv]] = default_uv
-                vt_indices.append(uv_dict[default_uv])
-            
-            # Handle normals
-            normal = tuple(mesh.data.vertices[vertex_index].normal)
-            if normal not in normal_dict:
-                normal_dict[normal] = len(normal_dict)
-                normal_info[normal_dict[normal]] = normal
-            vn_indices.append(normal_dict[normal])
-            
-            # Handle colors (with safety check)
-            if has_vertex_colors:
-                color = vertex_colors[loop_index].color
-                if color not in color_dict:
-                    color_dict[color] = len(color_dict)
-                    color_info[color_dict[color]] = color
-                color_indices.append(color_dict[color])
-            
-        face_index["v"] = indices
-        face_index["vt"] = vt_indices
-        face_index["vn"] = vn_indices
-        if has_vertex_colors:
-            face_index["vc"] = color_indices
-        face_indices.append(face_index)
-    
-    return face_indices, vertices_info, uv_info, normal_info, color_info
 
+            v = tuple(round(coord, 3) for coord in mesh.data.vertices[vertex_index].co)
+            n = tuple(round(coord, 3) for coord in mesh.data.loops[loop_index].normal)
+            uv = tuple(round(coord, 3) for coord in (uv_data[loop_index].uv if has_uv_layers else (0.0, 0.0)))
+            color = tuple(round(c, 3) for c in (vertex_colors[loop_index].color if has_vertex_colors else (0.0, 0.0, 0.0, 0.0)))
+
+            key = (v, n, uv, color)
+
+            if key not in vertex_map:
+                unique_index = len(vertex_map)
+                vertex_map[key] = unique_index
+                vertices_info.append(v)
+                normal_info.append(n)
+                uv_info.append(uv)
+                color_info.append(color)
+
+                if vertex_index not in vertex_to_unique_indices:
+                    vertex_to_unique_indices[vertex_index] = []
+                vertex_to_unique_indices[vertex_index].append(unique_index)
+            else:
+                unique_index = vertex_map[key]
+                if vertex_index not in vertex_to_unique_indices:
+                    vertex_to_unique_indices[vertex_index] = []
+                if unique_index not in vertex_to_unique_indices[vertex_index]:
+                    vertex_to_unique_indices[vertex_index].append(unique_index)
+
+            face_idx.append(unique_index)
+        face_indices.append(tuple(face_idx))
+
+    # Harmonize normals and UVs for faces with same positions
+    position_map = {}
+    for face_idx, face in enumerate(face_indices):
+        positions = tuple(sorted([vertices_info[vertex_idx] for vertex_idx in face]))
+        if positions not in position_map:
+            position_map[positions] = []
+        position_map[positions].append(face_idx)
+
+    for positions, face_list in position_map.items():
+        if len(face_list) > 1:
+            ref_face = face_indices[face_list[0]]
+            for face_idx in face_list[1:]:
+                current_face = face_indices[face_idx]
+                vertex_correspondence = {}
+                for i, current_vertex_idx in enumerate(current_face):
+                    current_pos = vertices_info[current_vertex_idx]
+                    for j, ref_vertex_idx in enumerate(ref_face):
+                        if current_pos == vertices_info[ref_vertex_idx]:
+                            vertex_correspondence[current_vertex_idx] = ref_vertex_idx
+                            break
+                for current_vertex_idx, ref_vertex_idx in vertex_correspondence.items():
+                    normal_info[current_vertex_idx] = normal_info[ref_vertex_idx]
+                    uv_info[current_vertex_idx] = uv_info[ref_vertex_idx]
+
+    # Calculate weights if bone_names provided
+    if bone_names:
+        for original_vertex_index, unique_indices in vertex_to_unique_indices.items():
+            vertex = mesh.data.vertices[original_vertex_index]
+            vertex_weights = {}
+            for group in vertex.groups:
+                if group.weight != 0:
+                    bone_name = mesh.vertex_groups[group.group].name
+                    bone_index = bone_indices.get(bone_name)
+                    if bone_index is not None:
+                        vertex_weights[bone_index] = group.weight
+            for unique_index in unique_indices:
+                weights[unique_index] = vertex_weights.copy()
+
+    return face_indices, vertices_info, uv_info, normal_info, color_info, weights
+    
 def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
@@ -156,12 +150,17 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     mesh.level5_properties.draw_priority = draw_priority
     mesh.level5_properties.mesh_type = mesh_type
     
-    mesh.from_pydata(positions, [], model_data["triangles"])
+    mesh.from_pydata(positions, [], model_data["triangles"])  
     
     if normals:
+        #mesh.use_auto_smooth = True
+        #mesh.auto_smooth_angle = 180
         mesh.normals_split_custom_set_from_vertices(normals)
+        #mesh.calc_normals_split()
+
+    # prm can't have more than 4 UVMaps
+    texprojs = ["UVMap0", "UVMap1", "UVMap2", "UVMap3"]
     
-    texprojs = ["UVMap0", "UVMap1", "UVMap2", "UVMap3"] # prm can't have more than 4 UVMaps
     if txp_data:
         for txp in txp_data:
             if txp[1] == model_data["material_name"]:
@@ -184,11 +183,16 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
                 uv_layer1.data[loop.index].uv = uv_data1[vertex_index]
         mesh_obj.modifiers.new(name=texprojs[1], type="UV_WARP")
         mesh_obj.modifiers[texprojs[1]].uv_layer = texprojs[1]
-    
+
     if color_data:
         color_layer = mesh.vertex_colors.new(name="Col")
-        for loop_idx, color in enumerate(color_data):
-            color_layer.data[loop_idx].color = color
+        flat_colors = []
+        
+        for loop in mesh.loops:
+            vert_idx = loop.vertex_index
+            flat_colors.extend(color_data[vert_idx])  # r, g, b, a
+
+        color_layer.data.foreach_set("color", flat_colors)
     
     mesh_obj.rotation_euler = (radians(90), 0, 0)
     
@@ -309,35 +313,38 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     return mesh_obj
 
 def fileio_write_xmpr(context, mesh_name, library_name, mode):
-    # Get Mesh
     mesh = bpy.data.objects[mesh_name]
-    
-    indices, vertices, uvs, normals, colors = get_mesh_information(mesh)
-    
+
     bone_names = []
-    if mesh.parent:
-        if mesh.parent.type == 'ARMATURE':
-            bone_names = list(get_bone_names(mesh.parent))
-            
-    weights = dict(get_weights(mesh, bone_names))
+    if mesh.parent and mesh.parent.type == 'ARMATURE':
+        bone_names = list(get_bone_names(mesh.parent))
+
+    indices, vertices, uvs, normals, colors, weights = get_mesh_info_and_weights(mesh, bone_names)
+
+    # Cancel if mesh info is empty
+    if not (indices or vertices or uvs or normals or colors):
+        self.report({'ERROR'}, f"Mesh {mesh_name} has invalid or empty data, export canceled")
+        return {'CANCELLED'}
 
     single_bind = None
-    if mesh.parent_type == 'BONE':
-       if mesh.parent_bone:
-            single_bind = mesh.parent_bone
-            
+    if mesh.parent_type == 'BONE' and mesh.parent_bone:
+        single_bind = mesh.parent_bone
+
     draw_priority = mesh.data.level5_properties.draw_priority
     mesh_type = mesh.data.level5_properties.mesh_type
-    
+
     texspace_array = [
         list(mesh.data.texspace_location),
         list(mesh.data.texspace_size)
     ]
-    
-    print(texspace_array)
-    
-    return xmpr.write(mesh.name_full, texspace_array, indices, vertices, uvs, normals, colors, weights, bone_names, library_name, mode, single_bind, draw_priority, mesh_type)
 
+    return xmpr.write(
+        mesh.name_full, texspace_array,
+        indices, vertices, uvs, normals, colors,
+        weights, bone_names, library_name, mode,
+        single_bind, draw_priority, mesh_type
+    )
+    
 def fileio_open_xmpr(context, filepath):
     # Extract the file name without extension
     file_name = os.path.splitext(os.path.basename(filepath))[0]
@@ -380,21 +387,26 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         return items
 
     def update_mesh_name(self, context):
-        """Update function for mesh_name property."""
-        obj = bpy.data.objects.get(self.mesh_name)  # Retrieve the mesh object by name
+        # Retrieve the mesh object by name
+        obj = bpy.data.objects.get(self.mesh_name) 
+        
         if obj and obj.type == 'MESH':
-            materials = obj.data.materials  # Access materials of the mesh
-            if materials and materials[0]:  # Check if at least one material exists
+            # Access materials of the mesh
+            materials = obj.data.materials 
+
+            # Check if at least one material exists
+            if materials and materials[0]:  
                 self.material_name = materials[0].name
             else:
-                self.material_name = f"DefautLib.{self.mesh_name}"  # Default value if no material exists
+                # Default value if no material exists
+                self.material_name = f"DefautLib.{self.mesh_name}"
 
     mesh_name: EnumProperty(
         name="Meshes",
         description="Choose mesh",
         items=item_callback,
         default=0,
-        update=update_mesh_name,  # Link the update function
+        update=update_mesh_name,
     )
     
     template_name: EnumProperty(
@@ -438,7 +450,7 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
 
     def invoke(self, context, event):
         """Ensure the update function is called on the menu launch."""
-        self.update_mesh_name(context)  # Call the update function to initialize values
+        self.update_mesh_name(context)
         return super().invoke(context, event)
 
 class ImportXMPR(bpy.types.Operator, ImportHelper):

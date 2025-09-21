@@ -417,10 +417,11 @@ def fileio_open_xpck(context, filepath, file_name = ""):
             
     return {'FINISHED'}
 
-def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outline = [], cameras=[], properties=[], texprojs=[], attach_bone=False): # Make meshes
+def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
     xmprs = []
     atrs = []
     mtrs = []
+    
     if meshes:
         for mesh in meshes:
             xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.material_name, template[0].modes[template[1]]))
@@ -474,13 +475,9 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     
     # Make outline
     xcsls = []
-    #if outline and meshes:
-        #meshes_name = []
-        
-        #for mesh in meshes:
-            #meshes_name.append(mesh.name)
-            
-        #xcsls.append(xcsl.write("#new_000", meshes_name, outline[0], outline[1], template.outline_mesh_data, template.cmb1, template.cmb2))
+    if outlines:
+        for outline in outlines:
+            xcsls.append(xcsl.write(outline['name'], outline['meshes'], outline['thickness'], outline['visibility'], template[0].outline_mesh_data, template[0].cmb1, template[0].cmb2))
 
     # Make cameras
     xcmas = []
@@ -522,8 +519,8 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if imgcs:
             files.update(create_files_dict(".xi", imgcs))
 
-        #if xcsls:
-            #files.update(create_files_dict(".sil", xcsls))
+        if xcsls:
+            files.update(create_files_dict(".sil", xcsls))
 
         if cmns:
             files.update(create_files_dict(".cmn", cmns)) 
@@ -564,8 +561,8 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
         if mtminfs:
             files.update(create_files_dict(".mtminf", mtminfs))
 
-        #if xcsls:
-            #files.update(create_files_dict(".sil", xcsls))
+        if xcsls:
+            files.update(create_files_dict(".sil", xcsls))
             
         if cmns:
             files.update(create_files_dict(".cmn", cmns))
@@ -607,7 +604,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             armature = armature, 
             textures = textures, 
             animations = animations, 
-            outline_name = "", 
+            outlines = outlines, 
             properties=properties, 
             texprojs=texprojs
         )
@@ -648,12 +645,114 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
 # Register class
 ##########################################
 
-# Définition de la classe Animation
+class OutlineItem(bpy.types.PropertyGroup):
+    name: bpy.props.StringProperty()
+    thickness: bpy.props.FloatProperty(default=0.0025, min=0.0000, max=0.9999, precision=4)
+    visibility: bpy.props.FloatProperty(default=0.5, min=0.0, max=1.0, precision=4)
+    private_index: bpy.props.IntProperty()
+
+class OutlineMeshAssignment(bpy.types.PropertyGroup):
+    outline_index: bpy.props.IntProperty()
+    mesh_name: bpy.props.StringProperty()
+    assigned: bpy.props.BoolProperty(default=False, update=lambda self, context: OutlineMeshAssignment.update_mesh_assignment(self, context))
+    
+    @staticmethod
+    def update_mesh_assignment(self, context):
+        """Update callback when mesh assignment checkbox changes"""
+        scene = context.scene
+        
+        # If this mesh is being assigned to this outline, remove it from others
+        if self.assigned:
+            for assignment in scene.outline_mesh_assignments:
+                if (assignment.mesh_name == self.mesh_name and 
+                    assignment.outline_index != self.outline_index):
+                    assignment.assigned = False
+    
+class ExportXC_AddOutlineItem(bpy.types.Operator):
+    bl_idname = "export_xc.add_outline_item"
+    bl_label = "Add Outline Item"
+    
+    def execute(self, context):
+        collection = context.scene.outline_items
+        new_item = collection.add()
+        
+        # Find the first unused private_index
+        used_indexes = [item.private_index for item in collection]
+        new_item.private_index = self.find_unused_index(used_indexes)
+        
+        new_item.name = "outline_" + str(new_item.private_index)
+        new_item.thickness = 0.0025
+        new_item.visibility = 0.5
+        
+        # Update mesh assignments when new outline is created
+        self.update_mesh_assignments(context)
+        
+        return {'FINISHED'}
+        
+    def find_unused_index(self, used_indexes):
+        # Find the first unused index
+        index = 0
+        while index in used_indexes:
+            index += 1
+        return index
+    
+    def update_mesh_assignments(self, context):
+        scene = context.scene
+        available_meshes = [obj.name for obj in bpy.data.objects if obj.type == 'MESH']
+
+        existing_pairs = {(a.outline_index, a.mesh_name) for a in scene.outline_mesh_assignments}
+
+        for outline_index, outline in enumerate(scene.outline_items):
+            for mesh_name in available_meshes:
+                if (outline_index, mesh_name) not in existing_pairs:
+                    assignment = scene.outline_mesh_assignments.add()
+                    assignment.outline_index = outline_index
+                    assignment.mesh_name = mesh_name
+                    assignment.assigned = False
+
+class ExportXC_RemoveOutlineItem(bpy.types.Operator):
+    bl_idname = "export_xc.remove_outline_item"
+    bl_label = "Remove Outline Item"
+    
+    index: bpy.props.IntProperty()
+    
+    def execute(self, context):
+        collection = context.scene.outline_items
+        
+        # Remove mesh assignments for this outline
+        assignments = context.scene.outline_mesh_assignments
+        to_remove = []
+        for i, assignment in enumerate(assignments):
+            if assignment.outline_index == self.index:
+                to_remove.append(i)
+        
+        # Remove in reverse order to maintain indices
+        for i in reversed(to_remove):
+            assignments.remove(i)
+        
+        # Update indices for remaining assignments
+        for assignment in assignments:
+            if assignment.outline_index > self.index:
+                assignment.outline_index -= 1
+        
+        collection.remove(self.index)
+        return {'FINISHED'}
+
+    def update_mesh_assignment(self, context):
+        scene = context.scene
+
+        if self.assigned:
+            for assignment in scene.outline_mesh_assignments:
+                if (assignment.mesh_name == self.mesh_name and 
+                    assignment.outline_index != self.outline_index and
+                    assignment.assigned):
+                    self.assigned = False
+                    break
+
 class Animation(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
     checked: bpy.props.BoolProperty(default=False, description="Include animation")
 
-# Définition de la classe AnimationItem
 class AnimationItem(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
     speed: bpy.props.FloatProperty(default=1.0)
@@ -661,7 +760,6 @@ class AnimationItem(bpy.types.PropertyGroup):
     frame_end: bpy.props.IntProperty(default=250)
     private_index: bpy.props.IntProperty()
 
-# Opérateur générique pour ajouter un élément à une collection
 class ExportXC_AddAnimationItem(bpy.types.Operator):
     bl_idname = "export_xc.add_animation_item"
     bl_label = "Add Animation Item"
@@ -690,7 +788,6 @@ class ExportXC_AddAnimationItem(bpy.types.Operator):
             index += 1
         return index
 
-# Opérateur générique pour supprimer un élément d'une collection
 class ExportXC_RemoveAnimationItem(bpy.types.Operator):
     bl_idname = "export_xc.remove_animation_item"
     bl_label = "Remove Animation Item"
@@ -703,7 +800,6 @@ class ExportXC_RemoveAnimationItem(bpy.types.Operator):
         collection.remove(self.index)
         return {'FINISHED'}
     
-# Define a Property Group to store texture information
 class TexturePropertyGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
     format: bpy.props.EnumProperty(
@@ -729,26 +825,22 @@ class LibPropertyGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
     textures: bpy.props.CollectionProperty(type=TexturePropertyGroup)
 
-# Define a Property Group to store mesh information
 class MeshPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Mesh name")
     name: bpy.props.StringProperty()
     material_name: bpy.props.StringProperty()
     
-# Define a Property Group to store camera information
 class CameraPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Camera name")
     name: bpy.props.StringProperty()
     animation_name: bpy.props.StringProperty()
     speed: bpy.props.FloatProperty(default=1.0, min=0.1, precision=2) 
     
-# Define a Property Group to store archive information
 class ArchivePropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Property name")
     name: bpy.props.StringProperty()
     value: bpy.props.FloatProperty(default=0.0, description="Property value")
 
-# Define a Property Group to store armature information
 class ExportXC(bpy.types.Operator, ExportHelper):
     bl_idname = "export.xc"
     bl_label = "Export to XPCK"
@@ -758,28 +850,35 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         default="*.xc;*.xv;*.pck",
         options={'HIDDEN'}
     )
-    
+        
     export_tab_control: bpy.props.EnumProperty(
         items=[
             ('MAIN', "Main", "Configure the essentials"),
-            ('TEXTURE', "Texture", "Configure textures"),
-            ('ANIMATION', "Animation", "Configure animations"),
-            ('PROPERTIES', "Properties", "Configure properties"),
+            ('ANIMATION', "Animations", "Configure animations"),
+            ('OUTLINES', "Outlines", "Configure outlines"),
         ],
         default='MAIN'
     )
-
+    main_tab_control: bpy.props.EnumProperty(
+        name="Main Tabs",
+        description="Tabs for Main settings",
+        items=[
+            ('GENERAL', "General", "General settings"),
+            ('TEXTURES', "Textures", "Configure textures"),
+            ('PROPERTIES', "Properties", "Configure properties")
+        ],
+        default='GENERAL'
+    )
     export_tab_animation_control: bpy.props.EnumProperty(
         name="Animation Tabs",
         description="Tabs for Animation settings",
         items=[
-            ('ARMATURE_ANIMATION', "Armature Animation", "Settings for Armature animations"),
-            ('UV_ANIMATION', "UV Animation", "Settings for UV animations"),
-            ('MATERIAL_ANIMATION', "Material Animation", "Settings for Material animations")
+            ('ARMATURE_ANIMATION', "Armature", "Settings for Armature animations"),
+            ('UV_ANIMATION', "UV", "Settings for UV animations"),
+            ('MATERIAL_ANIMATION', "Material", "Settings for Material animations")
         ],
         default='ARMATURE_ANIMATION'
     ) 
-
     export_option: bpy.props.EnumProperty(
         name="Mode",
         items=[
@@ -789,7 +888,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             ('CAMERA', "Cameras", "Export multiple camera"),
         ],
         default='ARMATURE'
-    )  
+    ) 
 
     mesh_properties: bpy.props.CollectionProperty(type=MeshPropertyGroup)
     texproj_properties: bpy.props.CollectionProperty(type=TexprojPropertyGroup)
@@ -982,47 +1081,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         description="Choose a mode",
         items=template_mode_items_callback,
         default=0,
-    )    
-    
-    outline_thickness: bpy.props.FloatProperty(
-        name="Outline Thickness",
-        description="Thickness of the outline",
-        default=0.0025,
-        min=0.0000,
-        max=0.9999,
-        precision=4
-    )
-
-    outline_visibility: bpy.props.FloatProperty(
-        name="Outline Visibility",
-        description="Visibility of the outline",
-        default=0.5,
-        min=0.0,
-        max=1.0,
-        precision=4
-    )
-
-    def update_outline_properties(self, context):
-        if self.outline_name == 'TEMPLATE':
-            self.outline_thickness = 0.0025
-            self.outline_visibility = 0.5
-        elif self.outline_name == 'CARTOON':
-            self.outline_thickness = 0.0025
-            self.outline_visibility = 0.0
-        else:
-            self.outline_thickness = 0.0
-            self.outline_visibility = 1     
-    
-    outline_name: EnumProperty(
-        name="Outlines",
-        description="Choose a outline mode",
-        items=[
-            ('TEMPLATE', "Template", "Same as template"),
-            ('CARTOON', "Cartoon", "Cartoon"),
-            ('NONE', "None", "None"),
-        ],
-        default=0,
-        update=update_outline_properties
     )
 
     bone_transformation_location: bpy.props.BoolProperty(
@@ -1109,7 +1167,354 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     bone_checkboxes: CollectionProperty(type=BoneCheckbox)
     texjproj_checkboxes: CollectionProperty(type=BoneCheckbox)
     material_checkboxes: CollectionProperty(type=BoneCheckbox)
-    
+
+    outline_items: bpy.props.CollectionProperty(type=OutlineItem)
+    outline_mesh_assignments: bpy.props.CollectionProperty(type=OutlineMeshAssignment)
+
+    def get_available_meshes_for_outline(self, context, outline_index):
+        """Get meshes that are not assigned to any outline"""
+        all_meshes = [obj.name for obj in bpy.data.objects if obj.type == 'MESH']
+        assigned_meshes = set()
+        
+        for assignment in context.scene.outline_mesh_assignments:
+            if assignment.assigned and assignment.outline_index != outline_index:
+                assigned_meshes.add(assignment.mesh_name)
+        
+        return [mesh for mesh in all_meshes if mesh not in assigned_meshes]
+
+    def get_assigned_meshes_for_outline(self, context, outline_index):
+        """Get meshes assigned to this specific outline"""
+        assigned = []
+        for assignment in context.scene.outline_mesh_assignments:
+            if assignment.assigned and assignment.outline_index == outline_index:
+                assigned.append(assignment.mesh_name)
+        return assigned
+
+    def draw_main(self, context, layout):
+        box = layout.box()
+        
+        # Add tab control for main sections
+        row = box.row(align=True)
+        row.prop(self, "main_tab_control", expand=True)
+        
+        # Display content based on selected tab
+        if self.main_tab_control == 'GENERAL':
+            self.draw_general(context, box)
+        elif self.main_tab_control == 'TEXTURES':
+            self.draw_texture(context, box)
+        elif self.main_tab_control == 'PROPERTIES':
+            self.draw_properties(context, box)
+
+    def draw_general(self, context, layout):
+        # Add the template_name property to the general section
+        layout.prop(self, "template_name", text="Template")
+        layout.prop(self, "template_mode_name", text="Mode")
+        
+        # Create a box for export option, mesh group, and armature enum
+        options_box = layout.box()
+        options_box.prop(self, "export_option", text="Export Option")
+        
+        if self.export_option == 'MESH':
+            mesh_group = options_box.box()
+            for mesh_prop in self.mesh_properties:
+                row = mesh_group.row(align=True)
+                row.prop(mesh_prop, "checked", text=mesh_prop.name)
+                row.prop(self.libs[mesh_prop.library_index], "name", text="", emboss=False)
+        elif self.export_option == 'ARMATURE':
+            options_box.prop(self, "armature_enum", text="Available armatures")
+
+            # Display meshes associated with the selected armature
+            armature = bpy.data.objects.get(self.armature_enum)
+            if armature and armature.type == 'ARMATURE':
+                mesh_group = options_box.box()
+                for child in armature.children:
+                    if child.type == 'MESH':
+                        row = mesh_group.row(align=True)
+                        row.prop(self.mesh_properties[child.name], "checked", text=child.name)
+                        row.label(text=self.mesh_properties[child.name].material_name)
+                        
+                        txp_group = mesh_group.box()
+                        for texproj in self.texproj_properties:
+                            if texproj.mesh_name == child.name:
+                                row = txp_group.row(align=True)
+                                row.prop(texproj, "checked", text=texproj.name)
+        elif self.export_option == 'ANIMATION':
+            options_box.prop(self, "animation_enum", text="Available animations")
+            options_box.prop(self, "attach_bone", text="Attach armature")
+            #options_box.prop(self, "attach_texproj", text="Attach texproj")
+        elif self.export_option == 'CAMERA':
+            camera_group = options_box.box()
+            for camera_prop in self.camera_properties:
+                row = camera_group.row(align=True)
+                row.prop(camera_prop, "checked", text=camera_prop.name)
+                row.prop(camera_prop, "animation_name", text="Name")
+                row.prop(camera_prop, "speed", text="Speed")
+
+    def draw_texture(self, context, layout):
+        if self.export_option == 'CAMERA' or self.export_option == 'ANIMATION':
+            texture_box = layout.box()
+            
+            if self.export_option == 'ANIMATION':
+                texture_box.label(text="Not available on animation mode")
+            elif self.export_option == 'CAMERA':
+                texture_box.label(text="Not available on camera mode")
+        else:
+            meshes_props =[]
+            same_texture = []
+            
+            if self.export_option == 'MESH':
+                meshes_props = [mesh_prop.name for mesh_prop in self.mesh_properties if mesh_prop.checked]
+            elif self.export_option == 'ARMATURE':
+                if self.armature_enum and self.armature_enum != "None":
+                    armature = bpy.data.objects.get(self.armature_enum)
+                    armature_meshes = [child for child in armature.children if child.type == 'MESH']
+                    for mesh_prop in self.mesh_properties:
+                        if mesh_prop.checked:
+                            mesh = bpy.data.objects.get(mesh_prop.name)
+                            if mesh and mesh in armature_meshes:     
+                                meshes_props.append(mesh_prop.name)
+
+            groupbox = layout.box()
+            box = groupbox.box()
+
+            for texture_prop in self.texture_properties:
+                if texture_prop.mesh_name in meshes_props:
+                    if texture_prop.name not in same_texture:
+                        row = box.row(align=True)
+                        row.label(text=texture_prop.name)
+                        row.prop(texture_prop, "format", text="")
+                        same_texture.append(texture_prop.name)
+
+    def draw_animation(self, context, layout):
+        anim_box = layout.box()
+
+        if self.export_option == 'ARMATURE' or self.export_option == 'ANIMATION':
+            row = anim_box.row(align=True)
+            row.prop(self, "export_tab_animation_control", expand=True)
+            
+            # Check the selected tab
+            if self.export_tab_animation_control == 'ARMATURE_ANIMATION':
+                self.draw_armature_animation(context, anim_box)
+            elif self.export_tab_animation_control == 'UV_ANIMATION':
+                self.draw_uv_animation(context, anim_box)
+            elif self.export_tab_animation_control == 'MATERIAL_ANIMATION':
+                self.draw_material_animation(context, anim_box)
+        else:
+            if self.export_option == 'MESH':
+                anim_box.label(text="Not available on mesh mode")
+            elif self.export_option == 'CAMERA':
+                anim_box.label(text="Not available on camera mode")
+
+    def draw_armature_animation(self, context, anim_box):
+        armature_box = anim_box
+        
+        # Checkbox for including animation
+        armature_box.prop(self, "include_animation_armature", text="Includes Animation")
+
+        if self.include_animation_armature:
+            # Group for animation settings
+            armature_box = anim_box.box()
+
+            # Text field for animation name
+            armature_box.prop(self, "animation_name_armature", text="Animation Name", icon='ANIM') 
+            armature_box.prop(self, "animation_format_armature", text="Animations Format")
+            armature_box.prop(self, "split_animation_format_armature", text="Split Animations Format")
+
+            # Group for manual item addition/removal
+            items_box = armature_box.box()
+            
+            # List of items with name, frame start, and frame end
+            for index, item in enumerate(context.scene.animation_items_armature):
+                row = items_box.row(align=True)
+                row.prop(item, "name", text="Name")
+                row.prop(item, "speed", text="Speed")
+                row.prop(item, "frame_start", text="Start Frame")
+                row.prop(item, "frame_end", text="End Frame")
+                
+                # Button to remove selected item
+                remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
+                remove_button.index = index  # Pass the index to the operator
+                remove_button.collection_name = "animation_items_armature"
+                
+            # Button to add an item
+            add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
+            add_button.collection_name = "animation_items_armature"
+            
+            # Draw the transformation checkboxes
+            box = armature_box.box()
+            box.label(text="Transformations:")
+            box.prop(self, "bone_transformation_location")
+            box.prop(self, "bone_transformation_rotation")
+            box.prop(self, "bone_transformation_scale")
+            box.prop(self, "bone_transformation_bool")
+            
+            if self.armature_enum and self.armature_enum != "None":
+                armature_box.prop(self, "view_bones", text="View Bones")
+
+                self.update_armature(context)
+                if self.view_bones:
+                    box = armature_box.box()
+                    box.label(text="Bones:")
+                    for bone in self.bone_checkboxes:
+                        box.prop(bone, "enabled", text=bone.name)
+
+    def draw_uv_animation(self, context, anim_box):
+        uv_box = anim_box
+        
+        # Checkbox for including animation
+        uv_box.prop(self, "include_animation_uv", text="Includes Animation")
+
+        if self.include_animation_uv:
+            # Group for animation settings
+            uv_box = anim_box.box()
+
+            # Text field for animation name
+            uv_box.prop(self, "animation_name_uv", text="Animation Name", icon='ANIM') 
+            uv_box.prop(self, "animation_format_uv", text="Animations Format")
+            uv_box.prop(self, "split_animation_format_uv", text="Split Animations Format")
+            uv_box.prop(self, "uv_mode", text="Mode")
+
+            # Group for manual item addition/removal
+            items_box = uv_box.box()
+            
+            # List of items with name, frame start, and frame end
+            for index, item in enumerate(context.scene.animation_items_uv):
+                row = items_box.row(align=True)
+                row.prop(item, "name", text="Name")
+                row.prop(item, "speed", text="Speed")
+                row.prop(item, "frame_start", text="Start Frame")
+                row.prop(item, "frame_end", text="End Frame")
+                
+                # Button to remove selected item
+                remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
+                remove_button.index = index  # Pass the index to the operator
+                remove_button.collection_name = "animation_items_uv"
+                
+            # Button to add an item
+            add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
+            add_button.collection_name = "animation_items_uv"
+            
+            # Draw the transformation checkboxes
+            box = uv_box.box()
+            box.label(text="Transformations:")
+            box.prop(self, "uv_transformation_location")
+            box.prop(self, "uv_transformation_rotation")
+            box.prop(self, "uv_transformation_scale")
+            
+            if self.armature_enum and self.armature_enum != "None":
+                uv_box.prop(self, "view_textproj", text="View Texproj")
+
+                self.update_armature(context)
+                if self.view_textproj:
+                    box = uv_box.box()
+                    box.label(text="Texprojs:")
+                    for textproj in self.texjproj_checkboxes:
+                        box.prop(textproj, "enabled", text=textproj.name)
+
+    def draw_material_animation(self, context, anim_box):
+        material_box = anim_box
+        
+        # Checkbox for including animation
+        material_box.prop(self, "include_animation_material", text="Includes Animation")
+
+        if self.include_animation_material:
+            # Group for animation settings
+            material_box = anim_box.box()
+
+            # Text field for animation name
+            material_box.prop(self, "animation_name_material", text="Animation Name", icon='ANIM') 
+            material_box.prop(self, "animation_format_material", text="Animations Format")
+            material_box.prop(self, "split_animation_format_material", text="Split Animations Format")
+            material_box.prop(self, "material_mode", text="Mode")
+
+            # Group for manual item addition/removal
+            items_box = material_box.box()
+            
+            # List of items with name, frame start, and frame end
+            for index, item in enumerate(context.scene.animation_items_material):
+                row = items_box.row(align=True)
+                row.prop(item, "name", text="Name")
+                row.prop(item, "speed", text="Speed")
+                row.prop(item, "frame_start", text="Start Frame")
+                row.prop(item, "frame_end", text="End Frame")
+                
+                # Button to remove selected item
+                remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
+                remove_button.index = index  # Pass the index to the operator
+                remove_button.collection_name = "animation_items_material"
+                
+            # Button to add an item
+            add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
+            add_button.collection_name = "animation_items_material"
+            
+            # Draw the transformation checkboxes
+            box = material_box.box()
+            box.label(text="Transformations:")
+            box.prop(self, "material_transformation_transparency")
+            box.prop(self, "material_transformation_attribute")
+            
+            if self.armature_enum and self.armature_enum != "None":
+                material_box.prop(self, "view_material", text="View Material")
+
+                self.update_armature(context)
+                if self.view_material:
+                    box = material_box.box()
+                    box.label(text="Materials:")
+                    for material in self.material_checkboxes:
+                        box.prop(material, "enabled", text=material.name)
+
+    def draw_properties(self, context, layout):
+        properties_box = layout.box()
+        
+        if self.export_option != 'CAMERA':
+            for archive_prop in self.archive_properties:
+                row = properties_box.row(align=True)
+                row.prop(archive_prop, "checked", text=archive_prop.name)
+                row.prop(archive_prop, "value", text="")
+        else:
+            properties_box.label(text="Not available on camera mode")
+
+    def draw_outlines(self, context, layout):
+        outline_box = layout.box()
+        
+        # List existing outline items
+        for index, outline_item in enumerate(context.scene.outline_items):
+            item_box = outline_box.box()
+            
+            # Outline properties
+            row = item_box.row(align=True)
+            row.prop(outline_item, "name", text="Name")
+            
+            # Remove button
+            remove_button = row.operator("export_xc.remove_outline_item", text="", icon='REMOVE')
+            remove_button.index = index
+            
+            # Properties
+            item_box.prop(outline_item, "thickness", text="Thickness")
+            item_box.prop(outline_item, "visibility", text="Visibility")
+            
+            # Mesh selection for this outline
+            mesh_box = item_box.box()
+            mesh_box.label(text="Meshes:")
+            
+            # Get available meshes for this outline
+            available_meshes = self.get_available_meshes_for_outline(context, index)
+            assigned_meshes = self.get_assigned_meshes_for_outline(context, index)
+            
+            for mesh_name in available_meshes:
+                # Find the assignment
+                assignment = None
+                for assign in context.scene.outline_mesh_assignments:
+                    if (assign.outline_index == index and assign.mesh_name == mesh_name):
+                        assignment = assign
+                        break
+                
+                if assignment:
+                    mesh_box.prop(assignment, "assigned", text=mesh_name)
+        
+        # Add new outline button
+        outline_box.operator("export_xc.add_outline_item", text="Add Outline", icon='ADD')
+        
     def invoke(self, context, event):
         wm = context.window_manager  
 
@@ -1123,12 +1528,12 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         # Get meshes
         meshes = [obj for obj in bpy.data.objects if obj.type == 'MESH']
         
-        # Déterminer si tous les meshes ont les mêmes noms d'UV maps
+        # Determine if all meshes have the same UV map names
         uv_map_names = [set(mesh.data.uv_layers.keys()) for mesh in meshes]
         common_uv_maps = set.intersection(*uv_map_names) if uv_map_names else set()
 
         for mesh in meshes:
-            # Ajout des propriétés du mesh
+            # Adding mesh properties
             item = self.mesh_properties.add()
             item.checked = True
             item.name = mesh.name
@@ -1138,17 +1543,17 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             else:
                 item.material_name = f"DefaultLib.{mesh.name}"
             
-            # Gestion des UV layers
+            # Managing UV layers
             for index, uv_layer in enumerate(mesh.data.uv_layers):
                 item = self.texproj_properties.add()
                 item.mesh_name = mesh.name
                 item.checked = True
 
                 if uv_layer.name in common_uv_maps and len(common_uv_maps) > 0:
-                    # Format spécifique si les UV maps sont identiques entre tous les meshes
+                    # Specific format if the UV maps are identical between all meshes
                     item.name = f"{mesh.name}.texproj{index}"
                 else:
-                    # Nom par défaut
+                    # Default name
                     if len(uv_map_names) == 1 and uv_layer.name == 'UVMap':
                         item.name = "UVMap.texproj0"
                     else:
@@ -1205,275 +1610,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
     def draw(self, context):
         layout = self.layout
         
-        # Create two tabs: "Main"
         row = layout.row(align=True)
-        row.prop(self, "export_tab_control", expand=True)
-
+        row.prop(self, "export_tab_control", expand=True)        
+        
         if self.export_tab_control == 'MAIN':
-            box = layout.box()
-            
-            # Add the template_name property to the main box
-            box.prop(self, "template_name", text="Template")
-            box.prop(self, "template_mode_name", text="Mode")
-            
-            # Create a sub-box for outline properties
-            #outline_box = box.box()
-            #outline_box.prop(self, "outline_name", text="Outline")
-            #outline_box.prop(self, "outline_thickness", text="Thickness")
-            #outline_box.prop(self, "outline_visibility", text="Visibility")
-
-            # Create a box for export option, mesh group, and armature enum
-            options_box = box.box()
-            options_box.prop(self, "export_option", text="Export Option")
-            
-            if self.export_option == 'MESH':
-                mesh_group = options_box.box()
-                for mesh_prop in self.mesh_properties:
-                    row = mesh_group.row(align=True)
-                    row.prop(mesh_prop, "checked", text=mesh_prop.name)
-                    row.prop(self.libs[mesh_prop.library_index], "name", text="", emboss=False)
-            elif self.export_option == 'ARMATURE':
-                options_box.prop(self, "armature_enum", text="Available armatures")
-
-                # Display meshes associated with the selected armature
-                armature = bpy.data.objects.get(self.armature_enum)
-                if armature and armature.type == 'ARMATURE':
-                    mesh_group = options_box.box()
-                    for child in armature.children:
-                        if child.type == 'MESH':
-                            row = mesh_group.row(align=True)
-                            row.prop(self.mesh_properties[child.name], "checked", text=child.name)
-                            row.label(text=self.mesh_properties[child.name].material_name)
-                            
-                            txp_group = mesh_group.box()
-                            for texproj in self.texproj_properties:
-                                if texproj.mesh_name == child.name:
-                                    row = txp_group.row(align=True)
-                                    row.prop(texproj, "checked", text=texproj.name)
-            elif self.export_option == 'ANIMATION':
-                options_box.prop(self, "animation_enum", text="Available animations")
-                options_box.prop(self, "attach_bone", text="Attach armature")
-                #options_box.prop(self, "attach_texproj", text="Attach texproj")
-            elif self.export_option == 'CAMERA':
-                camera_group = options_box.box()
-                for camera_prop in self.camera_properties:
-                    row = camera_group.row(align=True)
-                    row.prop(camera_prop, "checked", text=camera_prop.name)
-                    row.prop(camera_prop, "animation_name", text="Name")
-                    row.prop(camera_prop, "speed", text="Speed")
-        elif self.export_tab_control == 'TEXTURE':
-            if self.export_option == 'CAMERA' or self.export_option == 'ANIMATION':
-                texture_box = layout.box()
-                
-                if self.export_option == 'ANIMATION':
-                    texture_box.label(text="Not available on animation mode")
-                elif self.export_option == 'CAMERA':
-                    texture_box.label(text="Not available on camera mode")
-            else:
-                meshes_props =[]
-                same_texture = []
-                
-                if self.export_option == 'MESH':
-                    meshes_props = [mesh_prop.name for mesh_prop in self.mesh_properties if mesh_prop.checked]
-                elif self.export_option == 'ARMATURE':
-                    if self.armature_enum and self.armature_enum != "None":
-                        armature = bpy.data.objects.get(self.armature_enum)
-                        armature_meshes = [child for child in armature.children if child.type == 'MESH']
-                        for mesh_prop in self.mesh_properties:
-                            if mesh_prop.checked:
-                                mesh = bpy.data.objects.get(mesh_prop.name)
-                                if mesh and mesh in armature_meshes:     
-                                    meshes_props.append(mesh_prop.name)
- 
-                groupbox = layout.box()
-                box = groupbox.box()
- 
-                for texture_prop in self.texture_properties:
-                    if texture_prop.mesh_name in meshes_props:
-                        if texture_prop.name not in same_texture:
-                            row = box.row(align=True)
-                            row.label(text=texture_prop.name)
-                            row.prop(texture_prop, "format", text="")
-                            same_texture.append(texture_prop.name)
+            self.draw_main(context, layout)
         elif self.export_tab_control == 'ANIMATION':
-            anim_box = layout.box()
-
-            if self.export_option == 'ARMATURE' or self.export_option == 'ANIMATION':
-                row = anim_box.row(align=True)
-                row.prop(self, "export_tab_animation_control", expand=True)
-                
-                # Vérifier l'onglet sélectionné
-                if self.export_tab_animation_control == 'ARMATURE_ANIMATION':
-                    armature_box = anim_box
-                    
-                    # Checkbox for including animation
-                    armature_box.prop(self, "include_animation_armature", text="Includes Animation")
-
-                    if self.include_animation_armature:
-                        # Group for animation settings
-                        armature_box = anim_box.box()
-
-                        # Text field for animation name
-                        armature_box.prop(self, "animation_name_armature", text="Animation Name", icon='ANIM') 
-                        armature_box.prop(self, "animation_format_armature", text="Animations Format")
-                        armature_box.prop(self, "split_animation_format_armature", text="Split Animations Format")
-
-                        # Group for manual item addition/removal
-                        items_box = armature_box.box()
-                        
-                        # List of items with name, frame start, and frame end
-                        for index, item in enumerate(context.scene.animation_items_armature):
-                            row = items_box.row(align=True)
-                            row.prop(item, "name", text="Name")
-                            row.prop(item, "speed", text="Speed")
-                            row.prop(item, "frame_start", text="Start Frame")
-                            row.prop(item, "frame_end", text="End Frame")
-                            
-                            # Button to remove selected item
-                            remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
-                            remove_button.index = index  # Pass the index to the operator
-                            remove_button.collection_name = "animation_items_armature"
-                            
-                        # Button to add an item
-                        add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
-                        add_button.collection_name = "animation_items_armature"
-                        
-                        # Dessiner les cases des transformations
-                        box = armature_box.box()
-                        box.label(text="Transformations:")
-                        box.prop(self, "bone_transformation_location")
-                        box.prop(self, "bone_transformation_rotation")
-                        box.prop(self, "bone_transformation_scale")
-                        box.prop(self, "bone_transformation_bool")
-                        
-                        if self.armature_enum and self.armature_enum != "None":
-                            armature_box.prop(self, "view_bones", text="View Bones")
-
-                            self.update_armature(context)
-                            if self.view_bones:
-                                box = armature_box.box()
-                                box.label(text="Bones:")
-                                for bone in self.bone_checkboxes:
-                                    box.prop(bone, "enabled", text=bone.name)
-                elif self.export_tab_animation_control == 'UV_ANIMATION':
-                    uv_box = anim_box
-                    
-                    # Checkbox for including animation
-                    uv_box.prop(self, "include_animation_uv", text="Includes Animation")
-
-                    if self.include_animation_uv:
-                        # Group for animation settings
-                        uv_box = anim_box.box()
-
-                        # Text field for animation name
-                        uv_box.prop(self, "animation_name_uv", text="Animation Name", icon='ANIM') 
-                        uv_box.prop(self, "animation_format_uv", text="Animations Format")
-                        uv_box.prop(self, "split_animation_format_uv", text="Split Animations Format")
-                        uv_box.prop(self, "uv_mode", text="Mode")
-
-                        # Group for manual item addition/removal
-                        items_box = uv_box.box()
-                        
-                        # List of items with name, frame start, and frame end
-                        for index, item in enumerate(context.scene.animation_items_uv):
-                            row = items_box.row(align=True)
-                            row.prop(item, "name", text="Name")
-                            row.prop(item, "speed", text="Speed")
-                            row.prop(item, "frame_start", text="Start Frame")
-                            row.prop(item, "frame_end", text="End Frame")
-                            
-                            # Button to remove selected item
-                            remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
-                            remove_button.index = index  # Pass the index to the operator
-                            remove_button.collection_name = "animation_items_uv"
-                            
-                        # Button to add an item
-                        add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
-                        add_button.collection_name = "animation_items_uv"
-                        
-                        # Dessiner les cases des transformations
-                        box = uv_box.box()
-                        box.label(text="Transformations:")
-                        box.prop(self, "uv_transformation_location")
-                        box.prop(self, "uv_transformation_rotation")
-                        box.prop(self, "uv_transformation_scale")
-                        
-                        if self.armature_enum and self.armature_enum != "None":
-                            uv_box.prop(self, "view_textproj", text="View Texproj")
-
-                            self.update_armature(context)
-                            if self.view_textproj:
-                                box = uv_box.box()
-                                box.label(text="Texprojs:")
-                                for textproj in self.texjproj_checkboxes:
-                                    box.prop(textproj, "enabled", text=textproj.name)
-                elif self.export_tab_animation_control == 'MATERIAL_ANIMATION':
-                    material_box = anim_box
-                    
-                    # Checkbox for including animation
-                    material_box.prop(self, "include_animation_material", text="Includes Animation")
-
-                    if self.include_animation_material:
-                        # Group for animation settings
-                        material_box = anim_box.box()
-
-                        # Text field for animation name
-                        material_box.prop(self, "animation_name_material", text="Animation Name", icon='ANIM') 
-                        material_box.prop(self, "animation_format_material", text="Animations Format")
-                        material_box.prop(self, "split_animation_format_material", text="Split Animations Format")
-                        material_box.prop(self, "material_mode", text="Mode")
-
-                        # Group for manual item addition/removal
-                        items_box = material_box.box()
-                        
-                        # List of items with name, frame start, and frame end
-                        for index, item in enumerate(context.scene.animation_items_material):
-                            row = items_box.row(align=True)
-                            row.prop(item, "name", text="Name")
-                            row.prop(item, "speed", text="Speed")
-                            row.prop(item, "frame_start", text="Start Frame")
-                            row.prop(item, "frame_end", text="End Frame")
-                            
-                            # Button to remove selected item
-                            remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
-                            remove_button.index = index  # Pass the index to the operator
-                            remove_button.collection_name = "animation_items_material"
-                            
-                        # Button to add an item
-                        add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
-                        add_button.collection_name = "animation_items_material"
-                        
-                        # Dessiner les cases des transformations
-                        box = material_box.box()
-                        box.label(text="Transformations:")
-                        box.prop(self, "material_transformation_transparency")
-                        box.prop(self, "material_transformation_attribute")
-                        
-                        if self.armature_enum and self.armature_enum != "None":
-                            material_box.prop(self, "view_material", text="View Material")
-
-                            self.update_armature(context)
-                            if self.view_material:
-                                box = material_box.box()
-                                box.label(text="Materials:")
-                                for material in self.material_checkboxes:
-                                    box.prop(material, "enabled", text=material.name)
-            else:
-                if self.export_option == 'MESH':
-                    anim_box.label(text="Not available on mesh mode")
-                elif self.export_option == 'CAMERA':
-                    anim_box.label(text="Not available on camera mode")
-        elif self.export_tab_control == 'PROPERTIES':
-                properties_box = layout.box()
-                
-                if self.export_option != 'CAMERA':
-                    for archive_prop in self.archive_properties:
-                        row = properties_box.row(align=True)
-                        row.prop(archive_prop, "checked", text=archive_prop.name)
-                        row.prop(archive_prop, "value", text="")
-                else:
-                    properties_box.label(text="Not available on camera mode")
-
+            self.draw_animation(context, layout)
+        elif self.export_tab_control == 'OUTLINES':
+            self.draw_outlines(context, layout)
+            
     def execute(self, context):
         armature = None
         meshes = []
@@ -1481,7 +1627,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         cameras = []
         properties = []
         texprojs = []
-        outline = [self.outline_thickness, self.outline_visibility]
+        outlines = []
         
         animations = {}
         animation_uv = []
@@ -1676,6 +1822,25 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 animation_material['split_animation'] = split_animations_material
                 animations['material'] = animation_material                
 
+        # Get outlines
+        for index, outline_item in enumerate(context.scene.outline_items):
+            assigned_meshes = [
+                assignment.mesh_name
+                for assignment in context.scene.outline_mesh_assignments
+                if assignment.outline_index == index and assignment.assigned
+            ]
+            
+            outline_dict = {
+                "name": outline_item.name,
+                "thickness": outline_item.thickness,
+                "visibility": outline_item.visibility,
+                "meshes": assigned_meshes
+            }
+            
+            outlines.append(outline_dict)
+
+        print(outlines)
+    
         return fileio_write_xpck(
             self, context, 
             self.filepath, 
@@ -1685,7 +1850,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             meshes=meshes, 
             textures=textures, 
             animations=animations, 
-            outline=outline, 
+            outlines=outlines, 
             cameras=cameras, 
             properties=properties, 
             texprojs=texprojs,

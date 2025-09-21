@@ -287,7 +287,7 @@ def open_xres(data):
     
     return items
 
-def make_library(meshes = [], armature = None, textures = {}, animations = {}, outline_name = "", properties=[], texprojs=[]):
+def make_library(meshes = [], armature = None, textures = {}, animations = {}, outlines = [], properties=[], texprojs=[]):
     items = {}
     string_table = bytes()
     materials_offset = {}
@@ -424,11 +424,15 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         items[RESType.IMMINF] = immninfs
         items[RESType.MTMINF] = mtminfs          
 
-    if outline_name:
-        name = outline_name.encode("shift-jis")
-        string_table += name + int(0).to_bytes(1, 'little')
-        items[RESType.SHADING] = [crc32(name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little')]
-        print(items[RESType.SHADING][0].hex())
+    if outlines:
+        outlines_name = []
+        
+        for outline in outlines:
+            outline_name = outline['name'].encode("shift-jis")
+            outlines_name.append(crc32(outline_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            string_table += outline_name + int(0).to_bytes(1, 'little')
+            
+        items[RESType.SHADING] = outlines_name
         
     if properties:
         properties_name = []

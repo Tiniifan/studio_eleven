@@ -114,6 +114,10 @@ def register():
     bpy.utils.register_class(ExportXC_RemoveAnimationItem)
     bpy.utils.register_class(Animation)
     bpy.utils.register_class(AnimationItem)
+    bpy.utils.register_class(ExportXC_AddOutlineItem)
+    bpy.utils.register_class(ExportXC_RemoveOutlineItem)
+    bpy.utils.register_class(OutlineMeshAssignment)
+    bpy.utils.register_class(OutlineItem)
     bpy.utils.register_class(TexturePropertyGroup)
     bpy.utils.register_class(LibPropertyGroup)
     bpy.utils.register_class(MeshPropertyGroup)
@@ -129,6 +133,9 @@ def register():
     bpy.types.Scene.animation_items_uv = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.types.Scene.animation_items_material = bpy.props.CollectionProperty(type=AnimationItem)
     bpy.types.Scene.animation_items_camera = bpy.props.CollectionProperty(type=AnimationItem)
+    
+    bpy.types.Scene.outline_items = bpy.props.CollectionProperty(type=OutlineItem)
+    bpy.types.Scene.outline_mesh_assignments = bpy.props.CollectionProperty(type=OutlineMeshAssignment)
     
     bpy.utils.register_class(ExportAnimation)
     bpy.utils.register_class(ExportXC)
@@ -160,6 +167,8 @@ def unregister():
     bpy.utils.unregister_class(Level5_Menu_Export)
     bpy.utils.unregister_class(Animation)
     bpy.utils.unregister_class(AnimationItem)
+    bpy.utils.unregister_class(OutlineMeshAssignment)
+    bpy.utils.unregister_class(OutlineItem)    
     bpy.utils.unregister_class(TexturePropertyGroup)
     bpy.utils.unregister_class(LibPropertyGroup)
     bpy.utils.unregister_class(MeshPropertyGroup)
@@ -176,8 +185,13 @@ def unregister():
     del bpy.types.Scene.animation_items_material
     del bpy.types.Scene.animation_items_camera
     
+    del bpy.types.Scene.outline_items
+    del bpy.types.Scene.outline_mesh_assignments   
+    
     bpy.utils.unregister_class(ExportXC_AddAnimationItem)
-    bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)    
+    bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)
+    bpy.utils.unregister_class(ExportXC_AddOutlineItem)
+    bpy.utils.unregister_class(ExportXC_RemoveOutlineItem)    
     bpy.types.TOPBAR_MT_file_export.remove(draw_menu_export)
     
     # Level 5 Menu Import

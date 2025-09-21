@@ -1,6 +1,7 @@
 import zlib
 import struct
 import io
+
 from ..utils import *
 from ..compression import lz10, compressor
 
@@ -64,56 +65,25 @@ def remove_dupe_indices(indices):
      
     return final_indices
     
-def index_of_geometrie(indices):
-    final_indices = []
-    
-    used_indices = []
-    for indice in indices:
-        for i in range(3):
-            geometrie = []
-            
-            for j in indice.keys():
-                if indice[j] != []:
-                    geometrie.append(indice[j][i])
-            
-            geometrie = tuple(geometrie)
-            
-            if geometrie not in used_indices:
-                used_indices.append(geometrie)
-                  
-    for indice in indices:
-        face = []
-        
-        for i in range(3):
-            geometrie = []
-            
-            for j in indice.keys():
-                if indice[j] != []:
-                    geometrie.append(indice[j][i])
-            
-            geometrie = tuple(geometrie)
-            face.append(used_indices.index(geometrie))
-            
-        face = tuple(face) 
-        final_indices.append(face)
-     
-    return final_indices
+def flatten_tuple(tuples_list):
+    flat = [x for tup in tuples_list for x in tup]
+    return list(dict.fromkeys(flat))
 
 def write_geometrie(indices, vertices, uvs, normals, colors, weights):
     out = bytes()
     
-    indices = remove_dupe_indices(indices)
+    indices = flatten_tuple(indices)
     
     for indice in indices:
-        for v in vertices[indice['v']]:
+        for v in vertices[indice]:
             out += bytearray(struct.pack("f", v))
-        for n in normals[indice['vn']]:
+        for n in normals[indice]:
             out += bytearray(struct.pack("f", n))
         for vt in range(2):
-            out += bytearray(struct.pack("f", uvs[indice['vt']][0]))
-            out += bytearray(struct.pack("f", 1 - uvs[indice['vt']][1] ))
+            out += bytearray(struct.pack("f", uvs[indice][0]))
+            out += bytearray(struct.pack("f", 1 - uvs[indice][1] ))
             
-        weight = weights[indice['v']]
+        weight = weights[indice]
         keys = list(weight.keys())
         for w in range(4):
             if w < len(keys):
@@ -128,7 +98,7 @@ def write_geometrie(indices, vertices, uvs, normals, colors, weights):
         
         for c in range(4):
             if len(colors) > 0:
-                out += bytearray(struct.pack("f", colors[indice['vc']][c]))
+                out += bytearray(struct.pack("f", colors[indice][c]))
             else:
                 out += int(0).to_bytes(4, 'little')
                 
@@ -137,7 +107,6 @@ def write_geometrie(indices, vertices, uvs, normals, colors, weights):
 def write_triangle(indices):
     out = bytes()
     
-    indices = index_of_geometrie(indices)
     triangle_strip = stripify(indices, True)
     
     for i in range(len(triangle_strip)):
