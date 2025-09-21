@@ -34,7 +34,7 @@ bl_info = {
     "category": "Import-Export",
     "description": "Support some Level 5 files for Blender",
     "author": "Tinifan",
-    "version": (1, 2, 0),
+    "version": (1, 3, 0),
     "blender": (2, 80, 2),
     "location": "File > Import-Export > Studio Eleven", 
     "warning": "",
