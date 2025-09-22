@@ -41,10 +41,11 @@ The addon includes export templates for these popular Level-5 titles:
 3. Click **Install** and select the downloaded `.zip` file
 4. Enable the addon by checking the checkbox next to "Studio Eleven"
 
-## 🙏 Acknowledgments
+## 🙏 Special Thanks
 
 This project was made possible thanks to the following contributors:
 
+- **[CacaBueno64](https://github.com/CacaBueno64/)** - Great contributor
 - **[RoadrunnerWMC](https://github.com/RoadrunnerWMC/ndspy)** - LZ10 compression implementation
 - **[Ploaj](https://github.com/Ploaj/Metanoia/tree/master/Metanoia)** - Level-5 file handling logic from Metanoia
 - **RuneBlade** - Triangle strip implementation
