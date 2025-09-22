@@ -12,6 +12,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 from ..formats import xmpr
 from ..templates import *
+from ..utils.mesh_faces_utils import MeshFaceUtils
 
 ##########################################
 # XMPR Function
@@ -32,24 +33,34 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
     if not mesh or not mesh.data:
         return face_indices, vertices_info, uv_info, normal_info, color_info, {}
 
-    # Vertex colors
+    # Ensure the mesh data is in the correct state
+    mesh.data.update()
+    
+    # Get blender version
+    blender_version = bpy.app.version
+            
+    # Get vertex colors
     has_vertex_colors = hasattr(mesh.data, 'vertex_colors') and mesh.data.vertex_colors and mesh.data.vertex_colors.active
     if has_vertex_colors:
         vertex_colors = mesh.data.vertex_colors.active.data
 
-    # UVs
-    has_uv_layers = hasattr(mesh.data, 'uv_layers') and mesh.data.uv_layers and mesh.data.uv_layers.active
-    if has_uv_layers:
-        uv_data = mesh.data.uv_layers.active.data
-
-    mesh.data.calc_normals()
-    mesh.data.calc_normals_split()
+    # Get UVs
+    has_uv_layers = False
+    uv_data = None
+    if hasattr(mesh.data, 'uv_layers') and mesh.data.uv_layers:
+        if mesh.data.uv_layers.active:
+            has_uv_layers = True
+            uv_data = mesh.data.uv_layers.active.data
+        elif len(mesh.data.uv_layers) > 0:
+            # Take first UV layer if none is active
+            has_uv_layers = True
+            uv_data = mesh.data.uv_layers[0].data
 
     vertex_to_unique_indices = {}
-
+    
     # Bone indices mapping
     bone_indices = {name: i for i, name in enumerate(bone_names)} if bone_names else {}
-
+    
     weights = {}
 
     for face in mesh.data.polygons:
@@ -57,10 +68,34 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
         for loop_index in face.loop_indices:
             vertex_index = mesh.data.loops[loop_index].vertex_index
 
+            # Get vertex
             v = tuple(round(coord, 3) for coord in mesh.data.vertices[vertex_index].co)
-            n = tuple(round(coord, 3) for coord in mesh.data.loops[loop_index].normal)
-            uv = tuple(round(coord, 3) for coord in (uv_data[loop_index].uv if has_uv_layers else (0.0, 0.0)))
-            color = tuple(round(c, 3) for c in (vertex_colors[loop_index].color if has_vertex_colors else (0.0, 0.0, 0.0, 0.0)))
+            
+            # Get normals according to the Blender version
+            if blender_version >= (4, 1, 0):
+                # Blender 4.1+: uses corner_normals to be more precise
+                n = tuple(round(coord, 3) for coord in mesh.data.corner_normals[loop_index].vector)
+            else:
+                # Blender 4.0 and previous: use vertex normal
+                n = tuple(round(coord, 3) for coord in mesh.data.vertices[vertex_index].normal)
+            
+            # Get UV
+            if has_uv_layers and uv_data:
+                try:
+                    uv = tuple(round(coord, 3) for coord in uv_data[loop_index].uv)
+                except (IndexError, AttributeError):
+                    uv = (0.0, 0.0)
+            else:
+                uv = (0.0, 0.0)
+                
+            # Get Color
+            if has_vertex_colors and vertex_colors:
+                try:
+                    color = tuple(round(c, 3) for c in vertex_colors[loop_index].color)
+                except (IndexError, AttributeError):
+                    color = (0.0, 0.0, 0.0, 1.0)
+            else:
+                color = (0.0, 0.0, 0.0, 1.0)
 
             key = (v, n, uv, color)
 
@@ -303,7 +338,11 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
         
         # Set default material properties
         material.blend_method = 'BLEND'
-        material.shadow_method = 'CLIP'
+        
+        # shadow_method has been removed from Blender 4.3
+        if bpy.app.version < (4, 3, 0):
+            material.shadow_method = 'CLIP'        
+        
         material.alpha_threshold = 0.5
         material.use_backface_culling = False       
         

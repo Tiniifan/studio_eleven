@@ -50,6 +50,42 @@ class MeshFaceUtils:
         return list(duplicated_faces), non_duplicated_faces
 
     @staticmethod
+    def get_duplicate_groups(obj):
+        if obj is None or obj.type != 'MESH':
+            return []
+            
+        bm = bmesh.new()
+        bm.from_mesh(obj.data)
+        mat_world = obj.matrix_world
+        
+        # Calculate face centers in world space
+        face_centers = [(mat_world @ f.calc_center_median()) for f in bm.faces]
+        face_centers = [(v.x, v.y, v.z) for v in face_centers]
+        
+        eps = 0.0002
+        used = [False] * len(face_centers)
+        duplicate_groups = []
+        
+        for i, ci in enumerate(face_centers):
+            if used[i]:
+                continue
+            matching_faces = [i]
+            for j in range(i + 1, len(face_centers)):
+                if used[j]:
+                    continue
+                cj = face_centers[j]
+                if all(math.isclose(ci[k], cj[k], abs_tol=eps) for k in range(3)):
+                    matching_faces.append(j)
+                    used[j] = True
+            used[i] = True
+            
+            if len(matching_faces) >= 2:
+                duplicate_groups.append(matching_faces)
+        
+        bm.free()
+        return duplicate_groups
+
+    @staticmethod
     def preserve_vertex_colors(obj, original_face_count=None, highlight_new_faces=False):
         existing_vcols = None
         if "Col" in obj.data.vertex_colors:
