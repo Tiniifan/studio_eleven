@@ -112,6 +112,7 @@
                 0,
                 0
             ],
+            "file_version": 2,
             "visible": true
         },
         {
@@ -149,7 +150,7 @@
                 0.0,
                 1,
                 1,
-                0.0025,
+                0.0024999999441206455,
                 0.5,
                 0.4,
                 10.0,
@@ -226,6 +227,7 @@
                 0,
                 0
             ],
+            "file_version": 1,
             "visible": true
         },
         {
@@ -344,7 +346,8 @@
                 0,
                 0
             ],
-            "visible": false
+            "file_version": 2,
+            "visible": true
         },
         {
             "name": "PLvsPW",
@@ -458,7 +461,8 @@
                 0,
                 0
             ],
-            "visible": false
+            "file_version": 2,
+            "visible": true
         }
     ],
     "template_order": [

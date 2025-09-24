@@ -453,7 +453,7 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     imminfs = []
     mtminfs = []
     
-    anim_version = "V1" if template[0].name == "Inazuma Eleven Go" else "V2"
+    anim_version = "V1" if template[0].file_version == 1 else "V2"
     for animation_type, animation_data in animations.items():
         if animation_type == 'armature':
             mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version))
@@ -609,11 +609,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             texprojs=texprojs
         )
         
-        if template[0].name == "Inazuma Eleven Go":
+        if template[0].file_version == 1:
             files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
         else: 
-            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
-    
+            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)   
     elif mode == "ANIMATION":
         if attach_bone == False:
             armature = None
@@ -624,11 +623,10 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
             properties=properties,
         )
         
-        if template[0].name == "Inazuma Eleven Go":
+        if template[0].file_version == 1:
             files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
         else: 
-            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
-    
+            files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)   
     elif mode == "MESH":
         pass
         # Not implemented     
