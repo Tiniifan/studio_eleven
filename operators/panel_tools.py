@@ -370,7 +370,6 @@ class DuplicateFaceModel(bpy.types.Operator):
 
         original_face_count = len(non_duplicated_faces) + len(duplicated_faces)
         MeshFaceUtils.edit_faces(obj, non_duplicated_faces, action='DUPLICATE')
-        obj.data.calc_normals_split()
         MeshFaceUtils.preserve_vertex_colors(obj, original_face_count, highlight_new_faces=True)
 
         self.report({'INFO'}, f"Duplicated {len(non_duplicated_faces)} missing faces. Mesh '{obj.name}' ready for outlines.")
@@ -397,7 +396,6 @@ class RemoveDuplicateFaceModel(bpy.types.Operator):
 
         original_face_count = len(duplicated_faces) + len(non_duplicated_faces)
         MeshFaceUtils.edit_faces(obj, duplicated_faces, action='DELETE')
-        obj.data.calc_normals_split()
         MeshFaceUtils.preserve_vertex_colors(obj, original_face_count)
 
         remaining_face_count = len(obj.data.polygons)
