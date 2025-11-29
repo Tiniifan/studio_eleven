@@ -37,7 +37,9 @@ class RESType(Enum):
     NODE_TYPE_UNK4 = 460
     NODE_TYPE_UNK5 = 320
     NODE_TYPE_UNK6 = 420
-    NODE_TYPE_UNK7 = 20
+    REF = 20
+    SWITCH_STUFF_UNK1 = 311 # IMM3???
+    SWITCH_STUFF_UNK2 = 411 # IMMINF2???
     
 materials_ordered = [
     RESType.MATERIAL_TYPE_UNK1,
