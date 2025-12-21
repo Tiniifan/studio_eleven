@@ -34,7 +34,7 @@ class RESType(Enum):
     NODE_TYPE_UNK1 = 2
     NODE_TYPE_UNK2 = 3
     NODE_TYPE_UNK3 = 4
-    NODE_TYPE_UNK4 = 460
+    NODE_TYPE_UNK4 = 460 # Look Up Table
     NODE_TYPE_UNK5 = 320
     NODE_TYPE_UNK6 = 420
     REF = 20
@@ -441,7 +441,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for archive_property in properties:
             property_name = archive_property[0].encode("shift-jis")
-            properties_name.append(crc32(property_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
+            properties_name.append(crc32(property_name).to_bytes(4, 'little') + archive_property[2])
             string_table += property_name + int(0).to_bytes(1, 'little')
             
         items[RESType.PROPERTIES] = properties_name
@@ -454,7 +454,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
             texprojs_name.append(crc32(texproj_name).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little'))
             string_table += texproj_name + int(0).to_bytes(1, 'little')
             
-        items[RESType.TEXPROJ] = texprojs_name
+        items[RESType.TEXPROJ] = texprojs_name    
         
     return items, string_table
                 

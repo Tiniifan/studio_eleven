@@ -13,4 +13,6 @@ properties = {
     "mesh_sort": [True, 2],
     "flw_cmr_type": [False, 0],
     "scale_base_one": [False, 2],
+    "HEIGHT": [False, 6.9],
+    "COLLISION_CHARA": [False, 2.3],
 }

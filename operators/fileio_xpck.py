@@ -496,7 +496,17 @@ def fileio_write_xpck(operator, context, filepath, template, mode, meshes = [], 
     cmns = []
     if properties:
         for archive_property in properties:
-            cmns.append(cmn.write(archive_property[0], archive_property[1])) 
+            name = archive_property[0]
+            value = archive_property[1]
+
+            # Ugly code to add extra data for the RES
+            if name in ("HEIGHT", "COLLISION_CHARA"):
+                extra = bytes.fromhex("00 08 00 14")
+            else:
+                extra = bytes.fromhex("00 00 00 00")
+            archive_property.append(extra)
+
+            cmns.append(cmn.write(name, value))
     
     # Make texprojs
     txps = []
