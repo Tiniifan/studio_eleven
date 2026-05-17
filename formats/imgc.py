@@ -37,9 +37,17 @@ def write(img, img_format):
     tile_compress = lz10.compress(image_to_tile(px, height, width))
     image_data_compress = lz10.compress(encode_image(px, height, width, img_format))
 
+    # Calculate the bit depth and bytes per tile based on the actual format
+    bit_depth = img_format.size * 8
+    bytes_per_tile = img_format.size * 64
+
     out += bytes.fromhex("494D4743303000003000")
     out += int(img_format.type).to_bytes(1, 'little')
-    out += bytes.fromhex("0101108000")
+    
+    out += bytes.fromhex("0101")                        # padding + CombineFormat
+    out += int(bit_depth).to_bytes(1, 'little')         # BitDepth dynamique
+    out += int(bytes_per_tile).to_bytes(2, 'little')    # BytesPerTile dynamique
+    
     out += width.to_bytes(2, 'little')
     out += height.to_bytes(2, 'little')
     out += bytes.fromhex("3000000030000100480000000300000000000000000000000000000000000000")
@@ -52,9 +60,9 @@ def write(img, img_format):
 
     missing_bytes = 16 - len(out) % 16
     if missing_bytes > 0:
-        out += bytes.fromhex("".zfill(missing_bytes*2))
+        out += bytes.fromhex("".zfill(missing_bytes * 2))
     
-    return out;
+    return out
 
 ##########################################
 # IMGCSupport
