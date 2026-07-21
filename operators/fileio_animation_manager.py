@@ -433,7 +433,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                     frame = int(keyframe.co.x)
                     keyframes_data.setdefault(frame, {}).setdefault(bone_name, []).append(transformation_type)
 
-        for frame, bones_data in keyframes_data.items():
+        for frame, bones_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
             for bone_name, bone_transformations in bones_data.items():
                 pose_bone = armature.pose.bones.get(bone_name)
@@ -538,7 +538,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                             frame = int(keyframe.co.x)
                             keyframes_data.setdefault(frame, {}).setdefault(modifier_name, []).append(transformation_type)
 
-        for frame, modifiers_data in keyframes_data.items():
+        for frame, modifiers_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
             for modifier_name, modifier_transformations in modifiers_data.items():
                 # Récupérer le modifier par son nom et l'objet associé
@@ -682,7 +682,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                         frame = int(keyframe.co.x)
                         keyframes_data.setdefault(frame, {}).setdefault(material.name, []).append(transformation_type)
 
-        for frame, material_data in keyframes_data.items():
+        for frame, material_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
             
             for material_name, material_transformations in material_data.items():
