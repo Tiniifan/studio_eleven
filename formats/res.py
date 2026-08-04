@@ -244,7 +244,10 @@ def open_xres(data):
             
             pos = 0
             obj_hash = unpack_from("<I", section, pos)[0]
-            obj_name = string_table[obj_hash]
+            if obj_hash in string_table:
+                obj_name = string_table[obj_hash]
+            else:
+                obj_name = f"0x{obj_hash:08X}"
             
             if Type == RESType.TEXTURE_DATA:
                 pos = 8
