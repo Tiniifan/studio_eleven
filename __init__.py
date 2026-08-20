@@ -3,7 +3,7 @@ import bpy
 
 from bpy.app.handlers import persistent
 from bpy.types import PropertyGroup, Panel, UIList
-from bpy.props import IntProperty, StringProperty, FloatVectorProperty, CollectionProperty, PointerProperty
+from bpy.props import IntProperty, StringProperty, FloatVectorProperty, CollectionProperty, PointerProperty, EnumProperty
 
 from .operators import *
 from .controls import *
@@ -159,6 +159,11 @@ def register():
     bpy.utils.register_class(Level5MeshProperties)
     bpy.utils.register_class(Level5_Panel)
     bpy.types.Mesh.level5_properties = bpy.props.PointerProperty(type=Level5MeshProperties)
+    
+    # Auto Collision Generator
+    bpy.utils.register_class(OBJECT_OT_CreateFloorCollision)
+    bpy.utils.register_class(OBJECT_OT_CreateWallCollision)
+    bpy.types.VIEW3D_MT_object_context_menu.append(auto_collision_menu_func)
 
 def unregister():
     # Level 5 Menu Export
@@ -209,6 +214,11 @@ def unregister():
     bpy.utils.unregister_class(Level5_Panel)
     bpy.utils.unregister_class(Level5MeshProperties)
     del bpy.types.Mesh.level5_properties
+    
+    # Auto Collision Generator
+    bpy.utils.unregister_class(OBJECT_OT_CreateFloorCollision)
+    bpy.utils.unregister_class(OBJECT_OT_CreateWallCollision)
+    bpy.types.VIEW3D_MT_object_context_menu.remove(auto_collision_menu_func)
 
 if __name__ == "__main__":
     register()
