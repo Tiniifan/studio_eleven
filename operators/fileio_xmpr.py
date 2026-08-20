@@ -15,6 +15,18 @@ from ..templates import *
 from ..utils.mesh_faces_utils import MeshFaceUtils
 
 ##########################################
+# CONST 
+##########################################
+
+MESH_TYPE_INT_TO_ENUM = {
+    0: 'UNK',
+    1: 'MODEL',
+    2: 'COLLISION',
+}
+
+MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
+
+##########################################
 # XMPR Function
 ##########################################
 
@@ -183,7 +195,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
     mesh_type = model_data["mesh_type"]
     
     mesh.level5_properties.draw_priority = draw_priority
-    mesh.level5_properties.mesh_type = mesh_type
+    mesh.level5_properties.mesh_type = MESH_TYPE_INT_TO_ENUM.get(mesh_type, 'UNK')
     
     mesh.from_pydata(positions, [], model_data["triangles"])  
     
@@ -370,7 +382,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         single_bind = mesh.parent_bone
 
     draw_priority = mesh.data.level5_properties.draw_priority
-    mesh_type = mesh.data.level5_properties.mesh_type
+    mesh_type = MESH_TYPE_ENUM_TO_INT.get(mesh.data.level5_properties.mesh_type, 0)
 
     texspace_array = [
         list(mesh.data.texspace_location),

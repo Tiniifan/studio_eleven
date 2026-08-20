@@ -51,12 +51,15 @@ class Level5MeshProperties(bpy.types.PropertyGroup):
         max=65535
     )
     
-    mesh_type: IntProperty(
+    mesh_type: EnumProperty(
         name="Mesh Type",
         description="Type of the mesh",
-        default=1,
-        min=0,
-        max=65535
+        items=[
+            ('UNK',       "Unk",       "Unknown mesh type"),
+            ('MODEL',     "Model",     "Model mesh"),
+            ('COLLISION', "Collision", "Collision mesh"),
+        ],
+        default='MODEL'
     )
 
 class Level5_Panel(bpy.types.Panel):
