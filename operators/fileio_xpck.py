@@ -254,29 +254,31 @@ def fileio_open_xpck(context, filepath, file_name = ""):
         armature.rotation_euler = (radians(90), 0, 0)
 
     # Make libs
-    if len(textures_data) > 0 and res_data is not None:
+    if res_data is not None:
         images = {}
-        res_textures_key = list(res_data[res.RESType.TEXTURE_DATA])
         
         # Make images
-        for i in range(len(textures_data)):
-            if textures_data[i] != None:
-                texture_data, width, height, has_alpha = textures_data[i]
-                texture_crc32 = res_textures_key[i]
-                texture_name = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['name']
+        if len(textures_data) > 0:
+            res_textures_key = list(res_data[res.RESType.TEXTURE_DATA])
+            for i in range(len(textures_data)):
+                if textures_data[i] != None:
+                    texture_data, width, height, has_alpha = textures_data[i]
+                    texture_crc32 = res_textures_key[i]
+                    texture_name = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['name']
 
-                # Create a new image
-                bpy.ops.image.new(name=texture_name, width=width, height=height, alpha=has_alpha)
-                image = bpy.data.images[texture_name]
-                if has_alpha == False:
-                    image.alpha_mode = 'NONE'
+                    # Create a new image
+                    bpy.ops.image.new(name=texture_name, width=width, height=height, alpha=has_alpha)
+                    image = bpy.data.images[texture_name]
+                    if has_alpha == False:
+                        image.alpha_mode = 'NONE'
 
-                # Assign pixel data to the image
-                image.pixels.foreach_set(texture_data)
-            
-                images[texture_crc32] = image
+                    # Assign pixel data to the image
+                    image.pixels.foreach_set(texture_data)
+                
+                    images[texture_crc32] = image
 
-            # Make materials
+        # Make materials
+        if res.RESType.MATERIAL_DATA in res_data:
             for material_crc32, material_value in res_data[res.RESType.MATERIAL_DATA].items():
                 material_name = material_value['name']
                 material_textures_crc32 = material_value['textures']

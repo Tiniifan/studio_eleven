@@ -285,7 +285,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
     
-    if lib:
+    if lib is not None:
         material = bpy.data.materials.new(name=model_data['material_name'])
         material.use_nodes = True
         nodes = material.node_tree.nodes
@@ -306,28 +306,6 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
             bsdf.inputs["Emission"].default_value = (0, 0, 0, 1.0)
             links.new(bsdf.outputs["BSDF"], material_output.inputs["Surface"])
 
-        # Get or create the Mix Shader node
-        mix_shader = nodes.get("Mix Shader")
-        if not mix_shader:
-            mix_shader = nodes.new(type="ShaderNodeMixShader")
-            mix_shader.location = (200, 0)
-            mix_shader.inputs[0].default_value = 0.2    
-
-        # Get or create the Transparent BSDF node
-        transparent_bsdf = nodes.get("Transparent BSDF")
-        if not transparent_bsdf:
-            transparent_bsdf = nodes.new(type="ShaderNodeBsdfTransparent")
-            transparent_bsdf.location = (0, -200)
-
-        # Get or create the Alpha Multiplier node
-        alpha_multiplier = nodes.get("Alpha Multiplier")
-        if not alpha_multiplier:
-            alpha_multiplier = nodes.new(type="ShaderNodeMath")
-            alpha_multiplier.name = "Alpha Multiplier"
-            alpha_multiplier.operation = 'MULTIPLY'
-            alpha_multiplier.location = (-300, 200)
-            alpha_multiplier.inputs[1].default_value = 1.0            
-
         # Create texture node
         texture_node = None
         for texture in lib:
@@ -336,6 +314,28 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
 
         # Link only the last texture to principled bsdf then to material
         if texture_node:
+            # Get or create the Mix Shader node
+            mix_shader = nodes.get("Mix Shader")
+            if not mix_shader:
+                mix_shader = nodes.new(type="ShaderNodeMixShader")
+                mix_shader.location = (200, 0)
+                mix_shader.inputs[0].default_value = 0.2    
+
+            # Get or create the Transparent BSDF node
+            transparent_bsdf = nodes.get("Transparent BSDF")
+            if not transparent_bsdf:
+                transparent_bsdf = nodes.new(type="ShaderNodeBsdfTransparent")
+                transparent_bsdf.location = (0, -200)
+
+            # Get or create the Alpha Multiplier node
+            alpha_multiplier = nodes.get("Alpha Multiplier")
+            if not alpha_multiplier:
+                alpha_multiplier = nodes.new(type="ShaderNodeMath")
+                alpha_multiplier.name = "Alpha Multiplier"
+                alpha_multiplier.operation = 'MULTIPLY'
+                alpha_multiplier.location = (-300, 200)
+                alpha_multiplier.inputs[1].default_value = 1.0            
+
             if texture.alpha_mode != "NONE":
                 links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
                 links.new(texture_node.outputs["Alpha"], alpha_multiplier.inputs[0])           
