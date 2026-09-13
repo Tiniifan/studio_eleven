@@ -489,7 +489,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                         )
 
     animation = animation_manager.AnimationManager(
-        Format='XMTN', Version='V2', AnimationName=animation_name,
+        Format='XMTN', Version=version, AnimationName=animation_name,
         FrameCount=scene.frame_end, Tracks=list(tracks.values())
     )
     
@@ -505,8 +505,8 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
 
     tracks = {
         'offset': animation_manager.Track('UVMove', 0, []),
-        'scale': animation_manager.Track('UVScale', 1, []),
-        'rotation': animation_manager.Track('UVRotate', 2, []),
+        'rotation': animation_manager.Track('UVRotate', 1, []),
+        'scale': animation_manager.Track('UVScale', 2, []),
     }
 
     # Vérifie si l'objet est une armature
@@ -629,7 +629,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
         raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
 
     animation = animation_manager.AnimationManager(
-        Format='XIMA', Version='V2', AnimationName=animation_name,
+        Format='XIMA', Version=version, AnimationName=animation_name,
         FrameCount=scene.frame_end, Tracks=list(tracks.values())
     )
 
@@ -783,7 +783,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
         raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
 
     animation = animation_manager.AnimationManager(
-        Format='XMTM', Version='V2', AnimationName=animation_name,
+        Format='XMTM', Version=version, AnimationName=animation_name,
         FrameCount=scene.frame_end, Tracks=list(tracks.values())
     )
 

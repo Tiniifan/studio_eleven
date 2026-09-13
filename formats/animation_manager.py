@@ -128,12 +128,15 @@ class AnimationManager:
             return 0
     
     def Save(self):
+        # XMTN V2 stores the bone count at 0x24, which shifts the name and the compressed data by 4 bytes
+        has_bone_count = self.Format == "XMTN" and self.Version != "V1"
+        
         with BytesIO() as writer:
             header = animation_support.Header(
                 str(self.Format).encode(),
                 0x00,
-                0x28,
-                0x58,
+                0x28 if has_bone_count else 0x24,
+                0x58 if has_bone_count else 0x54,
                 0,
                 0,
                 0,
@@ -151,7 +154,7 @@ class AnimationManager:
                 
             # Write bone count
             writer.seek(0x24)
-            if self.Format == "XMTN":
+            if has_bone_count:
                 writer.write(pack("<I", self.GetDistincHashes()))
   
             # Write animation hash
@@ -159,7 +162,7 @@ class AnimationManager:
             writer.write(self.AnimationName.encode("shift-jis"))
             
             frame_offset = 0x50
-            if self.Format == "XMTN":
+            if has_bone_count:
                 frame_offset = 0x54
             
             # Get the current position
@@ -199,7 +202,7 @@ class AnimationManager:
                     self.CountInTrack(0),
                     self.CountInTrack(1),
                     self.CountInTrack(2),
-                    0,
+                    self.CountInTrack(3),
                 )
                 writer.write(xima_header.Pack())                
             else:
@@ -213,22 +216,22 @@ class AnimationManager:
         
         if header.Track1Count > 0:
             for i in range(header.Track1Count):
-                self.ReadFrameDataV1(reader, tableOffset, 0, trackIndex)
+                tableOffset = self.ReadFrameDataV1(reader, tableOffset, 0, trackIndex)
             trackIndex += 1
             
         if header.Track2Count > 0:
             for i in range(header.Track2Count):
-                self.ReadFrameDataV1(reader, tableOffset, 1, trackIndex)
+                tableOffset = self.ReadFrameDataV1(reader, tableOffset, 1, trackIndex)
             trackIndex += 1
             
         if header.Track3Count > 0:
             for i in range(header.Track3Count):
-                self.ReadFrameDataV1(reader, tableOffset, 2, trackIndex)
+                tableOffset = self.ReadFrameDataV1(reader, tableOffset, 2, trackIndex)
             trackIndex += 1
             
         if header.Track4Count > 0:
             for i in range(header.Track4Count):
-                self.ReadFrameDataV1(reader, tableOffset, 3, trackIndex)
+                tableOffset = self.ReadFrameDataV1(reader, tableOffset, 3, trackIndex)
             trackIndex += 1
     
     def GetAnimationDataV2(self, reader, header, maxNodeBeforeTrack4):
@@ -326,13 +329,13 @@ class AnimationManager:
                     
                     if len(track.Nodes) > 0:
                         for node in track.Nodes:
-                            nameInt = int(node.Name, 16)
+                            nameInt = int(node.Name, 16) if isinstance(node.Name, str) else node.Name
                             dataVectorSize = animation_support.TrackDataCount[track.Name]
-                            dataByteSize = animation_support.TrackDataSize[track.Name]
+                            dataByteSize = animation_support.TrackDataSizeV1[track.Name]
                             nodeHeader = animation_support.Node(
                                 nameInt,
-                                next((key for key, values in animation_support.TrackType.items() if value == track.Name), None),
-                                animation_support.TrackDataType[track.Name],
+                                next((key for key, value in animation_support.TrackType.items() if value == track.Name), None),
+                                animation_support.TrackDataTypeV1[track.Name],
                                 int(node.isMainTrack),
                                 0,
                                 0,
@@ -364,9 +367,9 @@ class AnimationManager:
                             
                             # Write animation data
                             dataOffset = writer.tell()
-                            writer.write(b''.join(frame.Value.ToBytes() for frame in node.Frames))
+                            writer.write(b''.join(self.ValueToBytesV1(frame.Value) for frame in node.Frames))
                             
-                            if animation_support.TrackDataSize[track.Name] != 4:
+                            if dataByteSize != 4:
                                 self.WriteAlignment(writer, 4, 0)
                                 
                             tableHeader = animation_support.TableHeader(
@@ -490,21 +493,14 @@ class AnimationManager:
         if all(t.Index != trackNum for t in self.Tracks) and node.NodeType != 0:
             self.Tracks.append(Track(animation_support.TrackType[node.NodeType], trackNum))
             
-        # Get data index for frame
-        reader.seek(tableHeader.KeyFrameOffset)
-        dummy = [unpack("<H", reader.read(2))[0] for i in range(node.DifferentFrameLength // 2)]
-        dataIndexes = list(set(dummy))
-        
-        # Get different frame index
+        # Get different frame index (one key per data entry, in data order)
         reader.seek(tableHeader.DifferentKeyFrameOffset)
-        dummy = [unpack("<H", reader.read(2))[0] for i in range(node.FrameLength // 2)]
-        differentFrames = list(set(dummy))
+        differentFrames = [unpack("<H", reader.read(2))[0] for i in range(node.FrameLength // 2)]
         frames = []
         
         for j in range(len(differentFrames)):
             # Get frame
             frame = differentFrames[j]
-            dataIndex = dataIndexes[j]
             
             # Seek data offset
             reader.seek(tableHeader.DataOffset + j * node.DataVectorSize * node.DataByteSize)
@@ -526,6 +522,8 @@ class AnimationManager:
             frames.append(Frame(frame, self.ConvertAnimDataToObject(animData, node.NodeType)))
 
         self.Tracks[trackIndex].Nodes.append(Node(node.BoneNameHash, node.IsInMainTrack == 1, frames))
+        
+        return tableOffset
     
     def ReadFrameDataV2(self, reader, offset, count, dataOffset, nameHashes, track, trackIndex):
         for i in range(offset, offset + count):
@@ -599,6 +597,13 @@ class AnimationManager:
     def ValueToByteArray(self, value): # Useless
         return value.ToBytes()
     
+    def ValueToBytesV1(self, value):
+        # V1 stores rotations as float quaternions, V2 as normalized shorts
+        if isinstance(value, BoneRotation):
+            return pack("<ffff", value.X, value.Y, value.Z, value.W)
+        
+        return value.ToBytes()
+    
     def GetDistincHashes(self):
         hashes = set()
         
@@ -621,7 +626,7 @@ class AnimationManager:
         return nameHashes
     
     def FillArray(self, inputArray: list, size):
-        result = [int] * size
+        result = [0] * size
         lastIndex = 0
         
         for i in range(len(inputArray)):
@@ -633,7 +638,7 @@ class AnimationManager:
             else:
                 nextValue = size
                 
-            for j in range(lastValue, nextValue):
+            for j in range(lastValue, min(nextValue, size)):
                 result[j] = lastIndex
             lastIndex += 1
             
@@ -641,8 +646,8 @@ class AnimationManager:
     
     def FixNode(self, nodes: list[Node], frameCount):
         for node in nodes:
-            if node.Frames[-1].Key != frameCount:
-                node.Frames.append(Frame(frameCount, node.Frames[-1]).Value)
+            if node.Frames and node.Frames[-1].Key != frameCount:
+                node.Frames.append(Frame(frameCount, node.Frames[-1].Value))
     
     def WriteAlignment(self, writer, alignment=16, alignment_byte=0x0):
         remainder = writer.tell() % alignment
