@@ -2,6 +2,7 @@ import io
 import struct
 import zlib
 from ..compression import *
+from . import xcma
 
 def open(data):
     camera_hashes = []
@@ -33,7 +34,7 @@ def write(cameras):
 
     for camera_object in cameras:
         animation_name = camera_object[0]
-        out += zlib.crc32(animation_name.encode("utf-8")).to_bytes(4, 'little')
+        out += xcma.get_animation_hash(animation_name).to_bytes(4, 'little')
         out += int(0).to_bytes(4, 'little')
         
     return lz10.compress(out)

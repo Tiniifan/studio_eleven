@@ -61,115 +61,121 @@ def image_to_tile(px, height, width):
                 out += int(tiles.index(tile)).to_bytes(2, 'little')          
     return out
 
+# IMGC pixel decoders: (data as uint8 array reshaped per pixel) -> (r, g, b, a) integer arrays
+def _decode_pixels(image_format, data, pixel_count):
+    name = image_format.name
+    size = image_format.size
+    
+    # 4 bits per pixel formats read the whole stream with a nibble index
+    if name in ("L4", "A4"):
+        indexes = np.arange(pixel_count)
+        nibbles = ((data[indexes // 2].astype(np.int32) >> ((indexes & 1) * 4)) & 0x0F) * 0x11
+        full = np.full(pixel_count, 255, dtype=np.int32)
+        if name == "L4":
+            return nibbles, nibbles, nibbles, full
+        return full, full, full, nibbles
+    
+    px = data[:pixel_count * size].reshape(pixel_count, size).astype(np.int32)
+    opaque = np.full(pixel_count, 255, dtype=np.int32)
+    
+    if name == "RGBA8":
+        return px[:, 3], px[:, 2], px[:, 1], px[:, 0]
+    elif name == "RGBA4":
+        value = (px[:, 1] << 8) | px[:, 0]
+        return ((value >> 12) & 0xF) * 16, ((value >> 8) & 0xF) * 16, ((value >> 4) & 0xF) * 16, (value & 0xF) * 16
+    elif name == "RGBA5551":
+        b1, b2 = px[:, 0], px[:, 1]
+        return (b1 >> 3) & 0x1F, (b1 & 0x07) | ((b2 >> 6) & 0x03), (b2 >> 1) & 0x1F, (b2 & 0x01) * 255
+    elif name == "RBGR888":
+        return px[:, 2], px[:, 1], px[:, 0], opaque
+    elif name == "RGB565":
+        value = (px[:, 1] << 8) | px[:, 0]
+        r = (value >> 11) & 0x1F
+        g = (value >> 5) & 0x3F
+        b = value & 0x1F
+        return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), opaque
+    elif name == "LA8":
+        return px[:, 0], px[:, 0], px[:, 0], px[:, 1]
+    elif name == "L8":
+        return px[:, 0], px[:, 0], px[:, 0], opaque
+    elif name == "A8":
+        return opaque, opaque, opaque, px[:, 0]
+    elif name == "LA4":
+        luminance = ((px[:, 0] >> 4) & 0x0F) * 0x11
+        return luminance, luminance, luminance, (px[:, 0] & 0x0F) * 0x11
+    elif name == "ETC1":
+        return px[:, 0], px[:, 1], px[:, 2], opaque
+    elif name == "ETC1A4":
+        return px[:, 0], px[:, 1], px[:, 2], px[:, 3]
+    
+    raise NotImplementedError(f"Image format {name} not implemented")
+
+def imgc_swizzle_points(width, height, point_count):
+    """Vectorized IMGCSwizzle.get_point_sequence(): z-order inside 8x8 tiles."""
+    stride_width = (width + 0x7) & ~0x7
+    width_in_tiles = (stride_width + 7) // 8
+    
+    indexes = np.arange(point_count, dtype=np.int64)
+    macro_tile = indexes // 64
+    
+    x = ((macro_tile % width_in_tiles) * 8) ^ (((indexes >> 1) & 1) | (((indexes >> 3) & 1) << 1) | (((indexes >> 5) & 1) << 2))
+    y = ((macro_tile // width_in_tiles) * 8) ^ ((indexes & 1) | (((indexes >> 2) & 1) << 1) | (((indexes >> 4) & 1) << 2))
+    
+    return x, y
+
 def decode_image(tile, image_data, image_format, width, height, bit_depth):
-    table_value = BytesIO(tile).getvalue()
+    """Decode an IMGC image into a flat float32 RGBA array (bottom row first, like Blender pixels)."""
+    table_value = bytes(tile)
+    table_value = table_value[:len(table_value) // 2 * 2]
     
-    table_value_len = len(table_value)
-
-    if table_value_len % 2 != 0 or table_value_len % 4 != 0:
-        new_table_value_len = (table_value_len // 2) * 2
-        table_value = table_value[:new_table_value_len]   
-    
-    tex_value = BytesIO(image_data).getvalue()
-
-    table_length = len(table_value)
     entry_length = 2 if struct.unpack('<H', table_value[:2])[0] != 0x453 else 4
-
-    ms = bytearray()
-    for i in range(0, table_length, entry_length):
-        entry = struct.unpack('<H' if entry_length == 2 else '<I', table_value[i:i+entry_length])[0]
-        if entry in (0xFFFF, 0xFFFFFFFF):
-            ms.extend(b'\x00' * (64 * bit_depth // 8))
-        elif entry * (64 * bit_depth // 8) < len(tex_value):
-            ms.extend(tex_value[entry * (64 * bit_depth // 8):(entry + 1) * (64 * bit_depth // 8)])
-
-    imgc_swizzle = IMGCSwizzle(width, height)
-
-    if image_format.name == "ETC1A4":
-        image_data_after_swizzle = bytearray(etc1.ETC1(True, width, height).decompress(ms))
-    elif image_format.name == "ETC1":
-        image_data_after_swizzle = bytearray(etc1.ETC1(False, width, height).decompress(ms))
-    else:
-        image_data_after_swizzle = ms
+    entries = np.frombuffer(table_value, dtype='<u2' if entry_length == 2 else '<u4', count=len(table_value) // entry_length).astype(np.int64)
     
-    pixel_count = width * height
-    pixels = [[0.0, 0.0, 0.0, 0.0] for _ in range(width * height)]
-
-    for i, swizzled_point in zip(range(pixel_count), imgc_swizzle.get_point_sequence()):
-        dataIndex = i * image_format.size
-        group = image_data_after_swizzle[dataIndex:dataIndex + image_format.size]
-        color = Color([0, 0, 0, 0])
-        if image_format.name == "L4" or image_format.name == "A4":
-            color = image_format.decode(image_data_after_swizzle, dataIndex)
-        else:
-            color = image_format.decode(group, dataIndex)
-
-        # Calculer les indices x, y pour accéder directement à la position dans le tableau pixels
-        x, y = swizzled_point.X, swizzled_point.Y
-
-        # Inverser l'indice y
-        inverted_y = height - 1 - y
-
-        if 0 <= x < width and 0 <= inverted_y < height:
-            pixels[(inverted_y * width) + x] = [color.r, color.g, color.b, color.a]
-
-    # Convertir les valeurs de pixels en float et les aplatir
-    pixels = [chan / 255.0 for px in pixels for chan in px]
-
-    return pixels, width, height, image_format.has_alpha
-
-def decode_image_optimized(tile, image_data, image_format, width, height, bit_depth):
-    table_value = np.frombuffer(tile, dtype=np.uint8)
-    table_value_len = len(table_value)
-
-    # Ensure table_value length is even and divisible by 4
-    if table_value_len % 4 != 0:
-        table_value = table_value[:table_value_len - (table_value_len % 4)]
-    
-    tex_value = np.frombuffer(image_data, dtype=np.uint8)
-    table_length = len(table_value)
-    entry_length = 2 if struct.unpack('<H', table_value[:2].tobytes())[0] != 0x453 else 4
     block_size = 64 * bit_depth // 8
-
-    ms = np.zeros((table_length // entry_length * block_size,), dtype=np.uint8)
-    ms_offset = 0
-
-    for i in range(0, table_length, entry_length):
-        entry = struct.unpack('<H' if entry_length == 2 else '<I', table_value[i:i+entry_length].tobytes())[0]
-        if entry in (0xFFFF, 0xFFFFFFFF):
-            ms[ms_offset:ms_offset + block_size] = 0
-        else:
-            start = entry * block_size
-            end = start + block_size
-            if start < len(tex_value):
-                ms[ms_offset:ms_offset + block_size] = tex_value[start:end]
-        ms_offset += block_size
-
-    imgc_swizzle = IMGCSwizzle(width, height)
-
+    tex_value = np.frombuffer(bytes(image_data), dtype=np.uint8)
+    
+    # Empty tiles are filled with 0, tiles pointing outside of the data are skipped
+    empty = (entries == 0xFFFF) | (entries == 0xFFFFFFFF)
+    keep = empty | (entries * block_size < len(tex_value))
+    entries = entries[keep]
+    empty = empty[keep]
+    
+    block_count = len(tex_value) // block_size + 1
+    blocks = np.zeros(block_count * block_size, dtype=np.uint8)
+    blocks[:len(tex_value)] = tex_value
+    blocks = blocks.reshape(block_count, block_size)
+    
+    ms = blocks[np.where(empty, 0, entries)]
+    ms[empty] = 0
+    ms = ms.reshape(-1)
+    
     if image_format.name == "ETC1A4":
-        image_data_after_swizzle = np.frombuffer(etc1.ETC1(True, width, height).decompress(ms.tobytes()), dtype=np.uint8)
+        ms = np.frombuffer(etc1.ETC1(True, width, height).decompress(ms), dtype=np.uint8)
     elif image_format.name == "ETC1":
-        image_data_after_swizzle = np.frombuffer(etc1.ETC1(False, width, height).decompress(ms.tobytes()), dtype=np.uint8)
-    else:
-        image_data_after_swizzle = ms
+        ms = np.frombuffer(etc1.ETC1(False, width, height).decompress(ms), dtype=np.uint8)
     
     pixel_count = width * height
-    pixels = np.zeros((pixel_count, 4), dtype=np.float32)
-
-    for i, swizzled_point in zip(range(pixel_count), imgc_swizzle.get_point_sequence()):
-        dataIndex = i * image_format.size
-        group = image_data_after_swizzle[dataIndex:dataIndex + image_format.size]
-        color = image_format.decode(group)
-
-        # Calculate the indices x, y to directly access the position in the pixels array
-        x, y = swizzled_point.X, swizzled_point.Y
-        inverted_y = height - 1 - y
-
-        if 0 <= x < width and 0 <= inverted_y < height:
-            pixels[(inverted_y * width) + x] = [color.r / 255.0, color.g / 255.0, color.b / 255.0, color.a / 255.0]
-
-    # Flatten the array
-    pixels = pixels.flatten()
-
+    
+    # Pad the stream so truncated data decodes to black instead of failing
+    needed = pixel_count * image_format.size + 1
+    if len(ms) < needed:
+        padded = np.zeros(needed, dtype=np.uint8)
+        padded[:len(ms)] = ms
+        ms = padded
+    
+    r, g, b, a = _decode_pixels(image_format, ms, pixel_count)
+    
+    x, y = imgc_swizzle_points(width, height, pixel_count)
+    inverted_y = height - 1 - y
+    valid = (x < width) & (inverted_y >= 0) & (inverted_y < height)
+    
+    pixels = np.zeros((pixel_count, 4), dtype=np.float64)
+    target = inverted_y[valid] * width + x[valid]
+    pixels[target, 0] = r[valid]
+    pixels[target, 1] = g[valid]
+    pixels[target, 2] = b[valid]
+    pixels[target, 3] = a[valid]
+    
+    pixels = (pixels / 255.0).astype(np.float32).reshape(-1)
+    
     return pixels, width, height, image_format.has_alpha

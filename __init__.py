@@ -22,12 +22,14 @@ if "fileio_animation_manager" in locals():
     importlib.reload(animation_manager)
 
 if "fileio_xpck" in locals():
+    importlib.reload(xpck_settings)
     importlib.reload(fileio_xpck) 
     importlib.reload(xpck)  
     importlib.reload(imgc)
     importlib.reload(mbn)
     importlib.reload(res)
     importlib.reload(minf)
+    importlib.reload(xcmt)
 
 bl_info = {
     "name": "Studio Eleven",
@@ -113,32 +115,14 @@ def draw_menu_import(self, context):
 def register():
     # Level 5 Menu Export
     bpy.utils.register_class(BoneCheckbox)
-    bpy.utils.register_class(ExportXC_AddAnimationItem)
-    bpy.utils.register_class(ExportXC_RemoveAnimationItem)
-    bpy.utils.register_class(Animation)
-    bpy.utils.register_class(AnimationItem)
-    bpy.utils.register_class(ExportXC_AddOutlineItem)
-    bpy.utils.register_class(ExportXC_RemoveOutlineItem)
-    bpy.utils.register_class(OutlineMeshAssignment)
-    bpy.utils.register_class(OutlineItem)
     bpy.utils.register_class(TexturePropertyGroup)
     bpy.utils.register_class(LibPropertyGroup)
     bpy.utils.register_class(MeshPropertyGroup)
-    bpy.utils.register_class(CameraPropertyGroup)
     bpy.utils.register_class(ArchivePropertyGroup)
     bpy.utils.register_class(TexprojPropertyGroup)
     
-    bpy.types.Scene.animation_armature = bpy.props.CollectionProperty(type=Animation)
-    bpy.types.Scene.animation_uv = bpy.props.CollectionProperty(type=Animation)
-    bpy.types.Scene.animation_material = bpy.props.CollectionProperty(type=Animation)
-    bpy.types.Scene.animation_camera = bpy.props.CollectionProperty(type=Animation)
-    bpy.types.Scene.animation_items_armature = bpy.props.CollectionProperty(type=AnimationItem)
-    bpy.types.Scene.animation_items_uv = bpy.props.CollectionProperty(type=AnimationItem)
-    bpy.types.Scene.animation_items_material = bpy.props.CollectionProperty(type=AnimationItem)
-    bpy.types.Scene.animation_items_camera = bpy.props.CollectionProperty(type=AnimationItem)
-    
-    bpy.types.Scene.outline_items = bpy.props.CollectionProperty(type=OutlineItem)
-    bpy.types.Scene.outline_mesh_assignments = bpy.props.CollectionProperty(type=OutlineMeshAssignment)
+    # XPCK export settings saved on objects
+    register_settings()
     
     bpy.utils.register_class(ExportAnimation)
     bpy.utils.register_class(ExportXC)
@@ -149,6 +133,8 @@ def register():
     
     # Level 5 Menu Import
     bpy.utils.register_class(ImportAnimation)
+    bpy.utils.register_class(ImportAnimationChoice)
+    bpy.utils.register_class(ImportXC_ChooseAnimations)
     bpy.utils.register_class(ImportXC)
     bpy.utils.register_class(ImportXMPR)
     bpy.utils.register_class(ImportXCMA)
@@ -173,38 +159,21 @@ def unregister():
     bpy.utils.unregister_class(ExportXPRM)
     bpy.utils.unregister_class(ExportXCMA)
     bpy.utils.unregister_class(Level5_Menu_Export)
-    bpy.utils.unregister_class(Animation)
-    bpy.utils.unregister_class(AnimationItem)
-    bpy.utils.unregister_class(OutlineMeshAssignment)
-    bpy.utils.unregister_class(OutlineItem)    
     bpy.utils.unregister_class(TexturePropertyGroup)
     bpy.utils.unregister_class(LibPropertyGroup)
     bpy.utils.unregister_class(MeshPropertyGroup)
-    bpy.utils.unregister_class(CameraPropertyGroup)
     bpy.utils.unregister_class(TexprojPropertyGroup)
     bpy.utils.unregister_class(ArchivePropertyGroup)
     
-    del bpy.types.Scene.animation_armature
-    del bpy.types.Scene.animation_uv
-    del bpy.types.Scene.animation_material
-    del bpy.types.Scene.animation_camera
-    del bpy.types.Scene.animation_items_armature
-    del bpy.types.Scene.animation_items_uv
-    del bpy.types.Scene.animation_items_material
-    del bpy.types.Scene.animation_items_camera
+    unregister_settings()
     
-    del bpy.types.Scene.outline_items
-    del bpy.types.Scene.outline_mesh_assignments   
-    
-    bpy.utils.unregister_class(ExportXC_AddAnimationItem)
-    bpy.utils.unregister_class(ExportXC_RemoveAnimationItem)
-    bpy.utils.unregister_class(ExportXC_AddOutlineItem)
-    bpy.utils.unregister_class(ExportXC_RemoveOutlineItem)    
     bpy.types.TOPBAR_MT_file_export.remove(draw_menu_export)
     
     # Level 5 Menu Import
     bpy.utils.unregister_class(ImportAnimation)
     bpy.utils.unregister_class(ImportXC)
+    bpy.utils.unregister_class(ImportXC_ChooseAnimations)
+    bpy.utils.unregister_class(ImportAnimationChoice)
     bpy.utils.unregister_class(ImportXMPR)
     bpy.utils.unregister_class(ImportXCMA)
     bpy.utils.unregister_class(Level5_Menu_Import)      

@@ -1,37 +1,40 @@
 import struct
 
 def lzss_decompress(data):
-    output = []
+    output = bytearray()
     p = 4
-    op = 0
+    data_length = len(data)
 
     mask = 0
     flag = 0
 
-    while p < len(data):
+    while p < data_length:
         if mask == 0:
             flag = data[p]
             p += 1
             mask = 0x80
 
         if (flag & mask) == 0:
-            if p + 1 > len(data):
+            if p + 1 > data_length:
                 break
             output.append(data[p])
             p += 1
-            op += 1
         else:
-            if p + 2 > len(data):
+            if p + 2 > data_length:
                 break
             dat = (data[p] << 8) | data[p + 1]
             p += 2
             pos = (dat & 0x0FFF) + 1
             length = (dat >> 12) + 3
 
-            for i in range(length):
-                if op - pos >= 0:
-                    output.append(output[op - pos] if op - pos < len(output) else 0)
-                    op += 1
+            op = len(output)
+            if op >= pos:
+                if pos >= length:
+                    # Non overlapping copy
+                    output += output[op - pos:op - pos + length]
+                else:
+                    for i in range(length):
+                        output.append(output[-pos])
 
         mask >>= 1
         

@@ -1,7 +1,4 @@
-import struct
-
-from typing import List
-from ..utils.img_format import RGB
+import numpy as np
 
 modifiers = [
     [2, 8, -2, -8],
@@ -34,93 +31,53 @@ class ETC1:
 class ETC1Decoder:
     @staticmethod
     def decompress_etc1a4(data, width, height, has_alpha_channel):
-        result = bytearray(width * height * (4 if has_alpha_channel else 3))
-        offset = 0
-        write_offset = 0
-
-        for block_y in range(0, height, 4):
-            for block_x in range(0, width, 4):
-                alphas = ETC1Decoder.decode_block_alphas(data[offset:offset + 8]) if has_alpha_channel else None
-                offset += 8 if has_alpha_channel else 0
-
-                colors = ETC1Decoder.decode_block_colors(data[offset:offset + 8])
-                offset += 8
-
-                block = bytearray(64 if has_alpha_channel else 48)
-                for i in range(16):
-                    idx = i * 4 if has_alpha_channel else i * 3
-                    block[idx:idx + 3] = colors[i * 3:i * 3 + 3]
-                    if has_alpha_channel:
-                        block[idx + 3] = alphas[i]
-
-                result[write_offset:write_offset + len(block)] = block
-                write_offset += len(block)
-
-        return bytes(result)
-
-    @staticmethod
-    def decode_block_colors(data):
-        result = bytearray(48)  # Allocate memory for decoded colors
-
-        lsb = struct.unpack('<H', data[:2])[0]
-        msb = struct.unpack('<H', data[2:4])[0]
-        flags = data[4]
-        B = data[5]
-        G = data[6]
-        R = data[7]
-
+        """Decode every 4x4 block at once; pixels of a block are written in pixel_order."""
+        block_count = ((height + 3) // 4) * ((width + 3) // 4)
+        block_length = 16 if has_alpha_channel else 8
+        
+        source = np.frombuffer(bytes(data), dtype=np.uint8)[:block_count * block_length]
+        blocks = np.zeros(block_count * block_length, dtype=np.uint8)
+        blocks[:len(source)] = source
+        blocks = blocks.reshape(block_count, block_length).astype(np.int64)
+        
+        alpha_bytes = blocks[:, :8] if has_alpha_channel else None
+        color_bytes = blocks[:, 8:] if has_alpha_channel else blocks
+        
+        lsb = color_bytes[:, 0] | (color_bytes[:, 1] << 8)
+        msb = color_bytes[:, 2] | (color_bytes[:, 3] << 8)
+        flags = color_bytes[:, 4]
+        
         flip_bit = (flags & 1) == 1
         diff_bit = (flags & 2) == 2
-        color_depth = 32 if diff_bit else 16
         table0 = (flags >> 5) & 7
         table1 = (flags >> 2) & 7
-
-        # Decode color0 based on color depth
-        color0 = RGB(R * color_depth // 256, G * color_depth // 256, B * color_depth // 256)
-
-        # Decode color1 based on diff_bit
-        colors1 = RGB(0, 0, 0)
-        if not diff_bit:
-            colors1 = RGB(R % 16, G % 16, B % 16)
-        else:
-            c0 = color0
-            rd = RGB.sign3(R % 8)
-            gd = RGB.sign3(G % 8)
-            bd = RGB.sign3(B % 8)
-            colors1 = RGB(c0.R + rd, c0.G + gd, c0.B + bd)
-
-        # Scale color0 and color1 based on color depth
-        color0 = color0.scale(color_depth)
-        colors1 = colors1.scale(color_depth)
-
-        flip_bit_mask = 2 if flip_bit else 8
-        t = 0
-
-        # Iterate over pixel order and apply modifiers to get final colors
-        for i in pixel_order:
-            basec = color0 if (i & flip_bit_mask) == 0 else colors1
-            mod = modifiers[table0] if (i & flip_bit_mask) == 0 else modifiers[table1]
-            c = basec + mod[(msb >> i) % 2 * 2 + (lsb >> i) % 2]
-            result[t] = c.R
-            result[t + 1] = c.G
-            result[t + 2] = c.B
-            t += 3
-
-        return bytes(result)
-
-    @staticmethod
-    def decode_block_alphas(block_data):
-        # Unpack alpha data from block
-        canal_alpha = struct.unpack('<Q', block_data)[0] if True else 0xFFFFFFFFFFFFFFFF
-
-        alphas = bytearray(16)  # Allocate memory for decoded alphas
-
-        t = 0
-
-        # Iterate over pixel order and extract alpha values
-        for i in pixel_order:
-            alphas[t] = (canal_alpha >> (4 * i)) % 16 * 17
-            t += 1
-
-        return bytes(alphas)
-
+        
+        # Channels in R, G, B order
+        channels = np.stack([color_bytes[:, 7], color_bytes[:, 6], color_bytes[:, 5]], axis=1)
+        diff = diff_bit[:, None]
+        
+        color0 = np.where(diff, channels >> 3, channels >> 4)
+        sign3 = (channels % 8 + 4) % 8 - 4
+        color1 = np.where(diff, color0 + sign3, channels % 16)
+        
+        # 16 levels are scaled with * 17, 32 levels with bit replication
+        color0 = np.where(diff, (color0 << 3) | (color0 >> 2), color0 * 17)
+        color1 = np.where(diff, (color1 << 3) | (color1 >> 2), color1 * 17)
+        
+        modifier_table = np.array(modifiers, dtype=np.int64)
+        flip_bit_mask = np.where(flip_bit, 2, 8)
+        
+        channel_count = 4 if has_alpha_channel else 3
+        result = np.zeros((block_count, 16, channel_count), dtype=np.uint8)
+        
+        for t, i in enumerate(pixel_order):
+            use_color0 = (i & flip_bit_mask) == 0
+            base = np.where(use_color0[:, None], color0, color1)
+            table = np.where(use_color0, table0, table1)
+            modifier = modifier_table[table, ((msb >> i) & 1) * 2 + ((lsb >> i) & 1)]
+            result[:, t, :3] = np.clip(base + modifier[:, None], 0, 255)
+            
+            if has_alpha_channel:
+                result[:, t, 3] = ((alpha_bytes[:, i // 2] >> ((i & 1) * 4)) & 0x0F) * 17
+        
+        return result.tobytes()

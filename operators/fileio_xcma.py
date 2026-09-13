@@ -90,7 +90,20 @@ def create_camera(frame_start, hash_name, cam_values):
         for frame, location in cam_values['aim'].items():
             bpy.context.scene.frame_set(frame_start +frame)       
             level5_camera.target_obj.location = [location[0], location[2]*-1, location[1]]
-            level5_camera.target_obj.keyframe_insert(data_path="location")  
+            level5_camera.target_obj.keyframe_insert(data_path="location")
+
+    return level5_camera
+
+def set_camera_settings(level5_camera, camera, archive_name=""):
+    """Remember the animation of an imported camera (the file only stores the hash of its name)."""
+    camera_eleven = level5_camera.camera_obj.parent
+
+    if camera_eleven is None:
+        return
+
+    camera_eleven.level5_camera.animation_name = "0x%08X" % camera['hash']
+    camera_eleven.level5_camera.speed = max(0.1, camera['speed'])
+    camera_eleven.level5_camera.archive_name = archive_name
 
 def fileio_open_xcma(context, filepath):
     file_name = os.path.splitext(os.path.basename(filepath))[0]
@@ -98,12 +111,13 @@ def fileio_open_xcma(context, filepath):
     # Open the XCMA file in binary mode
     with open(filepath, 'rb') as file:    
         # Read the contents of the file and extract hash name and camera values
-        hash_name, cam_values = xcma.open(file.read())
-        create_camera(0, file_name, cam_values)
+        camera = xcma.read(file.read())
+        level5_camera = create_camera(0, file_name, camera['values'])
+        set_camera_settings(level5_camera, camera)
 
     return {'FINISHED'}
     
-def fileio_write_xcma(context, animation_name, camera_speed, camera, target):
+def fileio_write_xcma(context, animation_name, camera_speed, camera, target, version="V2"):
     # Get the current scene
     scene = context.scene
     
@@ -162,7 +176,7 @@ def fileio_write_xcma(context, animation_name, camera_speed, camera, target):
     for key in cam_values:
         cam_values[key] = dict(sorted(cam_values[key].items()))
 
-    return xcma.write(animation_name, camera_speed, cam_values)
+    return xcma.write(animation_name, camera_speed, cam_values, version)
          
 ##########################################
 # Register class
@@ -202,24 +216,39 @@ class ExportXCMA(bpy.types.Operator, ExportHelper):
     
     animation_name: StringProperty(
         name="Animation name",
-        description="Write a animation name",
+        description="Write a animation name (empty: use the name saved on the camera)",
         default="",
-    )  
+    )
+
+    version: EnumProperty(
+        name="Version",
+        description="Camera format version",
+        items=[
+            ("V1", "V1", "Inazuma Eleven Go"),
+            ("V2", "V2", "Other games"),
+        ],
+        default="V2",
+    )
 
     def execute(self, context):
         if (self.camera_name == ""):
             self.report({'ERROR'}, "No camera found")
             return {'FINISHED'}
-            
-        if (self.animation_name == ""):
+
+        camera_eleven = bpy.data.objects.get(self.camera_name)
+
+        animation_name = self.animation_name
+        if animation_name == "":
+            animation_name = camera_eleven.level5_camera.animation_name
+
+        if (animation_name == ""):
             self.report({'ERROR'}, "Animation name cannot be null")
-            return {'FINISHED'}               
-            
+            return {'FINISHED'}
+
         with open(self.filepath, "wb") as f:
-            camera_eleven = bpy.data.objects.get(self.camera_name)
             camera, target = CameraElevenObject.get_camera_and_target(camera_eleven)
-            f.write(fileio_write_xcma(context, self.animation_name, self.camera_speed, camera, target))
-            return {'FINISHED'} 
+            f.write(fileio_write_xcma(context, animation_name, self.camera_speed, camera, target, self.version))
+            return {'FINISHED'}
         
 class ImportXCMA(bpy.types.Operator, ImportHelper):
     bl_idname = "import.cmr2"

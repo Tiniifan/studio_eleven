@@ -1,5 +1,6 @@
 import importlib
 
+from .xpck_settings import *
 from .fileio_xmpr import *
 from .fileio_animation_manager import *
 from .fileio_xpck import *

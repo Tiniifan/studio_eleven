@@ -40,15 +40,68 @@ class CameraSettingHeader:
 # XCMA Open Function
 ##########################################
 
+# List of camera types
+cam_types = ["location", "aim", "focal_length", "roll", "unk"]
+
+def is_v1(data):
+    # V1 (Inazuma Eleven Go) stores the track blocks right after a 0x14 bytes animation header
+    return struct.unpack_from('<I', data, 8)[0] == 0x14
+
 def open(data):
+    camera = read(data)
+    return camera['hash'], camera['values']
+
+def read(data):
+    """Return a dict with hash, speed, frame_count, version and values ({cam_type: {frame: value}})."""
+    if is_v1(data):
+        return read_v1(data)
+    else:
+        return read_v2(data)
+
+def read_v1(data):
+    cam_values = {}
+    
+    magic, data_offset, data_skip_offset = struct.unpack_from('<3I', data, 0)
+    track_counts = struct.unpack_from('<5I', data, 0x0C)
+    animation_hash, empty_block, frame_count, unk, cam_speed = struct.unpack_from('<IiiIf', data, data_offset)
+    
+    block_offset = data_offset + data_skip_offset
+    
+    for type_index, track_count in enumerate(track_counts):
+        for i in range(track_count):
+            compressed_offset, ghost_frame_offset, frame_offset, value_offset, block_length = struct.unpack_from('<5I', data, block_offset)
+            motion = compressor.decompress(data[block_offset + compressed_offset:block_offset + block_length])
+            
+            # Motion header (0x30 bytes): hash, flags, 0, frame count, key count, ghost frame count,
+            # value size, component count, key size, ghost frames length, frames length, values length
+            key_count = struct.unpack_from('<i', motion, 0x10)[0]
+            value_size = struct.unpack_from('<i', motion, 0x18)[0]
+            component_count = struct.unpack_from('<i', motion, 0x1C)[0]
+            
+            if value_size != 4:
+                raise NotImplementedError(f"Camera value size {value_size} not implemented")
+            
+            frames_indexes = struct.unpack_from(f'<{key_count}h', motion, frame_offset)
+            values = cam_values.setdefault(cam_types[type_index], {})
+            
+            for k in range(key_count):
+                anim_data = list(struct.unpack_from(f'<{component_count}f', motion, value_offset + k * 4 * component_count))
+                
+                if len(anim_data) == 1:
+                    anim_data = anim_data[0]
+                
+                values[frames_indexes[k]] = anim_data
+            
+            block_offset += block_length
+    
+    return {'hash': animation_hash, 'speed': cam_speed, 'frame_count': frame_count, 'version': 'V1', 'values': cam_values}
+
+def read_v2(data):
     # Initialize a stream from the data
     data_stream = io.BytesIO(data)
     
     # Initialize a dictionary to store camera values
     cam_values = {}
-    
-    # List of camera types
-    cam_types = ["location", "aim", "focal_length", "roll", "unk"]
     
     # Read the header
     header = Header(*struct.unpack(Header.header_format, data_stream.read(56)))
@@ -134,7 +187,7 @@ def open(data):
             # Store values in cam_values dictionary
             cam_values[cam_types[i]] = values
 
-    return header.animation_hash, cam_values
+    return {'hash': header.animation_hash, 'speed': header.cam_speed, 'frame_count': header.frame_count, 'version': 'V2', 'values': cam_values}
     
 ##########################################
 # XCMA Save Function
@@ -150,11 +203,96 @@ def get_frame_count(cam_values):
 
     return max_key
 
-def write(animation_name, camera_speed, cam_values):
+def get_animation_hash(animation_name):
+    """Names written as 0xXXXXXXXX are raw hashes (imported cameras only store the hash of their name)."""
+    if is_hash_name(animation_name):
+        return int(animation_name, 16)
+    
+    return zlib.crc32(animation_name.encode("shift-jis"))
+
+def is_hash_name(animation_name):
+    return len(animation_name) == 10 and animation_name[:2].lower() == "0x" and all(c in "0123456789abcdefABCDEF" for c in animation_name[2:])
+
+def fill_ghost_frames(frames_indexes, size):
+    """For each frame, the index of the last key at or before it."""
+    result = [0] * size
+    
+    for i in range(len(frames_indexes)):
+        next_value = frames_indexes[i + 1] if i != len(frames_indexes) - 1 else size
+        
+        for j in range(frames_indexes[i], min(next_value, size)):
+            result[j] = i
+    
+    return result
+
+def write_alignment(stream, alignment=4):
+    remainder = len(stream) % alignment
+    if remainder > 0:
+        stream += bytes(alignment - remainder)
+
+def write(animation_name, camera_speed, cam_values, version="V2"):
+    if version == "V1":
+        return write_v1(animation_name, camera_speed, cam_values)
+    else:
+        return write_v2(animation_name, camera_speed, cam_values)
+
+def write_v1(animation_name, camera_speed, cam_values):
+    file_bytes = io.BytesIO()
+    
+    frame_count = get_frame_count(cam_values)
+    tracks = [cam_values.get(cam_type, {}) for cam_type in cam_types[:4]]
+    
+    file_bytes.write(struct.pack('<8I', 0x414D4358, 0x20, 0x14, *[int(len(track) > 0) for track in tracks], 0x00))
+    file_bytes.write(struct.pack('<IiiIf', get_animation_hash(animation_name), 0x00, frame_count, 0x02, camera_speed))
+    
+    for track in tracks:
+        if not track:
+            continue
+        
+        frames_indexes = list(track.keys())
+        first_value = track[frames_indexes[0]]
+        component_count = 1 if isinstance(first_value, (int, float)) else len(first_value)
+        
+        motion = bytearray()
+        motion += struct.pack('<IBBhi9i', 
+            0xC55BEBD1, 0x01, 0x02, 0x01, 0x00, 
+            frame_count, 
+            len(frames_indexes), 
+            frame_count + 1, 
+            0x04, 
+            component_count, 
+            component_count * 4, 
+            (frame_count + 1) * 2, 
+            len(frames_indexes) * 2, 
+            len(frames_indexes) * component_count * 4
+        )
+        
+        motion += struct.pack(f'<{frame_count + 1}h', *fill_ghost_frames(frames_indexes, frame_count + 1))
+        write_alignment(motion)
+        
+        frame_offset = len(motion)
+        motion += struct.pack(f'<{len(frames_indexes)}h', *frames_indexes)
+        write_alignment(motion)
+        
+        value_offset = len(motion)
+        for key in frames_indexes:
+            if component_count == 1:
+                motion += struct.pack('<f', float(track[key]))
+            else:
+                motion += struct.pack(f'<{component_count}f', *track[key])
+        
+        compressed_motion = bytearray(lz10.compress(bytes(motion)))
+        write_alignment(compressed_motion)
+        
+        file_bytes.write(struct.pack('<5i', 0x14, 0x30, frame_offset, value_offset, 0x14 + len(compressed_motion)))
+        file_bytes.write(bytes(compressed_motion))
+    
+    return file_bytes.getvalue()
+
+def write_v2(animation_name, camera_speed, cam_values):
     file_bytes = io.BytesIO()
 
-    hash_name = zlib.crc32(animation_name.encode("shift-jis")).to_bytes(4, 'little')
-    hash_name_uint = int.from_bytes(hash_name, byteorder='little', signed=False)
+    hash_name_uint = get_animation_hash(animation_name)
     header1 = struct.pack('IiiiIIII', 0x414D4358, 0x20, 0x18, 0x01, 0x01, 0x01, 0x01, 0x00)
     header2 = struct.pack('Iiiifiiiii', hash_name_uint, 0x0, get_frame_count(cam_values), 0x02, camera_speed, 0x00, 0x0C, 0x1C, 0x50, 0x00)
     pattern1 = struct.pack('hhhh', 0x0201, 0x0300, 0x00, get_frame_count(cam_values))

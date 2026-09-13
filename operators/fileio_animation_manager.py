@@ -61,76 +61,105 @@ def find_armatures_with_bones(bone_name_hashes):
 
     return armatures
 
-def calculate_transformed_location(pose_bone, location):
+def get_rest_matrix(pose_bone):
+    """Rest matrix of a bone relative to its first deforming parent (the pose used before any animation is applied)."""
     parent = pose_bone.parent
     while parent and not parent.bone.use_deform:
         parent = parent.parent
 
-    pose_matrix = pose_bone.matrix
+    rest_matrix = pose_bone.bone.matrix_local
     if parent:
-        parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix
+        rest_matrix = parent.bone.matrix_local.inverted() @ rest_matrix
 
-    return pose_matrix.inverted() @ location
-    
-def calculate_transformed_rotation(pose_bone, rotation):
-    parent = pose_bone.parent
-    while parent and not parent.bone.use_deform:
-        parent = parent.parent
+    return rest_matrix
 
-    pose_matrix = pose_bone.matrix
-    if parent:
-        parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix
+def calculate_transformed_location(rest_matrix, location):
+    return rest_matrix.inverted() @ location
 
+def calculate_transformed_rotation(rest_matrix, rotation):
     # Create a Quaternion directly from Euler angles
     rotation_quaternion = Quaternion(rotation)
 
     # Convert quaternion rotation to Matrix
     rotation_matrix = rotation_quaternion.to_matrix().to_4x4()
 
-    # Multiply pose matrix by rotation matrix
-    transformed_matrix = pose_matrix.inverted() @ rotation_matrix
+    # Multiply rest matrix by rotation matrix
+    transformed_matrix = rest_matrix.inverted() @ rotation_matrix
 
     # Extract quaternion from the result
     transformed_quaternion = transformed_matrix.to_quaternion()
 
     return transformed_quaternion
-    
-def calculate_transformed_scale(pose_bone, scale):
-    parent = pose_bone.parent
-    while parent and not parent.bone.use_deform:
-        parent = parent.parent
 
-    pose_matrix = pose_bone.matrix
-    if parent:
-        parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix
-
+def calculate_transformed_scale(rest_matrix, scale):
     # Create scale matrices for each axis
     scale_matrix_x = Matrix.Scale(scale[0], 4, (1, 0, 0))
     scale_matrix_y = Matrix.Scale(scale[1], 4, (0, 1, 0))
     scale_matrix_z = Matrix.Scale(scale[2], 4, (0, 0, 1))
 
-    # Multiply pose matrix by scale matrices
-    transformed_matrix = pose_matrix.inverted() @ (scale_matrix_x @ scale_matrix_y @ scale_matrix_z)
+    # Multiply rest matrix by scale matrices
+    transformed_matrix = rest_matrix.inverted() @ (scale_matrix_x @ scale_matrix_y @ scale_matrix_z)
 
     # Extract scales from the result
     transformed_scale = transformed_matrix.to_scale()
 
     return transformed_scale
 
-def process_bone_track(track, node, armature, action):
+def get_track_type(track_name):
+    """Return 'bone', 'uv' or 'material' for a track name, None for unsupported tracks."""
+    if track_name.startswith("Bone") and track_name != "BoneBool":
+        return 'bone'
+    elif track_name.startswith("UV"):
+        return 'uv'
+    elif track_name.startswith("Material"):
+        return 'material'
+
+    return None
+
+def get_animation_track_types(animData):
+    return {get_track_type(track.Name) for track in animData.Tracks if track.Nodes and get_track_type(track.Name)}
+
+def get_animation_node_hashes(animData):
+    return {node.Name for track in animData.Tracks for node in track.Nodes}
+
+def get_object_hashes(obj):
+    """Hashes an animation can target on an object: bones, single bind bones, UV modifiers and materials."""
+    names = set()
+    meshes = []
+
+    if obj.type == 'ARMATURE':
+        names.update(bone.name for bone in obj.data.bones)
+        meshes = [child for child in obj.children if child.type == 'MESH']
+    elif obj.type == 'MESH':
+        meshes = [obj]
+
+    for mesh in meshes:
+        if mesh.parent_type == 'BONE' and mesh.parent_bone:
+            names.add(mesh.parent_bone)
+
+        names.update(modifier.name for modifier in mesh.modifiers if modifier.type == 'UV_WARP')
+
+        for material in mesh.data.materials:
+            if material:
+                names.add(material.name)
+                names.add(get_real_name(material.name))
+
+    return {crc32_hash(name) for name in names}
+
+def count_matching_nodes(node_hashes, obj):
+    return len(node_hashes & get_object_hashes(obj))
+
+def process_bone_track(track, node, armature, action, bone_names):
     """Process a track related to bones."""
-    bpy.ops.object.mode_set(mode='POSE')
-    
-    bone_name = findCrc32(node.Name, armature.pose.bones)
+    bone_name = bone_names.get(node.Name)
     if not bone_name:
         return
 
     bone = armature.pose.bones.get(bone_name)
     if not bone:
         return
+
+    rest_matrix = get_rest_matrix(bone)
 
     # Determine the transformation channel
     if track.Name == "BoneLocation":
@@ -146,47 +175,44 @@ def process_bone_track(track, node, armature, action):
         # Skip unknown bone tracks
         return
 
+    # Compute the transformations once per frame
+    transformations = []
+    for frame in node.Frames:
+        value = frame.Value
+
+        if track.Name == "BoneLocation":
+            transformations.append((frame.Key, calculate_transformed_location(rest_matrix, Vector([value.X, value.Y, value.Z]))))
+        elif track.Name == "BoneRotation":
+            transformations.append((frame.Key, calculate_transformed_rotation(rest_matrix, Vector([value.W, value.X, value.Y, value.Z]))))
+        elif track.Name == "BoneScale":
+            transformations.append((frame.Key, calculate_transformed_scale(rest_matrix, Vector([value.X, value.Y, value.Z]))))
+
     # Add fcurves and keyframes
     for index in indices:
         fcurve = action.fcurves.find(data_path=data_path, index=index)
-        
+
         if not fcurve:
             fcurve = action.fcurves.new(data_path=data_path, index=index)
-            
-        for frame in node.Frames:
-            frame_num = frame.Key
-            value = frame.Value
-            
-            if track.Name == "BoneLocation":
-                transformation = calculate_transformed_location(bone, Vector([value.X, value.Y, value.Z]))
-                fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
-            elif track.Name == "BoneRotation":
-                transformation = calculate_transformed_rotation(bone, Vector([value.W, value.X, value.Y, value.Z]))
-                fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
-            elif track.Name == "BoneScale":
-                transformation = calculate_transformed_scale(bone, Vector([value.X, value.Y, value.Z]))
-                fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
 
-def process_uv_track(track, node, action, armature=None, mesh=None):
-    """Process a track related to UVs or materials using FCurves."""
-    bpy.ops.object.mode_set(mode='OBJECT')
-    
-    # Function to handle UVs for a specific mesh
-    def handle_uv_for_mesh(mesh, track, node, action):
-        # Ensure the mesh has animation data and an action linked
-        if mesh.animation_data is None:
-            mesh.animation_data_create()
-        if mesh.animation_data.action is None:
-            mesh.animation_data.action = action
-            
+        for frame_num, transformation in transformations:
+            fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
+
+def process_uv_track(track, node, action, meshes):
+    """Process a track related to UVs using FCurves."""
+    for mesh in meshes:
         node_name = findCrc32(node.Name, modifier=mesh.modifiers)
         if not node_name:
-            return
-        
+            continue
+
         modifier = mesh.modifiers.get(node_name)
         if not modifier:
-            return
-        
+            continue
+
+        # The UV action is shared by every mesh (each mesh only resolves its own modifiers)
+        if mesh.animation_data is None:
+            mesh.animation_data_create()
+        mesh.animation_data.action = action
+
         # Define the corresponding data paths
         if track.Name == "UVMove":
             data_path = f'modifiers["{node_name}"].offset'
@@ -200,18 +226,18 @@ def process_uv_track(track, node, action, armature=None, mesh=None):
         else:
             # Skip unknown UV tracks
             return
-        
+
         # Add FCurves and keyframes
         for index in indices:
             fcurve = action.fcurves.find(data_path=data_path, index=index)
-            
+
             if not fcurve:
                 fcurve = action.fcurves.new(data_path=data_path, index=index)
-            
+
             for frame in node.Frames:
                 frame_num = frame.Key
                 value = frame.Value
-                
+
                 if track.Name == "UVMove":
                     fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
                 elif track.Name == "UVScale":
@@ -219,36 +245,16 @@ def process_uv_track(track, node, action, armature=None, mesh=None):
                 elif track.Name == "UVRotate":
                     fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
 
-    # Process tracks
-    if armature:
-        # Based on the armature
-        for child in armature.children:
-            if child.type == "MESH":
-                handle_uv_for_mesh(child, track, node, action)
-    elif mesh and mesh.type == "MESH":
-        # Based on the mesh
-        handle_uv_for_mesh(mesh, track, node, action)
+def process_material_track(track, node, action_name, meshes, material_actions):
+    """Process a track related to material, each material gets its own action."""
+    for mesh in meshes:
+        if not findCrc32(node.Name, mesh=mesh):
+            continue
 
-def process_material_track(track, node, action, armature=None, mesh=None):
-    """Process a track related to material."""
-    bpy.ops.object.mode_set(mode='OBJECT')
-    
-    # Function to handle UVs for a specific mesh
-    def handle_material_for_mesh(mesh, track, node, action):
-        # Ensure the mesh has animation data and an action linked
-        node_name = findCrc32(node.Name, mesh=mesh)
-        if not node_name:
-            return
-        
         material = mesh.data.materials[0]
-        
-        # Ensure the material has animation data and an action linked
-        if material.animation_data is None:
-            material.animation_data_create()
-        if material.animation_data.action is None:
-            material.animation_data.action = bpy.data.actions.new(name="{material.name}.{action_name}")
-            action = material.animation_data.action
-        
+        if material is None or not material.use_nodes:
+            continue
+
         # Define the corresponding data paths
         if track.Name == "MaterialAttribute":
             data_path = f'node_tree.nodes["Principled BSDF"].inputs[19].default_value'
@@ -257,89 +263,103 @@ def process_material_track(track, node, action, armature=None, mesh=None):
             # Get texture node
             nodes = material.node_tree.nodes
             texture_node = nodes.get("Image Texture")
-            
+
             # Changes the data_path if the texture has an alpha channel or not
-            if texture_node:
-                if texture_node.outputs["Alpha"].is_linked:
-                    data_path = f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value'
-                else:
-                    data_path = f'node_tree.nodes["Principled BSDF"].inputs[21].default_value' 
-            
+            if texture_node and texture_node.outputs["Alpha"].is_linked:
+                data_path = f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value'
+            else:
+                data_path = f'node_tree.nodes["Principled BSDF"].inputs[21].default_value'
+
             indices = [0]
         else:
             # Skip unknown material tracks
             return
-        
+
+        # Get or create the action of this material
+        action = material_actions.get(material.name)
+        if action is None:
+            action = bpy.data.actions.new(name=f"{action_name}.{material.name}")
+            material_actions[material.name] = action
+
+            if material.animation_data is None:
+                material.animation_data_create()
+            material.animation_data.action = action
+
         # Add FCurves and keyframes
         for index in indices:
             fcurve = action.fcurves.find(data_path=data_path, index=index)
-            
+
             if not fcurve:
                 fcurve = action.fcurves.new(data_path=data_path, index=index)
-            
+
             for frame in node.Frames:
                 frame_num = frame.Key
                 material_value = frame.Value
-                
+
                 if track.Name == "MaterialAttribute":
                     fcurve.keyframe_points.insert(
-                        frame=frame_num, 
+                        frame=frame_num,
                         value=(
-                            material_value.hue if index == 0 
-                            else material_value.saturation if index == 1 
+                            material_value.hue if index == 0
+                            else material_value.saturation if index == 1
                             else material_value.value
                         )
                     )
                 elif track.Name == "MaterialTransparency":
                     fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
 
-    # Process tracks
-    if armature:
-        # Based on the armature
-        for child in armature.children:
-            if child.type == "MESH":
-                handle_material_for_mesh(child, track, node, action)
-    elif mesh and mesh.type == "MESH":
-        # Based on the mesh
-        handle_material_for_mesh(mesh, track, node, action)
+def create_animation(animData, active_obj, action=None, track_types=None, material_actions=None):
+    """Create the Blender animation of an AnimationManager object on an armature or a mesh.
 
-def create_animation(animData, active_obj):
+    action: existing action to fill (the files of the same animation share one action).
+    track_types: subset of {'bone', 'uv', 'material'} to import, everything by default.
+    material_actions: {material name: action} shared by the files of the same animation.
+    Return the action used for bones and UVs.
+    """
     # Define armature or mesh based on the type of the active object
     armature = active_obj if active_obj.type == 'ARMATURE' else None
     mesh = active_obj if active_obj.type == 'MESH' else None
-    
+
     # Ensure the active object is either an armature or a mesh
     if not armature and not mesh:
-        operator.report({'ERROR'}, "Active object must be either an armature or a mesh.")
-        return {'CANCELLED'}
-    
-    # Create a new action for the animation
-    action = bpy.data.actions.new(name=animData.AnimationName)
+        raise ValueError("Active object must be either an armature or a mesh.")
 
-    # Assign the action to the armature's animation data
-    if armature:
-        if armature.animation_data is None:
-            armature.animation_data_create()
-        armature.animation_data.action = action
-    
-    # Assign the action to the mesh's animation data  
-    if mesh:
-        if mesh.animation_data is None:
-            mesh.animation_data_create()
-        mesh.animation_data.action = action  
+    if track_types is None:
+        track_types = {'bone', 'uv', 'material'}
+
+    if material_actions is None:
+        material_actions = {}
+
+    # Create a new action for the animation
+    if action is None:
+        action = bpy.data.actions.new(name=animData.AnimationName)
+
+    # Assign the action to the object's animation data
+    if active_obj.animation_data is None:
+        active_obj.animation_data_create()
+    active_obj.animation_data.action = action
+
+    meshes = [child for child in armature.children if child.type == 'MESH'] if armature else [mesh]
+    bone_names = {crc32_hash(bone.name): bone.name for bone in armature.pose.bones} if armature else {}
 
     # Loop through each track in animdata
     for track in animData.Tracks:
+        track_type = get_track_type(track.Name)
+        if track_type not in track_types:
+            continue
+
         # Node refers to a bone or a txtproj
         for node in track.Nodes:
             # Check track type
-            if track.Name.startswith("Bone") and not track.Name == "BoneBool":
+            if track_type == 'bone':
                 if armature:
-                    process_bone_track(track, node, armature, action)
-            elif track.Name.startswith("UV"):
-                    process_uv_track(track, node, action, armature=armature, mesh=mesh)
-            elif track.Name.startswith("Material"):
-                    process_material_track(track, node, action, armature=armature, mesh=mesh)
+                    process_bone_track(track, node, armature, action, bone_names)
+            elif track_type == 'uv':
+                process_uv_track(track, node, action, meshes)
+            elif track_type == 'material':
+                process_material_track(track, node, animData.AnimationName, meshes, material_actions)
+
+    return action
 
 def fileio_open_animation(operator, context, filepath):
     # Get file extension

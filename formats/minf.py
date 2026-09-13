@@ -23,8 +23,13 @@ def open_minf1(data):
     
     frame_start = struct.unpack('<I', reader.read(4))[0]
     frame_end = struct.unpack('<I', reader.read(4))[0]
-    
-    return split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end
+
+    speed = 1.0
+    speed_data = reader.read(4)
+    if len(speed_data) == 4:
+        speed = struct.unpack('<f', speed_data)[0]
+
+    return split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end, speed
 
 def write_minf1(animation_name, split_animation_name, animation_speed, frame_start, frame_end):
     out = bytes()
@@ -97,6 +102,7 @@ def open_minf2(data):
         minf_data_reader.read(0x04)
         new_sub_animation['frame_start'] = struct.unpack('<i', minf_data_reader.read(4))[0]
         new_sub_animation['frame_end'] = struct.unpack('<i', minf_data_reader.read(4))[0]
+        new_sub_animation['speed'] = 1.0
 
         sub_animations.append(new_sub_animation)
 

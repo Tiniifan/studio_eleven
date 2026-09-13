@@ -1,3 +1,4 @@
+import io
 import os
 import math
 import zlib
@@ -126,6 +127,10 @@ def open_file(file_item):
         raise Exception(f"Unknown xc magic: {magic}")
 
 def pack_archive(files, output_file):
+    with open(output_file, 'wb') as file:
+        file.write(pack_archive_bytes(files))
+
+def pack_archive_bytes(files):
     offset = 0
     name_offset = 0
     
@@ -147,7 +152,7 @@ def pack_archive(files, output_file):
     compressed_name_table = fill_to_multiple_of_16(compressed_name_table, 12 * len(file_names) + 20 + len(compressed_name_table))
 
     # Writes XPCK file header
-    with open(output_file, 'wb') as file:
+    with io.BytesIO() as file:
         file.write(pack("4s", "XPCK".encode()))
         file.write(pack("<H", file_count_to_hex(len(files))))
         file.write(pack("<H", 20 // 4))
@@ -194,3 +199,5 @@ def pack_archive(files, output_file):
         for filename in list(files.keys()):
             file_data = files[filename]["data"]
             file.write(file_data)
+
+        return file.getvalue()

@@ -10,6 +10,7 @@ from bpy.props import IntProperty, StringProperty
 
 from ..utils.mesh_faces_utils import MeshFaceUtils
 from ..templates import *
+from .xpck_settings import set_animation_settings
 
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
     bl_idname = "object.convert_single_bind_to_vertex_group"
@@ -160,6 +161,12 @@ class AnimationItemsReader(bpy.types.Operator):
         return {"Animations": animations}
 
     def execute(self, context):
+        # The configuration is saved on the armature used by the xpck export
+        armature = context.active_object
+        if armature is None or armature.type != 'ARMATURE':
+            self.report({'ERROR'}, "Select the armature which receives the animation config")
+            return {'CANCELLED'}
+
         try:
             # Read the content of the file
             with open(self.filepath, 'r') as file:
@@ -169,46 +176,31 @@ class AnimationItemsReader(bpy.types.Operator):
 
             # Process the data and format it into a dictionary
             formatted_data = self.process_animation_data(data)
-            
-            # Clear animations
-            context.scene.animation_items_armature.clear()
-            context.scene.animation_items_uv.clear()
-            context.scene.animation_items_material.clear()
-            context.scene.animation_items_camera.clear()
+
+            animation_types = {
+                "Armature": "armature",
+                "UV": "uv",
+                "Material": "material",
+            }
 
             # Iterate over the formatted data to set the appropriate fields
             for animation_key, animation_data in formatted_data["Animations"].items():
                 # Based on the animation_key (Armature, UV, Material)
-                if animation_key == "Armature":
-                    collection_name = "animation_items_armature"
-                    animations = context.scene.animation_armature           
-                elif animation_key == "UV":
-                    collection_name = "animation_items_uv"
-                    animations = context.scene.animation_uv
-                elif animation_key == "Material":
-                    collection_name = "animation_items_material"
-                    animations = context.scene.animation_material
-                else:
+                if animation_key not in animation_types:
                     continue  # Skip if the animation type is not recognized
 
-                if len(animations) == 0:
-                    animations.add()
-                
-                animations[0].name = list(animation_data.keys())[0]
-                animations[0].checked = True 
+                animation_name = list(animation_data.keys())[0]
+                splits = []
 
-                # Add each split item to the appropriate collection
-                for split_name, animation_split_value in animation_data[animations[0].name].items():
-                    # Using the operator to add items to the correct collection
-                    bpy.ops.export_xc.add_animation_item(collection_name=collection_name)
+                for split_name, animation_split_value in animation_data[animation_name].items():
+                    splits.append({
+                        'name': split_name,
+                        'speed': float(animation_split_value[0]),
+                        'frame_start': int(animation_split_value[1]),
+                        'frame_end': int(animation_split_value[2]),
+                    })
 
-                    # Now update the last item in the collection
-                    collection = getattr(context.scene, collection_name)
-                    last_item = collection[-1]  # Get the last item added
-                    last_item.name = split_name
-                    last_item.speed = float(animation_split_value[0])
-                    last_item.frame_start = int(animation_split_value[1])
-                    last_item.frame_end = int(animation_split_value[2])
+                set_animation_settings(armature.level5_archive.get_animation(animation_types[animation_key]), animation_name, splits)
 
             return {'FINISHED'}
 
