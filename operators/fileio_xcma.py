@@ -145,7 +145,7 @@ def fileio_write_xcma(context, animation_name, camera_speed, camera, target, ver
                 if idx == 0 or idx == num_keyframes - 1:
                     cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
                     cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
-                    cam_values['roll'][frame-first_frame] = camera.location.z # Temp roll patch. Will need to be properly rewritten later
+                    cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # Temp roll patch. Will need to be properly rewritten later
                 else:
                     if 'location' in fcurve.data_path:
                         cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
@@ -154,7 +154,7 @@ def fileio_write_xcma(context, animation_name, camera_speed, camera, target, ver
                         cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
                         
                     if 'rotation_euler' in fcurve.data_path:
-                        cam_values['roll'][frame-first_frame] = camera.location.z # Temp roll patch. Will need to be properly rewritten later
+                        cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # Temp roll patch. Will need to be properly rewritten later
 
     # Process target animation
     target_animation = target.animation_data
