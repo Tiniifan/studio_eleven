@@ -69,7 +69,52 @@ def flatten_tuple(tuples_list):
     flat = [x for tup in tuples_list for x in tup]
     return list(dict.fromkeys(flat))
 
-def write_geometrie(indices, vertices, uvs, normals, colors, weights):
+def classify_tint(tints):
+    if not tints:
+        return (1.0, 1.0, 1.0, 1.0), False
+
+    first = tuple(tints[0])
+
+    if any(tuple(tint) != first for tint in tints):
+        return (1.0, 1.0, 1.0, 1.0), True
+
+    return first, False
+
+def write_attributes(tint_streamed):
+    attributes = [[0, 0, 0, 0] for i in range(10)]
+    offset = 0
+
+    def add(slot, count, size):
+        nonlocal offset
+        attributes[slot] = [count, offset, size, 2]
+        offset += size
+
+    add(0, 3, 12)
+    if tint_streamed:
+        add(1, 4, 16)
+    else:
+        attributes[1] = [4, 0, 16, 1]
+    add(2, 3, 12)
+    add(4, 2, 8)
+    add(5, 2, 8)
+    add(7, 4, 16)
+    add(8, 4, 16)
+    add(9, 4, 16)
+
+    out = bytes()
+    for attribute in attributes:
+        out += bytes(attribute)
+
+    return struct.pack("<I", len(out) << 3) + out, offset
+
+def write_fixed_tint(tint):
+    # A fixed attribute holds a single value for the whole mesh, always 4 floats
+    if tuple(tint) == (1.0, 1.0, 1.0, 1.0):
+        return bytes([int(x,0) for x in ["0x81", "0x00", "0x00", "0x00", "0x08", "0x00", "0x00", "0x80", "0x3F", "0x90", "0x03", "0x00"] ])
+
+    return lz10.compress(struct.pack("<4f", *tint))
+
+def write_geometrie(indices, vertices, uvs, normals, colors, weights, tints = None):
     out = bytes()
     
     indices = flatten_tuple(indices)
@@ -77,6 +122,9 @@ def write_geometrie(indices, vertices, uvs, normals, colors, weights):
     for indice in indices:
         for v in vertices[indice]:
             out += bytearray(struct.pack("f", v))
+        if tints:
+            for t in range(4):
+                out += bytearray(struct.pack("f", tints[indice][t]))
         for n in normals[indice]:
             out += bytearray(struct.pack("f", n))
         for vt in range(2):
@@ -115,21 +163,31 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21, mesh_type = 1):
+def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21, mesh_type = 1, tints = None):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
     
+    # A tint that doesn't change over the mesh is stored once as a fixed attribute
+    tint, tint_streamed = classify_tint(tints)
+    att_buffer, stride = write_attributes(tint_streamed)
+    fixed_buffer = write_fixed_tint(tint)
+
     # Get content data
-    data_geometrie = write_geometrie(indices, vertices, uvs, normals, colors, weights)
+    data_geometrie = write_geometrie(indices, vertices, uvs, normals, colors, weights, tints if tint_streamed else None)
     data_triangle = write_triangle(indices)
 
     # XPVB-------------------------------------------
     compress_geometrie = lz10.compress(data_geometrie) 
     xpvb = bytes()
-    xpvb += bytes([int(x,0) for x in ["0x58", "0x50", "0x56", "0x42", "0x10", "0x00", "0x3C", "0x00", "0x48", "0x00", "0x58", "0x00"] ])
-    xpvb += int(len(data_geometrie)/88).to_bytes(4, 'little')
-    xpvb += bytes([int(x,0) for x in ["0x40", "0x01", "0x00", "0x00", "0x03", "0x00", "0x0C", "0x02", "0x04", "0x00", "0x10", "0x01", "0x03", "0x0C", "0x0C", "0x02", "0x00", "0x00", "0x00", "0x00", "0x02", "0x18", "0x08", "0x02", "0x02", "0x20", "0x08", "0x02", "0x00", "0x00", "0x00", "0x00", "0x04", "0x28", "0x10", "0x02", "0x04", "0x38", "0x10", "0x02", "0x04", "0x48", "0x10", "0x02", "0x81", "0x00", "0x00", "0x00", "0x08", "0x00", "0x00", "0x80", "0x3F", "0x90", "0x03", "0x00"] ])
+    xpvb += bytes([int(x,0) for x in ["0x58", "0x50", "0x56", "0x42"] ])
+    xpvb += int(16).to_bytes(2, 'little')
+    xpvb += int(16 + len(att_buffer)).to_bytes(2, 'little')
+    xpvb += int(16 + len(att_buffer) + len(fixed_buffer)).to_bytes(2, 'little')
+    xpvb += int(stride).to_bytes(2, 'little')
+    xpvb += int(len(data_geometrie)//stride).to_bytes(4, 'little')
+    xpvb += att_buffer
+    xpvb += fixed_buffer
     xpvb += compress_geometrie
 
     # XPVI-------------------------------------------
@@ -207,11 +265,18 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
 # XMPR Open Function
 ##########################################
 
-def read_vertex(reader, count, aType, size):
+def read_vertex(vbuffer, fbuffer, index, stride, count, offset, size, aType):
     v = (0.0, 0.0, 0.0, 0.0)
     if count != 0x00:
-        if aType == 0x02:
-            return struct.unpack(f"<{count}f", reader.read(size))
+        if aType == 0x01:
+            # A fixed attribute is one value for the whole mesh, always 4 floats at a 4 bytes aligned offset
+            fbuffer.seek(offset & 0xFC)
+            fixed = fbuffer.read(16)
+            if len(fixed) == 16:
+                return struct.unpack("<4f", fixed)
+        elif aType == 0x02:
+            vbuffer.seek(index * stride + offset)
+            return struct.unpack(f"<{count}f", vbuffer.read(size))
     return v
 
 def parse_buffer(reader, node_table):
@@ -223,6 +288,7 @@ def parse_buffer(reader, node_table):
         "weights": [],
         "bone_indices": [],
         "color_data": [],
+        "tint_data": [],
     }
     
     xpvb_magic = struct.unpack("<4s", reader.read(4))[0]
@@ -245,43 +311,53 @@ def parse_buffer(reader, node_table):
         aType[i]   = struct.unpack("<B", attbuffer.read(1))[0]
     attbuffer.close()
     
+    fixed_data = b""
+    if vertex_buffer_offset > unk_offset:
+        reader.seek(unk_offset)
+        fixed_data = compressor.decompress(reader.read(vertex_buffer_offset - unk_offset)) or b""
+    fbuffer = io.BytesIO(fixed_data)
+
     reader.seek(vertex_buffer_offset)
     vbuffer = io.BytesIO(compressor.decompress(reader.read()))
     
     for i in range(vertex_count):
         for j in range(10):
-            vbuffer.seek(i * stride + aOffset[j])
-            
             # Ignore attributes without elements
             if aCount[j] == 0:
                 continue
             
+            attribute = read_vertex(vbuffer, fbuffer, i, stride, aCount[j], aOffset[j], aSize[j], aType[j])
+
             if j == 0:
                 vertices["positions"].append(
-                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])[:3]
+                    attribute[:3]
+                )
+            elif j == 1:
+                vertices["tint_data"].append(
+                    attribute
                 )
             elif j == 2:
                 vertices["normals"].append(
-                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])[:3]
+                    attribute[:3]
                 )
             elif j == 4:
-                uv_data0 = list(read_vertex(vbuffer, aCount[j], aType[j], aSize[j]))[:2]
+                uv_data0 = list(attribute)[:2]
                 uv_data0[1] = 1.0 - uv_data0[1]
                 vertices["uv_data0"].append(
                     tuple(uv_data0)
                 )
             elif j == 5:
-                uv_data1 = list(read_vertex(vbuffer, aCount[j], aType[j], aSize[j]))[:2]
+                uv_data1 = list(attribute)[:2]
                 uv_data1[1] = 1.0 - uv_data1[1]
                 vertices["uv_data1"].append(
                     tuple(uv_data1)
                 )
             elif j == 7:
                 vertices["weights"].append(
-                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                    attribute
                 )
             elif j == 8:
-                bone_indices = read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                bone_indices = attribute
                 if node_table:
                     vertices["bone_indices"].append((
                         node_table[int(bone_indices[0])],
@@ -291,9 +367,10 @@ def parse_buffer(reader, node_table):
                     ))
             elif j == 9:
                 vertices["color_data"].append(
-                    read_vertex(vbuffer, aCount[j], aType[j], aSize[j])
+                    attribute
                 )
                 
+    fbuffer.close()
     vbuffer.close()
     reader.close()
 

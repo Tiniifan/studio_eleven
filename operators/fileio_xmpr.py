@@ -49,10 +49,11 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
     uv_info = []
     normal_info = []
     color_info = []
+    tint_info = []
     face_indices = []
 
     if not mesh or not mesh.data:
-        return face_indices, vertices_info, uv_info, normal_info, color_info, {}
+        return face_indices, vertices_info, uv_info, normal_info, color_info, tint_info, {}
 
     # Ensure the mesh data is in the correct state
     mesh.data.update()
@@ -61,9 +62,17 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
     blender_version = bpy.app.version
             
     # Get vertex colors
-    has_vertex_colors = hasattr(mesh.data, 'vertex_colors') and mesh.data.vertex_colors and mesh.data.vertex_colors.active
-    if has_vertex_colors:
-        vertex_colors = mesh.data.vertex_colors.active.data
+    vertex_colors = None
+    tint_colors = None
+    if hasattr(mesh.data, 'vertex_colors') and mesh.data.vertex_colors:
+        color_layer = mesh.data.vertex_colors.get("Col") or mesh.data.vertex_colors.active
+        # Tint is a layer of its own, it must never be taken as the vertex color layer
+        if color_layer is not None and color_layer.name != "Tint":
+            vertex_colors = color_layer.data
+
+        tint_layer = mesh.data.vertex_colors.get("Tint")
+        if tint_layer is not None:
+            tint_colors = tint_layer.data
 
     # Get UVs
     has_uv_layers = False
@@ -110,7 +119,7 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
                 uv = (0.0, 0.0)
                 
             # Get Color
-            if has_vertex_colors and vertex_colors:
+            if vertex_colors:
                 try:
                     color = tuple(round(c, 3) for c in vertex_colors[loop_index].color)
                 except (IndexError, AttributeError):
@@ -118,7 +127,16 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
             else:
                 color = (0.0, 0.0, 0.0, 1.0)
 
-            key = (v, n, uv, color)
+            # Get Tint
+            if tint_colors:
+                try:
+                    tint = tuple(round(c, 3) for c in tint_colors[loop_index].color)
+                except (IndexError, AttributeError):
+                    tint = (1.0, 1.0, 1.0, 1.0)
+            else:
+                tint = (1.0, 1.0, 1.0, 1.0)
+
+            key = (v, n, uv, color, tint)
 
             if key not in vertex_map:
                 unique_index = len(vertex_map)
@@ -127,6 +145,7 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
                 normal_info.append(n)
                 uv_info.append(uv)
                 color_info.append(color)
+                tint_info.append(tint)
 
                 if vertex_index not in vertex_to_unique_indices:
                     vertex_to_unique_indices[vertex_index] = []
@@ -179,7 +198,7 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
             for unique_index in unique_indices:
                 weights[unique_index] = vertex_weights.copy()
 
-    return face_indices, vertices_info, uv_info, normal_info, color_info, weights
+    return face_indices, vertices_info, uv_info, normal_info, color_info, tint_info, weights
     
 def apply_atr_state(material, atr_state):
     # The state is kept as is in level5_atr, the Blender properties are only a preview
@@ -360,6 +379,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
     weights = model_data["vertices"]["weights"]
     bone_indices = model_data["vertices"]["bone_indices"]
     color_data = model_data["vertices"]["color_data"]
+    tint_data = model_data["vertices"]["tint_data"]
     single_bind = model_data["single_bind"]
     draw_priority = model_data["draw_priority"]
     mesh_type = model_data["mesh_type"]
@@ -401,6 +421,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         mesh_obj.modifiers.new(name=texprojs[1], type="UV_WARP")
         mesh_obj.modifiers[texprojs[1]].uv_layer = texprojs[1]
 
+    color_layer = None
     if color_data:
         color_layer = mesh.vertex_colors.new(name="Col")
         flat_colors = []
@@ -410,6 +431,20 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             flat_colors.extend(color_data[vert_idx])  # r, g, b, a
 
         color_layer.data.foreach_set("color", flat_colors)
+
+    # A white tint is what the engine uses when a mesh has none, no need for a layer
+    if tint_data and any(tuple(tint) != (1.0, 1.0, 1.0, 1.0) for tint in tint_data):
+        tint_layer = mesh.vertex_colors.new(name="Tint")
+        flat_tints = []
+
+        for loop in mesh.loops:
+            vert_idx = loop.vertex_index
+            flat_tints.extend(tint_data[vert_idx])  # r, g, b, a
+
+        tint_layer.data.foreach_set("color", flat_tints)
+
+        if color_layer:
+            mesh.vertex_colors.active = color_layer
     
     mesh_obj.rotation_euler = (radians(90), 0, 0)
     
@@ -545,7 +580,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
     if mesh.parent and mesh.parent.type == 'ARMATURE':
         bone_names = list(get_bone_names(mesh.parent))
 
-    indices, vertices, uvs, normals, colors, weights = get_mesh_info_and_weights(mesh, bone_names)
+    indices, vertices, uvs, normals, colors, tints, weights = get_mesh_info_and_weights(mesh, bone_names)
 
     # Cancel if mesh info is empty
     if not (indices or vertices or uvs or normals or colors):
@@ -568,7 +603,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         mesh.name_full, texspace_array,
         indices, vertices, uvs, normals, colors,
         weights, bone_names, library_name, mode,
-        single_bind, draw_priority, mesh_type
+        single_bind, draw_priority, mesh_type, tints
     )
     
 def fileio_open_xmpr(context, filepath):
