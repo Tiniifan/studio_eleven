@@ -2,10 +2,9 @@ import os
 import json
 
 class Template:
-    def __init__(self, name, modes, atr, mtr, outline_mesh_data, cmb1, cmb2, file_version=2):
+    def __init__(self, name, modes, mtr, outline_mesh_data, cmb1, cmb2, file_version=2):
         self.name = name
         self.modes = modes
-        self.atr = atr
         self.mtr = mtr
         self.outline_mesh_data = outline_mesh_data
         self.cmb1 = cmb1
@@ -39,7 +38,6 @@ def template_from_dict(d):
     t = Template(
         d["name"],
         d["modes"],
-        d["atr"],
         d["mtr"],
         d["outline_mesh_data"],
         d["cmb1"],
@@ -81,7 +79,6 @@ def load_templates_from_json():
         default_template_dict = {
             "name": "Default Template",
             "modes": {"Model": ["759FE5F3", 1]},
-            "atr": "41545243303100000C000000E3010000054080FF0000C0C13C80BF0137F72F406005FFFFF0FFFF56",
             "mtr": "4D545243303000001800000000000000000000000000000041070000350000F001501301801C0340037E04800B5013F043F055F0673079F819FEFE3E5003B08B803F5003F0F023F0B5F0C770D9E8891DA70000004C555443",
             "outline_mesh_data": [0.0249999985,5.0,1,1.0,1.0,1.0,1.0,1,0.0,1.0,1.0,1.0,1.0,100.0,60.0,96000.0,0.5,0.0,1,1,0.0025,0.5,0.4,10.0,60.0,0.0,0.0,1],
             "cmb1": [1,2,1,0,0,0,1,1,0,0,0,0,1,2,1,0,0,0,1,1,0,0,0,0,255,255,255,255,0,0,0,0],
@@ -104,7 +101,6 @@ def save_templates_to_json():
         data["templates"].append({
             "name": t.name,
             "modes": t.modes,
-            "atr": t.atr,
             "mtr": t.mtr,
             "outline_mesh_data": t.outline_mesh_data,
             "cmb1": t.cmb1,

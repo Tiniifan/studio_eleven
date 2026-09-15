@@ -12,7 +12,7 @@ import bmesh
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, animation_manager, animation_support
+from ..formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, atr, animation_manager, animation_support
 from .fileio_xmpr import *
 from .fileio_animation_manager import *
 from .fileio_xcma import *
@@ -174,6 +174,7 @@ class ArchiveContent:
         self.animations_data = []
         self.animations_split_data = {animation_type: [] for animation_type in SPLIT_EXTENSIONS}
         self.txp_data = []
+        self.atr_data = []
         self.res_data = None
 
 class AnimationGroup:
@@ -244,6 +245,12 @@ def read_archive(data, archive_name, session):
             content.camera_hashes = xcmt.open(data=archive[file_name])
         elif file_name.endswith('.txp'):
             content.txp_data.append(txp.read_txp(io.BytesIO(archive[file_name])))
+        elif file_name.endswith('.atr'):
+            try:
+                content.atr_data.append(atr.read_atr(archive[file_name]))
+            except Exception as e:
+                session.warning(f"{archive_name}/{file_name} can't be read: {e}")
+                content.atr_data.append(None)
         else:
             for animation_type, extensions in SPLIT_EXTENSIONS.items():
                 if file_name.endswith(extensions[1]):
@@ -377,6 +384,16 @@ def build_archive(context, content, session):
 
                 libs[material_name] = material_textures
 
+    # Make render states
+    atr_states = {}
+    if res_data is not None and res.RESType.MATERIAL_DATA in res_data:
+        # The .atr files are numbered like the materials, not like the meshes
+        materials_data = res_data[res.RESType.MATERIAL_DATA]
+        res_materials_key = list(materials_data)
+
+        for i in range(min(len(content.atr_data), len(res_materials_key))):
+            atr_states[materials_data[res_materials_key[i]]['name']] = content.atr_data[i]
+
     # Make txps
     txps = []
     if res_data is not None:
@@ -411,8 +428,11 @@ def build_archive(context, content, session):
             if mesh_data["single_bind"] is not None:
                 mesh_data["single_bind"] = res_data[res.RESType.BONE][mesh_data["single_bind"]]
 
+            # Get render state
+            atr_state = atr_states.get(mesh_data['material_name'])
+
             # Create the mesh using the mesh data
-            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps)
+            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state)
 
     # Group the animations by name, the imported animations are applied from the animation menu
     groups = {}
@@ -694,6 +714,13 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
 class XpckExportError(Exception):
     pass
 
+def make_atr(material_name, template):
+    material = bpy.data.materials.get(material_name)
+    properties = getattr(material, "level5_atr", None) if material else None
+    state = atr.default_state() if properties is None else atr.state_from_properties(properties)
+
+    return atr.write_atr(state, template[0].file_version)
+
 def make_xpck_files(operator, context, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
     """Return the files ({name: bytes}) of an archive."""
     xmprs = []
@@ -703,7 +730,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     if meshes:
         for mesh in meshes:
             xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.material_name, template[0].modes[template[1]]))
-            atrs.append(bytes.fromhex(template[0].atr))
+            atrs.append(make_atr(mesh.material_name, template))
             mtrs.append(bytes.fromhex(template[0].mtr))
 
     # Make bones

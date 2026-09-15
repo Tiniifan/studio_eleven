@@ -10,7 +10,7 @@ import bmesh
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ..formats import xmpr
+from ..formats import xmpr, atr
 from ..templates import *
 from ..utils.mesh_faces_utils import MeshFaceUtils
 
@@ -172,7 +172,30 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
 
     return face_indices, vertices_info, uv_info, normal_info, color_info, weights
     
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
+def apply_atr_state(material, atr_state):
+    # The state is kept as is in level5_atr, the Blender properties are only a preview
+    if hasattr(material, "level5_atr"):
+        atr.state_to_properties(atr_state, material.level5_atr)
+        # Simple mode only if the imported settings match one of its ready made modes
+        matches_preset = atr.detect_render_mode(material.level5_atr) != 'CUSTOM'
+        material.level5_atr.panel_mode = 'SIMPLE' if matches_preset else 'EXPERT'
+
+    resolved = atr_state.resolve()
+
+    material.use_backface_culling = resolved["cull"]
+
+    if resolved["alpha_test"]:
+        material.blend_method = 'CLIP'
+        material.alpha_threshold = resolved["alpha_ref"]
+    elif resolved["blend_rgb_source"] == atr.GL_ONE and resolved["blend_rgb_destination"] == atr.GL_ZERO:
+        # Blending is always on, an opaque material is ONE * src + ZERO * dst
+        material.blend_method = 'OPAQUE'
+    else:
+        material.blend_method = 'BLEND'
+
+    material.show_transparent_back = not resolved["depth_write"]
+
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None):
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
     
@@ -357,6 +380,10 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None):
         
         material.alpha_threshold = 0.5
         material.use_backface_culling = False       
+        
+        # Replace the defaults above when the archive has a render state for this material
+        if atr_state is not None:
+            apply_atr_state(material, atr_state)
         
         # Add material
         mesh_obj.data.materials.append(material)
