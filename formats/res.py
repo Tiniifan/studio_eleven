@@ -2,6 +2,7 @@ import io
 from zlib import crc32
 from struct import pack, unpack, unpack_from, Struct
 
+from collections import namedtuple
 from enum import Enum
 from ..compression import *
 
@@ -66,6 +67,99 @@ nodes_ordered = [
     RESType.MTMINF,
     RESType.TEXPROJ,
 ]
+
+##########################################
+# Sampler
+##########################################
+
+CLAMP, BORDER, REPEAT, MIRROR = 0, 1, 2, 3
+NEAREST, LINEAR = 0, 1
+
+WRAP_MODES = [
+    ("CLAMP", CLAMP),
+    ("BORDER", BORDER),
+    ("REPEAT", REPEAT),
+    ("MIRROR", MIRROR),
+]
+
+FILTER_MODES = [
+    ("NEAREST", NEAREST),
+    ("LINEAR", LINEAR),
+]
+
+
+def _tables(entries):
+    name_to_value = {name: value for name, value in entries}
+    value_to_name = {value: name for name, value in entries}
+    return name_to_value, value_to_name
+
+
+WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME = _tables(WRAP_MODES)
+FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME = _tables(FILTER_MODES)
+
+SamplerState = namedtuple("SamplerState", "wrap_s wrap_t mag_filter min_filter mip_filter")
+
+# What today's export hardcoded, an untouched texture keeps writing 03 0A
+DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=NEAREST)
+
+SAMPLER_FIELDS = (
+    ("wrap_s", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("wrap_t", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("mag_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("min_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("mip_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+)
+
+
+# Both games read these two bytes the same way, whatever the container version is
+def decode_sampler(filter_byte, wrap_byte):
+    return SamplerState(
+        wrap_s=wrap_byte & 3,
+        wrap_t=(wrap_byte >> 2) & 3,
+        mag_filter=filter_byte & 1,
+        min_filter=(filter_byte >> 1) & 1,
+        mip_filter=(filter_byte >> 2) & 1,
+    )
+
+
+def encode_sampler(state):
+    filter_byte = (state.mag_filter & 1) | ((state.min_filter & 1) << 1) | ((state.mip_filter & 1) << 2)
+    wrap_byte = (state.wrap_s & 3) | ((state.wrap_t & 3) << 2)
+    return filter_byte, wrap_byte
+
+##########################################
+# Blender properties
+##########################################
+
+WRAP_ITEMS = [
+    ('CLAMP', "Clamp", "Outside the texture, the pixels of its edge are stretched out"),
+    ('BORDER', "Border", "Outside the texture, nothing is drawn"),
+    ('REPEAT', "Repeat", "The texture is tiled over and over"),
+    ('MIRROR', "Mirror", "The texture is tiled, every other copy being flipped"),
+]
+
+FILTER_ITEMS = [
+    ('NEAREST', "Nearest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
+    ('LINEAR', "Linear", "Mix the pixels of the texture together, which makes it smooth"),
+]
+
+
+def sampler_to_properties(state, properties):
+    for name, _, value_to_name in SAMPLER_FIELDS:
+        value = getattr(state, name)
+
+        if value in value_to_name:
+            setattr(properties, name, value_to_name[value])
+
+
+def properties_to_sampler(properties):
+    values = {}
+
+    for name, name_to_value, _ in SAMPLER_FIELDS:
+        value = getattr(properties, name, None)
+        values[name] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, name))
+
+    return SamplerState(**values)
 
 ##########################################
 # RES
@@ -155,8 +249,7 @@ def open_res(data):
                     
                     items[RESType(headerTable.Type)][obj_hash] = \
                         {"name": obj_name,
-                         "unk1": unpack_from("<b", section, pos),
-                         "unk2": unpack_from("<b", section, pos+1)}
+                         "sampler": decode_sampler(*unpack_from("<BB", section, pos))}
                 
                 elif RESType(headerTable.Type) == RESType.MATERIAL_DATA:
                     pos = 16
@@ -253,8 +346,7 @@ def open_xres(data):
                 pos = 8
                 items[Type][obj_hash] = \
                     {"name": obj_name,
-                     "unk1": unpack_from("<b", section, pos),
-                     "unk2": unpack_from("<b", section, pos+1)}
+                     "sampler": decode_sampler(*unpack_from("<BB", section, pos))}
             
             elif Type == RESType.MATERIAL_DATA:
                 pos = 16
@@ -326,7 +418,8 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         
         for texture_name, texture_data in textures.items():
             texture_name_encoded = texture_name.encode("shift-jis")
-            textures_data.append(crc32(texture_name_encoded).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + bytes.fromhex("030A00000000000000000000"))
+            filter_byte, wrap_byte = encode_sampler(texture_data.get('sampler', DEFAULT_SAMPLER))
+            textures_data.append(crc32(texture_name_encoded).to_bytes(4, 'little') + int(len(string_table)).to_bytes(4, 'little') + pack("<BB", filter_byte, wrap_byte) + bytes(10))
             string_table += texture_name_encoded + int(0).to_bytes(1, 'little')
             
         items[RESType.TEXTURE_DATA] = textures_data

@@ -7,7 +7,7 @@ from bpy.props import BoolProperty, BoolVectorProperty, FloatProperty, IntProper
 
 from .operators import *
 from .controls import *
-from .formats import atr
+from .formats import atr, res
 
 # Only for Debug Mod (Press F8 to reload blender addon) 
 if "fileio_xcma" in locals():
@@ -454,6 +454,88 @@ class Level5_Material_Panel(bpy.types.Panel):
         group.prop(properties, "stencil_zfail_op")
         group.prop(properties, "stencil_zpass_op")
 
+def update_sampler_preview(self, context):
+    refresh_sampler_preview(self.id_data)
+
+class Level5TextureProperties(bpy.types.PropertyGroup):
+    wrap_s: EnumProperty(
+        name="Wrap X",
+        description="What is drawn left and right of the texture, once the UVs go past its edge",
+        items=res.WRAP_ITEMS,
+        default='REPEAT',
+        update=update_sampler_preview
+    )
+
+    wrap_t: EnumProperty(
+        name="Wrap Y",
+        description="What is drawn above and below the texture, once the UVs go past its edge",
+        items=res.WRAP_ITEMS,
+        default='REPEAT',
+        update=update_sampler_preview
+    )
+
+    mag_filter: EnumProperty(
+        name="Magnification",
+        description="How the texture is sampled when it is drawn bigger than it really is, up close",
+        items=res.FILTER_ITEMS,
+        default='LINEAR',
+        update=update_sampler_preview
+    )
+
+    min_filter: EnumProperty(
+        name="Minification",
+        description="How the texture is sampled when it is drawn smaller than it really is, far away",
+        items=res.FILTER_ITEMS,
+        default='LINEAR',
+        update=update_sampler_preview
+    )
+
+    mip_filter: EnumProperty(
+        name="Mipmap",
+        description="How the smaller copies of the texture the game switches to with the distance are mixed. "
+                    "Linear fades from one to the next, Nearest jumps straight to it",
+        items=res.FILTER_ITEMS,
+        default='NEAREST',
+        update=update_sampler_preview
+    )
+
+class Level5_Texture_Panel(bpy.types.Panel):
+    bl_label = "Level 5"
+    bl_idname = "NODE_PT_level5_texture_panel"
+    bl_space_type = 'NODE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Item"
+
+    @classmethod
+    def poll(cls, context):
+        if context.space_data is None or context.space_data.tree_type != 'ShaderNodeTree':
+            return False
+
+        node = context.active_node
+
+        return node is not None and node.type == 'TEX_IMAGE' and node.image is not None
+
+    def draw(self, context):
+        layout = self.layout
+        image = context.active_node.image
+
+        if not hasattr(image, "level5_texture"):
+            layout.label(text="No Level 5 properties found.")
+            return
+
+        properties = image.level5_texture
+
+        box = layout.box()
+        box.label(text="Wrap:")
+        box.prop(properties, "wrap_s")
+        box.prop(properties, "wrap_t")
+
+        box = layout.box()
+        box.label(text="Filter:")
+        box.prop(properties, "mag_filter")
+        box.prop(properties, "min_filter")
+        box.prop(properties, "mip_filter")
+
 class Level5_Menu_Export(bpy.types.Menu):
     bl_label = "Studio Eleven (.mtn, .mtm, .imm, .prm, .xc, .cmr2)"
     bl_idname = "TOPBAR_MT_file_level5_export"
@@ -520,7 +602,12 @@ def register():
     bpy.utils.register_class(Level5MaterialProperties)
     bpy.utils.register_class(Level5_Material_Panel)
     bpy.types.Material.level5_atr = bpy.props.PointerProperty(type=Level5MaterialProperties)
-    
+
+    # Level 5 Texture Panel
+    bpy.utils.register_class(Level5TextureProperties)
+    bpy.utils.register_class(Level5_Texture_Panel)
+    bpy.types.Image.level5_texture = bpy.props.PointerProperty(type=Level5TextureProperties)
+
     # Auto Collision Generator
     bpy.utils.register_class(OBJECT_OT_CreateFloorCollision)
     bpy.utils.register_class(OBJECT_OT_CreateWallCollision)
@@ -563,7 +650,12 @@ def unregister():
     bpy.utils.unregister_class(Level5_Material_Panel)
     bpy.utils.unregister_class(Level5MaterialProperties)
     del bpy.types.Material.level5_atr
-    
+
+    # Level 5 Texture Panel
+    bpy.utils.unregister_class(Level5_Texture_Panel)
+    bpy.utils.unregister_class(Level5TextureProperties)
+    del bpy.types.Image.level5_texture
+
     # Auto Collision Generator
     bpy.utils.unregister_class(OBJECT_OT_CreateFloorCollision)
     bpy.utils.unregister_class(OBJECT_OT_CreateWallCollision)

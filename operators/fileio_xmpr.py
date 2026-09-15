@@ -10,12 +10,12 @@ import bmesh
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ..formats import xmpr, atr
+from ..formats import xmpr, atr, res
 from ..templates import *
 from ..utils.mesh_faces_utils import MeshFaceUtils
 
 ##########################################
-# CONST 
+# CONST
 ##########################################
 
 MESH_TYPE_INT_TO_ENUM = {
@@ -25,6 +25,15 @@ MESH_TYPE_INT_TO_ENUM = {
 }
 
 MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
+
+WRAP_EXTENSION = {
+    'CLAMP': 'EXTEND',
+    'BORDER': 'CLIP',
+    'REPEAT': 'REPEAT',
+    'MIRROR': 'MIRROR',
+}
+
+WRAP_GROUP_PREFIX = "Level Five Wrap"
 
 ##########################################
 # XMPR Function
@@ -195,6 +204,144 @@ def apply_atr_state(material, atr_state):
 
     material.show_transparent_back = not resolved["depth_write"]
 
+def new_group_socket(group, in_out, name):
+    # The sockets of a node group moved to an interface in Blender 4.0
+    if hasattr(group, "interface"):
+        group.interface.new_socket(name=name, in_out=in_out, socket_type='NodeSocketVector')
+    elif in_out == 'INPUT':
+        group.inputs.new('NodeSocketVector', name)
+    else:
+        group.outputs.new('NodeSocketVector', name)
+
+def make_wrap_group(wrap_s, wrap_t):
+    name = f"{WRAP_GROUP_PREFIX} {wrap_s}/{wrap_t}"
+    group = bpy.data.node_groups.get(name)
+
+    if group is not None:
+        return group
+
+    group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
+    new_group_socket(group, 'INPUT', "Vector")
+    new_group_socket(group, 'OUTPUT', "Vector")
+
+    nodes = group.nodes
+    links = group.links
+
+    group_input = nodes.new('NodeGroupInput')
+    group_input.location = (-400, 0)
+    group_output = nodes.new('NodeGroupOutput')
+    group_output.location = (400, 0)
+
+    separate = nodes.new('ShaderNodeSeparateXYZ')
+    separate.location = (-200, 0)
+    combine = nodes.new('ShaderNodeCombineXYZ')
+    combine.location = (200, 0)
+
+    links.new(group_input.outputs[0], separate.inputs[0])
+    links.new(combine.outputs[0], group_output.inputs[0])
+
+    for index, mode in enumerate((wrap_s, wrap_t)):
+        math = nodes.new('ShaderNodeMath')
+        math.location = (0, -200 * index)
+
+        if mode == 'REPEAT':
+            math.operation = 'FRACT'
+        elif mode == 'MIRROR':
+            math.operation = 'PINGPONG'
+            math.inputs[1].default_value = 1.0
+        else:
+            # Border is previewed as a clamp to the edge, only the exported bytes have to be exact
+            math.operation = 'ADD'
+            math.inputs[1].default_value = 0.0
+            math.use_clamp = True
+
+        links.new(separate.outputs[index], math.inputs[0])
+        links.new(math.outputs[0], combine.inputs[index])
+
+    links.new(separate.outputs[2], combine.inputs[2])
+
+    return group
+
+def get_wrap_node(node):
+    for link in node.inputs['Vector'].links:
+        source = link.from_node
+        if source.type == 'GROUP' and source.node_tree and source.node_tree.name.startswith(WRAP_GROUP_PREFIX):
+            return source
+
+    return None
+
+def remove_wrap_node(node):
+    wrap_node = get_wrap_node(node)
+
+    if wrap_node is None:
+        return
+
+    tree = node.id_data
+    sources = [link.from_node for link in wrap_node.inputs[0].links]
+    tree.nodes.remove(wrap_node)
+
+    for source in sources:
+        if source.bl_idname == 'ShaderNodeUVMap' and source.label == WRAP_GROUP_PREFIX:
+            tree.nodes.remove(source)
+        else:
+            tree.links.new(source.outputs[0], node.inputs['Vector'])
+
+def insert_wrap_node(node, wrap_s, wrap_t):
+    tree = node.id_data
+    wrap_node = get_wrap_node(node)
+
+    if wrap_node is None:
+        sources = [link.from_socket for link in node.inputs['Vector'].links]
+
+        wrap_node = tree.nodes.new('ShaderNodeGroup')
+        wrap_node.location = (node.location.x - 250, node.location.y - 150)
+        # The group has no sockets until a node_tree is assigned, do that before wiring any link into it
+        wrap_node.node_tree = make_wrap_group(wrap_s, wrap_t)
+
+        if sources:
+            tree.links.new(sources[0], wrap_node.inputs[0])
+        else:
+            uv_node = tree.nodes.new('ShaderNodeUVMap')
+            uv_node.label = WRAP_GROUP_PREFIX
+            uv_node.location = (node.location.x - 450, node.location.y - 150)
+            tree.links.new(uv_node.outputs[0], wrap_node.inputs[0])
+
+        tree.links.new(wrap_node.outputs[0], node.inputs['Vector'])
+
+    wrap_node.node_tree = make_wrap_group(wrap_s, wrap_t)
+
+def apply_sampler_preview(node):
+    # The state is kept as is in level5_texture, the Blender properties are only a preview
+    if node.image is None or not hasattr(node.image, "level5_texture"):
+        return
+
+    properties = node.image.level5_texture
+
+    node.interpolation = 'Closest' if properties.mag_filter == 'NEAREST' else 'Linear'
+
+    if properties.wrap_s == properties.wrap_t:
+        remove_wrap_node(node)
+        extension = WRAP_EXTENSION.get(properties.wrap_s, 'REPEAT')
+
+        # Mirror isn't in this node's extension enum on every Blender version this addon supports (e.g. not on 3.4)
+        if extension not in node.bl_rna.properties['extension'].enum_items:
+            extension = 'REPEAT'
+
+        node.extension = extension
+    else:
+        # Blender has a single wrap mode for both axes, a node group remaps the UV instead
+        insert_wrap_node(node, properties.wrap_s, properties.wrap_t)
+        node.extension = 'EXTEND'
+
+def refresh_sampler_preview(image):
+    for material in bpy.data.materials:
+        if not material.use_nodes or material.node_tree is None:
+            continue
+
+        for node in material.node_tree.nodes:
+            if node.type == 'TEX_IMAGE' and node.image == image:
+                apply_sampler_preview(node)
+
 def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None):
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
@@ -334,6 +481,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         for texture in lib:
             texture_node = material.node_tree.nodes.new('ShaderNodeTexImage')
             texture_node.image = texture
+            apply_sampler_preview(texture_node)
 
         # Link only the last texture to principled bsdf then to material
         if texture_node:
