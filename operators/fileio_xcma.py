@@ -82,7 +82,7 @@ def create_camera(frame_start, hash_name, cam_values):
     if 'roll' in cam_values:
         for frame, roll in cam_values['roll'].items():
             bpy.context.scene.frame_set(frame_start + frame)       
-            level5_camera.camera_obj.rotation_euler = (0, 0, math.radians(roll))
+            level5_camera.camera_obj.rotation_euler = (0, 0, roll) # the roll is in radians
             level5_camera.camera_obj.keyframe_insert(data_path="rotation_euler", index=2)       
 
     # Set keyframes for target location (aim)
@@ -145,7 +145,7 @@ def fileio_write_xcma(context, animation_name, camera_speed, camera, target, ver
                 if idx == 0 or idx == num_keyframes - 1:
                     cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
                     cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
-                    cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # Temp roll patch. Will need to be properly rewritten later
+                    cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # the roll is in radians
                 else:
                     if 'location' in fcurve.data_path:
                         cam_values['location'][frame-first_frame] = [camera.location.x, camera.location.z, camera.location.y*-1]
@@ -154,7 +154,7 @@ def fileio_write_xcma(context, animation_name, camera_speed, camera, target, ver
                         cam_values['focal_length'][frame-first_frame] = camera.data.lens - 33
                         
                     if 'rotation_euler' in fcurve.data_path:
-                        cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # Temp roll patch. Will need to be properly rewritten later
+                        cam_values['roll'][frame-first_frame] = camera.rotation_euler.z # the roll is in radians
 
     # Process target animation
     target_animation = target.animation_data
