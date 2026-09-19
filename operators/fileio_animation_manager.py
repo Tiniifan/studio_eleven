@@ -574,7 +574,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                     if transformation == 'offset':
                         location = modifier.offset
                         tracks['offset'].GetNodeByName(name_crc32).add_frame(
-                            frame, UVMove(-float(location[0]), float(location[1]))
+                            frame, UVMove(*map(float, location))
                         )
                     elif transformation == 'scale':
                         scale = modifier.scale
@@ -611,7 +611,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                             if transformation == 'offset':
                                 location = [material_transformation.translation[0], - material_transformation.translation[1]]
                                 tracks['offset'].GetNodeByName(name_crc32).add_frame(
-                                    frame, UVMove(-float(location[0]), float(location[1]))
+                                    frame, UVMove(*map(float, location))
                                 )
                             elif transformation == 'scale':
                                 scale = [material_transformation.scale[0], material_transformation.scale[1]]
