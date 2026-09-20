@@ -14,6 +14,8 @@ STATE_PATH = os.path.join(GAMES_ROOT, "installed.json")
 # Updates the user refused are not proposed again before the next session
 _ignored_updates = set()
 
+_entries = {}
+
 
 def folder_name(engine_id):
     return engine_id.lower()
@@ -40,6 +42,8 @@ def read_state():
 
 
 def write_state(state):
+    _entries.clear()
+
     try:
         with open(STATE_PATH, "w", encoding="utf-8", newline="\n") as f:
             json.dump(state, f, indent=2)
@@ -70,11 +74,14 @@ def installed_entry(engine_id):
     if is_default_engine(engine_id):
         return {}
 
-    entry = read_state()["games"].get(engine_id)
-    if entry is not None and os.path.isfile(os.path.join(game_directory(engine_id), "engine.json")):
-        return entry
+    # StudioRender asks on every draw, the state file is read again after a write only
+    if engine_id not in _entries:
+        entry = read_state()["games"].get(engine_id)
+        if entry is not None and not os.path.isfile(os.path.join(game_directory(engine_id), "engine.json")):
+            entry = None
+        _entries[engine_id] = entry
 
-    return None
+    return _entries[engine_id]
 
 
 def is_installed(engine_id):

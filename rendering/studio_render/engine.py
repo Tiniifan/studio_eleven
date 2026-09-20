@@ -5,6 +5,7 @@ in background mode where Blender has no GPU backend.
 """
 
 import bpy
+import numpy as np
 from collections import namedtuple
 from mathutils import Vector
 
@@ -97,6 +98,73 @@ def outline_map(depsgraph):
     return outlines
 
 
+Changes = namedtuple("Changes", ("everything", "objects", "materials", "meshes"))
+
+# Datablocks whose update never changes what StudioRender caches (a frame change flags the scene, the armature pose, the camera,
+# and the node tree of an animated material next to the Material itself)
+HARMLESS_UPDATES = (bpy.types.Scene, bpy.types.Armature, bpy.types.Action, bpy.types.Camera, bpy.types.Light,
+                    bpy.types.World, bpy.types.Collection, bpy.types.WindowManager, bpy.types.Screen, bpy.types.NodeTree)
+
+
+def changes_of(updates, animating=False):
+    """What the depsgraph says changed that the draw caches depend on: the geometry of objects, materials and meshes,
+    or everything when it is not sure (an unknown datablock, an object whose type is not known).
+
+    `animating` is a frame change: the materials it flags only got animated values, their structure is the same.
+    """
+    everything = False
+    objects, materials, meshes = set(), set(), set()
+
+    for update in updates:
+        id_data = update.id
+
+        if isinstance(id_data, bpy.types.Object):
+            if update.is_updated_geometry:
+                objects.add(id_data.name)
+        elif isinstance(id_data, bpy.types.Material):
+            if not animating:
+                materials.add(id_data.name)
+        elif isinstance(id_data, bpy.types.Mesh):
+            meshes.add(id_data.name)
+            everything = True
+        elif not isinstance(id_data, HARMLESS_UPDATES):
+            everything = True
+
+    return Changes(everything, objects, materials, meshes)
+
+
+DrawJob = namedtuple("DrawJob", ("geometry", "matrix", "bounds", "outline", "fades"))
+
+
+def group_extent(jobs):
+    """Corners of the box that holds the meshes of a group in world space."""
+    lower = np.full(3, np.inf)
+    upper = np.full(3, -np.inf)
+
+    for job in jobs:
+        corners = job.geometry.corners
+        world = corners @ np.array(job.matrix).T
+        lower = np.minimum(lower, world[:, :3].min(axis=0))
+        upper = np.maximum(upper, world[:, :3].max(axis=0))
+
+    return Vector(lower), Vector(upper)
+
+
+def camera_of(scene):
+    """The camera of the frame: the last timeline marker bound to a camera wins, like Blender does when it changes the frame.
+
+    An animation render keeps the camera the scene had when it started, the markers have to be followed here.
+    """
+    frame = scene.frame_current
+    chosen = None
+
+    for marker in scene.timeline_markers:
+        if marker.camera is not None and marker.frame <= frame and (chosen is None or marker.frame > chosen.frame):
+            chosen = marker
+
+    return chosen.camera if chosen is not None else scene.camera
+
+
 def background_color(scene):
     world = scene.world
     return tuple(world.color) + (1.0,) if world else (0.05, 0.05, 0.05, 1.0)
@@ -113,45 +181,77 @@ def _set(setter, name, value):
         pass
 
 
+# Uniforms keep their value in the program: what does not change between two draws of a shader is only sent again
+# when the frame changed (view, projection, tint, lights) or the material changed (lighting values).
+_frame_token = 0
+_frame_bound = {}
+_lights_bound = {}
+_material_bound = {}
+_tint_bound = {}
+
+IDENTITY_ROWS = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0)) * 3
+
+
+def next_frame():
+    global _frame_token
+    _frame_token += 1
+
+
 def _bind_transforms(shader, model_matrix, view_matrix, projection_matrix, tint):
     _set(shader.uniform_float, "unf_vtx_lcl_glb", model_matrix)
-    _set(shader.uniform_float, "unf_vtx_glb_cmr", view_matrix)
-    _set(shader.uniform_float, "unf_vtx_cmr_prj", projection_matrix)
-    _set(shader.uniform_float, "unf_vtx_clr", tuple(tint))
 
-    for index, row in enumerate(((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0)) * 3):
-        _set(shader.uniform_float, f"unf_vtx_txt_{index}", row)
+    if _frame_bound.get(shader) != _frame_token:
+        first_use = shader not in _frame_bound
+        _frame_bound[shader] = _frame_token
+        _set(shader.uniform_float, "unf_vtx_glb_cmr", view_matrix)
+        _set(shader.uniform_float, "unf_vtx_cmr_prj", projection_matrix)
+
+        if first_use:
+            for index, row in enumerate(IDENTITY_ROWS):
+                _set(shader.uniform_float, f"unf_vtx_txt_{index}", row)
+
+    # The color changes between two draws of a shader when a material fades
+    tint = tuple(tint)
+    if _tint_bound.get(shader) != (_frame_token, tint):
+        _tint_bound[shader] = (_frame_token, tint)
+        _set(shader.uniform_float, "unf_vtx_clr", tint)
 
 
 def _bind_lighting(shader, settings, lights, material_lighting):
-    environment = lighting.environment_of(material_lighting)
+    if _lights_bound.get(shader) != _frame_token:
+        _lights_bound[shader] = _frame_token
+        _set(shader.uniform_float, "unf_lgt_scene_ambient", tuple(settings.scene_ambient))
 
-    _set(shader.uniform_int, "unf_lgt_config", environment.config)
-    _set(shader.uniform_float, "unf_lgt_scene_ambient", tuple(settings.scene_ambient))
-    _set(shader.uniform_float, "unf_mat_emission", environment.emission)
-    _set(shader.uniform_float, "unf_mat_ambient", environment.ambient)
-    _set(shader.uniform_float, "unf_mat_diffuse", environment.diffuse)
-    _set(shader.uniform_float, "unf_mat_specular0", environment.specular0)
-    _set(shader.uniform_float, "unf_mat_specular1", environment.specular1)
-    _set(shader.uniform_int, "unf_lgt_fresnel_selector", environment.fresnel_selector)
-    _set(shader.uniform_bool, "unf_lgt_clamp_highlights", [environment.clamp_highlights])
-    _set(shader.uniform_bool, "unf_lgt_two_side_diffuse", [environment.two_side_diffuse])
-    _set(shader.uniform_bool, "unf_lgt_enabled_d0", [environment.lut_enabled_d0])
-    _set(shader.uniform_bool, "unf_lgt_enabled_d1", [environment.lut_enabled_d1])
-    _set(shader.uniform_bool, "unf_lgt_enabled_refl", [environment.lut_enabled_refl])
+        for index, light in enumerate(lights):
+            _set(shader.uniform_float, f"unf_lgt_position_{index}", light.position)
+            _set(shader.uniform_float, f"unf_lgt_ambient_{index}", light.ambient)
+            _set(shader.uniform_float, f"unf_lgt_diffuse_{index}", light.diffuse)
+            _set(shader.uniform_float, f"unf_lgt_specular0_{index}", light.specular0)
+            _set(shader.uniform_float, f"unf_lgt_specular1_{index}", light.specular1)
 
-    for table in lighting.LUT_TABLES:
-        _set(shader.uniform_int, f"unf_lut_input_{table}", environment.lut_input[table])
-        _set(shader.uniform_bool, f"unf_lut_abs_{table}", [environment.lut_abs[table]])
-        _set(shader.uniform_float, f"unf_lut_scale_{table}", environment.lut_scale[table])
+    if _material_bound.get(shader) is not material_lighting:
+        _material_bound[shader] = material_lighting
+        environment = lighting.environment_of(material_lighting)
 
-    for index, light in enumerate(lights):
-        _set(shader.uniform_float, f"unf_lgt_position_{index}", light.position)
-        _set(shader.uniform_float, f"unf_lgt_ambient_{index}", light.ambient)
-        _set(shader.uniform_float, f"unf_lgt_diffuse_{index}", light.diffuse)
-        _set(shader.uniform_float, f"unf_lgt_specular0_{index}", light.specular0)
-        _set(shader.uniform_float, f"unf_lgt_specular1_{index}", light.specular1)
+        _set(shader.uniform_int, "unf_lgt_config", environment.config)
+        _set(shader.uniform_float, "unf_mat_emission", environment.emission)
+        _set(shader.uniform_float, "unf_mat_ambient", environment.ambient)
+        _set(shader.uniform_float, "unf_mat_diffuse", environment.diffuse)
+        _set(shader.uniform_float, "unf_mat_specular0", environment.specular0)
+        _set(shader.uniform_float, "unf_mat_specular1", environment.specular1)
+        _set(shader.uniform_int, "unf_lgt_fresnel_selector", environment.fresnel_selector)
+        _set(shader.uniform_bool, "unf_lgt_clamp_highlights", [environment.clamp_highlights])
+        _set(shader.uniform_bool, "unf_lgt_two_side_diffuse", [environment.two_side_diffuse])
+        _set(shader.uniform_bool, "unf_lgt_enabled_d0", [environment.lut_enabled_d0])
+        _set(shader.uniform_bool, "unf_lgt_enabled_d1", [environment.lut_enabled_d1])
+        _set(shader.uniform_bool, "unf_lgt_enabled_refl", [environment.lut_enabled_refl])
 
+        for table in lighting.LUT_TABLES:
+            _set(shader.uniform_int, f"unf_lut_input_{table}", environment.lut_input[table])
+            _set(shader.uniform_bool, f"unf_lut_abs_{table}", [environment.lut_abs[table]])
+            _set(shader.uniform_float, f"unf_lut_scale_{table}", environment.lut_scale[table])
+
+    # A texture unit is rebound by every draw, the sampler is set each time
     _set(shader.uniform_sampler, "unf_frg_txt_lut", _lut_texture(material_lighting))
 
 
@@ -174,24 +274,19 @@ def _lut_texture(material_lighting):
     return _lut_textures[key][1]
 
 
-_image_textures = {}
-
-
-def _image_texture(image):
-    import gpu
-
-    key = image.name_full
-    if key not in _image_textures:
-        _image_textures[key] = gpu.texture.from_image(image)
-
-    return _image_textures[key]
+_image_texture = material.image_texture
 
 
 def clear_caches():
+    _frame_bound.clear()
+    _tint_bound.clear()
+    _lights_bound.clear()
+    _material_bound.clear()
     _lut_textures.clear()
-    _image_textures.clear()
+    material.clear_textures()
     material.clear_palettes()
     shaders.clear_cache()
+    draw.clear_cache()
     resources.clear_cache()
     material.clear_cache()
 
@@ -206,9 +301,22 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
     def __init__(self):
         self.geometry = {}
+        self.stale = set()
+        self.last_frame = None
 
     def view_update(self, context, depsgraph):
-        self.geometry.clear()
+        scene = depsgraph.scene
+        frame = (scene.frame_current, scene.frame_subframe)
+        changes = changes_of(depsgraph.updates, animating=frame != self.last_frame)
+        self.last_frame = frame
+
+        if changes.everything:
+            self.geometry.clear()
+            self.stale.clear()
+            material.clear_cache()
+        else:
+            self.stale.update(changes.objects)
+            material.invalidate(changes.materials, changes.meshes)
 
     def view_draw(self, context, depsgraph):
         import gpu
@@ -224,6 +332,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         if settings is None:
             return
 
+        next_frame()
         engine_id = material.scene_engine_id(scene)
         file_version = get_engine(engine_id).file_version
         lights = lighting.collect_lights(depsgraph, view_matrix, settings.light_limit) \
@@ -231,65 +340,72 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         outlines = outline_map(depsgraph) if settings.outline else {}
 
         # The meshes of a character are drawn together: every outline first, then every mesh over them.
-        # Instances and their objects are only valid inside the loop that yields them.
+        # Instances and their objects are only valid inside the loop that yields them, so the pass collects plain data.
         groups = {}
 
         for instance in depsgraph.object_instances:
             obj = instance.object
-            if obj.type == 'MESH':
-                key = obj.parent.name if obj.parent else obj.name
-                points = [instance.matrix_world @ Vector(corner) for corner in obj.bound_box]
-                extent = groups.setdefault(key, [])
-                extent.extend((min(point[axis] for point in points) for axis in range(3)))
-                extent.extend((max(point[axis] for point in points) for axis in range(3)))
+            if obj.type != 'MESH':
+                continue
+
+            name = obj.name
+            geometry = self.geometry.get(name)
+            if geometry is None or name in self.stale:
+                geometry = draw.extract(obj, depsgraph, geometry)
+                self.geometry[name] = geometry
+                self.stale.discard(name)
+            if geometry is None:
+                continue
+
+            slots = obj.material_slots
+            mesh = obj.data
+            bounds, fades = {}, {}
+            for index in geometry.triangles:
+                slot_material = slots[index].material if index < len(slots) else None
+                bound = material.build(engine_id, mesh, slot_material, file_version)
+                bounds[index] = bound
+                if bound.fade_input is not None:
+                    fades[index] = material.fade_of(slot_material, bound.fade_input)
+
+            key = obj.parent.name if obj.parent else name
+            groups.setdefault(key, []).append(
+                DrawJob(geometry, instance.matrix_world.copy(), bounds, outlines.get(name), fades))
 
         eye = view_matrix.inverted().translation
         perspective = projection_matrix[3][3] == 0.0
 
-        for key, extent in groups.items():
+        for jobs in groups.values():
             # Share of the half height of the view the character takes, the outline never gets thicker than a bit of it
             size_ndc = None
-            if perspective:
-                lower = Vector((min(extent[0::6]), min(extent[1::6]), min(extent[2::6])))
-                upper = Vector((max(extent[3::6]), max(extent[4::6]), max(extent[5::6])))
+            if perspective and any(job.outline is not None for job in jobs):
+                lower, upper = group_extent(jobs)
                 distance = max(((lower + upper) * 0.5 - eye).length, 0.0001)
                 size_ndc = max(upper - lower) * abs(projection_matrix[1][1]) / distance
 
-            for draw_outlines in (True, False):
-                for instance in depsgraph.object_instances:
-                    obj = instance.object
+            for job in jobs:
+                if job.outline is not None:
+                    self.draw_outline(engine_id, file_version, job.bounds, job.geometry, job.matrix,
+                                      view_matrix, projection_matrix, settings, job.outline,
+                                      size_ndc, viewport_height)
 
-                    if obj.type != 'MESH' or (obj.parent.name if obj.parent else obj.name) != key:
-                        continue
+            for job in jobs:
+                self.draw_object(engine_id, file_version, job.bounds, job.geometry, job.matrix,
+                                 view_matrix, projection_matrix, settings, lights, job.fades)
 
-                    geometry = self.geometry.get(obj.name)
-                    if geometry is None:
-                        geometry = draw.extract(obj, depsgraph)
-                        self.geometry[obj.name] = geometry
-                    if geometry is None:
-                        continue
-
-                    if draw_outlines:
-                        outline = outlines.get(obj.name)
-                        if outline is not None:
-                            self.draw_outline(engine_id, file_version, obj, geometry, instance.matrix_world,
-                                              view_matrix, projection_matrix, settings, outline,
-                                              size_ndc, viewport_height)
-                    else:
-                        self.draw_object(engine_id, file_version, obj, geometry, instance.matrix_world,
-                                         view_matrix, projection_matrix, settings, lights)
-
-    def draw_object(self, engine_id, file_version, obj, geometry, model_matrix, view_matrix,
-                    projection_matrix, settings, lights):
-        slots = list(obj.material_slots) or [None]
-
-        for index, slot in enumerate(slots):
-            if index not in geometry.triangles:
-                continue
-
-            bound = material.build(engine_id, obj.data, slot.material if slot else None, file_version)
+    def draw_object(self, engine_id, file_version, bounds, geometry, model_matrix, view_matrix,
+                    projection_matrix, settings, lights, fades=None):
+        for index, bound in bounds.items():
             if bound.program is None:
                 continue
+
+            # The MaterialTransparency track of the material animation fades the color the vertex stage hands out
+            fade = fades.get(index) if fades else None
+            tint = settings.tint
+            if fade is not None:
+                fade = min(max(fade, 0.0), 1.0)
+                if fade == 0.0 and bound.state.blend and not bound.state.depth_write:
+                    continue
+                tint = (tint[0], tint[1], tint[2], tint[3] * fade)
 
             options = shaders.ShaderOptions(
                 texture_units=bound.texture_units,
@@ -307,14 +423,15 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
             state.apply(bound.state)
             shader.bind()
-            _bind_transforms(shader, model_matrix, view_matrix, projection_matrix, settings.tint)
+            _bind_transforms(shader, model_matrix, view_matrix, projection_matrix, tint)
             _set(shader.uniform_float, "unf_frg_alpha_ref", bound.state.alpha_ref)
 
             for unit in options.texture_units:
-                _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", _image_texture(bound.images[unit]))
+                _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", bound.texture(unit))
 
-            if bound.program.palette_channels and bound.images:
-                for channel, color in material.palette_of(bound.images[0]).items():
+            palette = bound.palette
+            if palette:
+                for channel, color in palette.items():
                     _set(shader.uniform_float, f"unf_frg_palette_{channel}", color)
 
             if options.fragment_lighting:
@@ -322,7 +439,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
             batch.draw(shader)
 
-    def draw_outline(self, engine_id, file_version, obj, geometry, model_matrix, view_matrix, projection_matrix,
+    def draw_outline(self, engine_id, file_version, bounds, geometry, model_matrix, view_matrix, projection_matrix,
                      settings, outline, size_ndc=None, viewport_height=900):
         import gpu
 
@@ -347,12 +464,8 @@ class StudioRenderEngine(bpy.types.RenderEngine):
             if size_ndc is not None:
                 ring = max(2.0 / max(viewport_height, 1), min(ring, OUTLINE_SIZE_SHARE * size_ndc))
             view_scale = ring / (width * max(abs(projection_matrix[1][1]), 0.0001))
-        slots = list(obj.material_slots) or [None]
 
-        for index in geometry.triangles:
-            slot = slots[index] if index < len(slots) else None
-            bound = material.build(engine_id, obj.data, slot.material if slot else None, file_version)
-
+        for index, bound in bounds.items():
             # The second combiner of the .sil (texture x primary color) is used for the textured meshes,
             # a character merges its textures first
             base = bound.program.base if bound.program is not None else None
@@ -384,10 +497,11 @@ class StudioRenderEngine(bpy.types.RenderEngine):
             _set(shader.uniform_float, "unf_vtx_outline_view", view_scale)
 
             for unit in units:
-                _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", _image_texture(bound.images[unit]))
+                _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", bound.texture(unit))
 
-            if base is not None and base.palette_channels and bound.images:
-                for channel, color in material.palette_of(bound.images[0]).items():
+            palette = bound.palette if base is not None else None
+            if palette:
+                for channel, color in palette.items():
                     _set(shader.uniform_float, f"unf_frg_palette_{channel}", color)
 
             batch.draw(shader)
@@ -401,9 +515,10 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         width = max(1, int(scene.render.resolution_x * scale))
         height = max(1, int(scene.render.resolution_y * scale))
 
-        camera = scene.camera
+        camera = camera_of(scene)
         if camera is None or settings is None:
             return
+        camera = camera.evaluated_get(depsgraph)
 
         view_matrix = camera.matrix_world.inverted()
         projection_matrix = camera.calc_matrix_camera(depsgraph, x=width, y=height)
@@ -414,6 +529,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                 framebuffer = gpu.state.active_framebuffer_get()
                 framebuffer.clear(color=background_color(scene), depth=1.0)
                 self.geometry.clear()
+                self.stale.clear()
                 self.draw_scene(depsgraph, view_matrix, projection_matrix, height)
                 state.reset()
                 buffer = framebuffer.read_color(0, 0, width, height, 4, 0, 'FLOAT')
