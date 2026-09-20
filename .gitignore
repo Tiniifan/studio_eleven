@@ -1,5 +1,13 @@
-
 *.pyc
 LICENSE
 CLAUDE.md
 /.claude
+
+# The game folders come from the zips, only the default games are kept unzipped
+/rendering/games/*
+!/rendering/games/default_*/
+!/rendering/games/*.zip
+
+# Local validation scripts and private notes
+/test/
+/.docs/
