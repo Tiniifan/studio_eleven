@@ -408,6 +408,7 @@ class AssignDefaultRenderDefault(bpy.types.Operator):
 
         for mesh in meshes:
             mesh.level5_properties.render_default = default.name
+            mesh.level5_properties.unresolved_render_program = ""
 
         self.report({'INFO'}, f"{len(meshes)} mesh(es) set to {default.name}")
         return {'FINISHED'}

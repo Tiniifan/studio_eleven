@@ -108,10 +108,14 @@ def scene_meshes(scene):
 def assign_render_default(mesh, engine_id):
     """Give the mesh a render default of the engine, returns True when its value changed."""
     properties = mesh.level5_properties
-    resolved = render_defaults.resolve_render_default(engine_id, properties.render_default)
+    kept = render_defaults.find_render_default_by_hash(engine_id, int(properties.unresolved_render_program, 16)) if properties.unresolved_render_program else None
+    resolved = kept or render_defaults.resolve_render_default(engine_id, properties.render_default)
+
+    if kept:
+        properties.unresolved_render_program = ""
 
     if properties.render_default == resolved.name:
-        return False
+        return kept is not None
 
     previous = properties.render_default
     properties.render_default = resolved.name
@@ -128,8 +132,10 @@ def assign_imported_render_program(mesh, render_program_hash, engine_id=None):
 
     if found is None:
         print(f"[Studio Eleven] {mesh.name}: render program {render_program_hash:08X} is not part of {engine_id}")
+        mesh.level5_properties.unresolved_render_program = f"{render_program_hash:08X}"
         assign_render_default(mesh, engine_id)
     else:
+        mesh.level5_properties.unresolved_render_program = ""
         mesh.level5_properties.render_default = found.name
 
 

@@ -623,6 +623,8 @@ def fileio_write_xmpr(context, mesh_name, library_name, operator=None):
     ]
 
     render_default = rendering_project.get_mesh_render_default(mesh.data)
+    unresolved = mesh.data.level5_properties.unresolved_render_program
+    render_program_hash = int(unresolved, 16) if unresolved else render_default.render_program_hash
     skinned = len(xmpr.used_bones(weights, bone_names)) > 0
     parent_node = get_parent_node_name(mesh, bone_names)
 
@@ -637,7 +639,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, operator=None):
     return xmpr.write(
         mesh.name_full, texspace_array,
         indices, vertices, uvs, normals, colors,
-        weights, bone_names, library_name, render_default.render_program_hash,
+        weights, bone_names, library_name, render_program_hash,
         zlib.crc32(parent_node.encode("shift-jis")) if parent_node else 0,
         draw_priority, mesh_type, tints
     )

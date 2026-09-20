@@ -62,6 +62,7 @@ def get_render_default_choice(self):
 
 def set_render_default_choice(self, value):
     self.render_default = rendering_project.render_default_items()[value][0]
+    self.unresolved_render_program = ""
 
 def render_default_choice_items(self, context):
     return rendering_project.render_default_items()
@@ -79,6 +80,12 @@ class Level5MeshProperties(bpy.types.PropertyGroup):
         items=render_default_choice_items,
         get=get_render_default_choice,
         set=set_render_default_choice,
+    )
+
+    unresolved_render_program: StringProperty(
+        name="Original Render Program",
+        description="Render program hash (hexadecimal) of the imported model when the game engine of the project does not have it, the export writes it back",
+        default="",
     )
 
     parent_node: StringProperty(
@@ -123,6 +130,8 @@ class Level5_Panel(bpy.types.Panel):
         if hasattr(mesh, "level5_properties"):
             layout.label(text=f"Game Engine: {rendering_project.get_scene_engine(context.scene).name}")
             layout.prop(mesh.level5_properties, "render_default_choice")
+            if mesh.level5_properties.unresolved_render_program:
+                layout.label(text=f"Original program {mesh.level5_properties.unresolved_render_program} is kept on export")
             layout.prop(mesh.level5_properties, "draw_priority")
             layout.prop(mesh.level5_properties, "mesh_type")
         else:
