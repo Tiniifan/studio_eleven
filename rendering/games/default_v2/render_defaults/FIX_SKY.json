@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_SKY",
+  "vertex_program": "#FIX_SKY",
+  "combiner": "#FIX_CLR",
+  "skinned": false,
+  "fragment_lighting": false
+}

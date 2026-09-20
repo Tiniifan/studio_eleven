@@ -7,7 +7,8 @@ from bpy.props import BoolProperty, BoolVectorProperty, FloatProperty, IntProper
 
 from .operators import *
 from .controls import *
-from .formats import atr, res
+from .formats import atr, res, mtr
+from .rendering import engines, game_manager, game_material as rendering_game_material, render_defaults, game_setup, studio_render, project as rendering_project
 
 # Only for Debug Mod (Press F8 to reload blender addon) 
 if "fileio_xcma" in locals():
@@ -22,6 +23,14 @@ if "fileio_animation_manager" in locals():
     importlib.reload(fileio_animation_manager) 
     importlib.reload(animation_manager)
 
+if "rendering_project" in locals():
+    importlib.reload(engines)
+    importlib.reload(game_manager)
+    importlib.reload(render_defaults)
+    importlib.reload(rendering_project)
+    importlib.reload(game_setup)
+    importlib.reload(studio_render)
+
 if "fileio_xpck" in locals():
     importlib.reload(xpck_settings)
     importlib.reload(fileio_xpck) 
@@ -32,6 +41,7 @@ if "fileio_xpck" in locals():
     importlib.reload(minf)
     importlib.reload(xcmt)
     importlib.reload(atr)
+    importlib.reload(mtr)
 
 bl_info = {
     "name": "Studio Eleven",
@@ -46,7 +56,37 @@ bl_info = {
     "support": 'COMMUNITY',
 }
 
+def get_render_default_choice(self):
+    names = [item[0] for item in rendering_project.render_default_items()]
+    return names.index(self.render_default) if self.render_default in names else 0
+
+def set_render_default_choice(self, value):
+    self.render_default = rendering_project.render_default_items()[value][0]
+
+def render_default_choice_items(self, context):
+    return rendering_project.render_default_items()
+
 class Level5MeshProperties(bpy.types.PropertyGroup):
+    render_default: StringProperty(
+        name="Render Default Name",
+        description="Render default of the mesh, it belongs to the game engine of the project",
+        default="",
+    )
+
+    render_default_choice: EnumProperty(
+        name="Render Default",
+        description="Render program of the mesh, only the ones of the project game engine are listed",
+        items=render_default_choice_items,
+        get=get_render_default_choice,
+        set=set_render_default_choice,
+    )
+
+    parent_node: StringProperty(
+        name="Parent Node",
+        description="Bone the game uses as parent node of a skinned mesh, empty to guess it from the mesh name",
+        default="",
+    )
+
     draw_priority: IntProperty(
         name="Draw Priority",
         description="Priority used for drawing the mesh",
@@ -81,6 +121,8 @@ class Level5_Panel(bpy.types.Panel):
         layout = self.layout
         mesh = context.mesh
         if hasattr(mesh, "level5_properties"):
+            layout.label(text=f"Game Engine: {rendering_project.get_scene_engine(context.scene).name}")
+            layout.prop(mesh.level5_properties, "render_default_choice")
             layout.prop(mesh.level5_properties, "draw_priority")
             layout.prop(mesh.level5_properties, "mesh_type")
         else:
@@ -374,6 +416,47 @@ class Level5MaterialProperties(bpy.types.PropertyGroup):
         max=255
     )
 
+class Level5MtrProperties(bpy.types.PropertyGroup):
+    data: StringProperty(
+        name="Lighting Material",
+        description="The lighting material of the game as JSON: colors, fragment lighting flags and lookup tables, empty to use the one of the game engine",
+        default=""
+    )
+
+class Level5_Mtr_Panel(bpy.types.Panel):
+    bl_label = "Lighting Material"
+    bl_idname = "MATERIAL_PT_level5_mtr_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "material"
+    bl_parent_id = "MATERIAL_PT_level5_render_state_panel"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.material is not None and hasattr(context.material, "level5_mtr")
+
+    def draw(self, context):
+        layout = self.layout
+        material = rendering_game_material.material_of(context.material, rendering_project.get_scene_engine_id(context.scene))
+        source = "Read from the model" if context.material.level5_mtr.data else "Game engine default"
+
+        layout.label(text=source)
+        layout.label(text=f"Ambient {tuple(round(v, 2) for v in material.ambient)}  Diffuse {tuple(round(v, 2) for v in material.diffuse)}")
+        layout.label(text=f"Specular 0 {tuple(round(v, 2) for v in material.specular0)}  Specular 1 {tuple(round(v, 2) for v in material.specular1)}")
+        layout.label(text="Lookup tables: " + (", ".join(name for name, table in material.tables.items() if table.lut) or "none"))
+        layout.operator("material.level5_reset_mtr", text="Use The Game Engine Default")
+
+class MATERIAL_OT_level5_reset_mtr(bpy.types.Operator):
+    bl_idname = "material.level5_reset_mtr"
+    bl_label = "Use The Game Engine Default"
+    bl_description = "Forget the lighting material read from the model, the export writes the one of the game engine"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    def execute(self, context):
+        context.material.level5_mtr.data = ""
+        return {'FINISHED'}
+
 class Level5_Material_Panel(bpy.types.Panel):
     bl_label = "Level 5"
     bl_idname = "MATERIAL_PT_level5_render_state_panel"
@@ -603,6 +686,12 @@ def register():
     bpy.utils.register_class(Level5_Material_Panel)
     bpy.types.Material.level5_atr = bpy.props.PointerProperty(type=Level5MaterialProperties)
 
+    # Level 5 Lighting Material
+    bpy.utils.register_class(Level5MtrProperties)
+    bpy.utils.register_class(Level5_Mtr_Panel)
+    bpy.utils.register_class(MATERIAL_OT_level5_reset_mtr)
+    bpy.types.Material.level5_mtr = bpy.props.PointerProperty(type=Level5MtrProperties)
+
     # Level 5 Texture Panel
     bpy.utils.register_class(Level5TextureProperties)
     bpy.utils.register_class(Level5_Texture_Panel)
@@ -613,7 +702,16 @@ def register():
     bpy.utils.register_class(OBJECT_OT_CreateWallCollision)
     bpy.types.VIEW3D_MT_object_context_menu.append(auto_collision_menu_func)
 
+    # Game engine of the project and its preference
+    game_setup.register()
+    rendering_project.register()
+    studio_render.register()
+
 def unregister():
+    studio_render.unregister()
+    rendering_project.unregister()
+    game_setup.unregister()
+
     # Level 5 Menu Export
     bpy.utils.unregister_class(BoneCheckbox)
     bpy.utils.unregister_class(ExportAnimation)
@@ -650,6 +748,12 @@ def unregister():
     bpy.utils.unregister_class(Level5_Material_Panel)
     bpy.utils.unregister_class(Level5MaterialProperties)
     del bpy.types.Material.level5_atr
+
+    # Level 5 Lighting Material
+    bpy.utils.unregister_class(MATERIAL_OT_level5_reset_mtr)
+    bpy.utils.unregister_class(Level5_Mtr_Panel)
+    bpy.utils.unregister_class(Level5MtrProperties)
+    del bpy.types.Material.level5_mtr
 
     # Level 5 Texture Panel
     bpy.utils.unregister_class(Level5_Texture_Panel)

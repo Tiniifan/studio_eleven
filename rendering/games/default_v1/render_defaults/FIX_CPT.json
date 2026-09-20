@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_CPT",
+  "vertex_program": "#FIX_CPT",
+  "combiner": "#FIX_FRM",
+  "skinned": false,
+  "fragment_lighting": false
+}

@@ -9,7 +9,7 @@ from bpy.types import Operator
 from bpy.props import IntProperty, StringProperty
 
 from ..utils.mesh_faces_utils import MeshFaceUtils
-from ..templates import *
+from ..rendering import project as rendering_project, render_defaults
 from .xpck_settings import set_animation_settings
 
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
@@ -395,85 +395,23 @@ class RemoveDuplicateFaceModel(bpy.types.Operator):
         self.report({'INFO'}, f"Removed {removed_count} duplicate faces from mesh '{obj.name}'. {remaining_face_count} faces remaining.")
         return {'FINISHED'}
 
-class TemplateItem(bpy.types.PropertyGroup):
-    name: bpy.props.StringProperty()
-    visible: bpy.props.BoolProperty(default=True)
+class AssignDefaultRenderDefault(bpy.types.Operator):
+    bl_idname = "object.assign_default_render_default"
+    bl_label = "Reset Render Defaults"
+    bl_description = "Give the selected meshes the default render default of the game engine"
+    bl_options = {'REGISTER', 'UNDO'}
 
-class OBJECT_OT_manage_templates(bpy.types.Operator):
-    bl_idname = "object.manage_templates"
-    bl_label = "Manage Templates"
-    bl_description = "Modify template order and visibility"   
-    index: bpy.props.IntProperty(default=0)
-    
-    def draw(self, context):
-        layout = self.layout
-        wm = context.window_manager
-        
-        # Display each template with checkbox and vertical buttons
-        for i, item in enumerate(wm.template_items):
-            # Main row with checkbox and template name
-            main_row = layout.row()
-            main_row.prop(item, "visible", text=item.name)
-            
-            # Column for move buttons (vertical)
-            button_col = main_row.column(align=True)
-            button_col.operator("object.move_template_up", text="↑").index = i
-            button_col.operator("object.move_template_down", text="↓").index = i
-    
     def execute(self, context):
-        wm = context.window_manager
-        
-        # Update visibility and order in template.py
-        new_order = []
-        for item in wm.template_items:
-            t = template.get_template_by_name(item.name)
-            t.visible = item.visible
-            new_order.append(t)
-        
-        # Update all_templates with the new order
-        template.all_templates = new_order
-        template.save_templates_to_json()
-        
-        self.report({'INFO'}, "Template order and visibility saved")
-        return {'FINISHED'}
-    
-    def invoke(self, context, event):
-        wm = context.window_manager
-        
-        wm.template_items.clear()
-        for t in template.all_templates:
-            item = wm.template_items.add()
-            item.name = t.name
-            item.visible = getattr(t, "visible", True)
-        
-        return context.window_manager.invoke_props_dialog(self)
+        engine_id = rendering_project.get_scene_engine_id(context.scene)
+        default = render_defaults.get_default_render_default(engine_id)
+        meshes = {obj.data for obj in context.selected_objects if obj.type == 'MESH'}
 
-class OBJECT_OT_move_template_up(bpy.types.Operator):
-    bl_idname = "object.move_template_up"
-    bl_label = "Move Template Up"
-    
-    index: bpy.props.IntProperty()
-    
-    def execute(self, context):
-        wm = context.window_manager
-        i = self.index
-        if i > 0:
-            wm.template_items.move(i, i - 1)
+        for mesh in meshes:
+            mesh.level5_properties.render_default = default.name
+
+        self.report({'INFO'}, f"{len(meshes)} mesh(es) set to {default.name}")
         return {'FINISHED'}
 
-class OBJECT_OT_move_template_down(bpy.types.Operator):
-    bl_idname = "object.move_template_down"
-    bl_label = "Move Template Down"
-    
-    index: bpy.props.IntProperty()
-    
-    def execute(self, context):
-        wm = context.window_manager
-        i = self.index
-        if i < len(wm.template_items) - 1:
-            wm.template_items.move(i, i + 1)
-        return {'FINISHED'}
-        
 class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -499,8 +437,13 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
         box.operator("object.animation_items_reader", text="Load Animation Config")
         
         box = layout.box()
-        box.label(text="Templates")
-        box.operator("object.manage_templates", text="Manage Templates")
+        box.label(text="Game Engine")
+        box.prop(context.scene, "level5_game_engine", text="")
+        if not rendering_project.is_scene_engine_usable(context.scene):
+            box.label(text="Not installed, the default configuration is used", icon='ERROR')
+        elif rendering_project.is_default_engine(rendering_project.get_scene_engine_id(context.scene)):
+            box.label(text="No game registered: generic configuration")
+        box.operator("object.assign_default_render_default", text="Reset Render Defaults")
   
 def register():
     bpy.types.Scene.merge_with_berry_bush = bpy.props.BoolProperty(
@@ -529,11 +472,7 @@ def register():
     bpy.utils.register_class(DuplicateFaceModel)
     bpy.utils.register_class(RemoveDuplicateFaceModel)
     
-    bpy.utils.register_class(TemplateItem)
-    bpy.types.WindowManager.template_items = bpy.props.CollectionProperty(type=TemplateItem)
-    bpy.utils.register_class(OBJECT_OT_manage_templates)
-    bpy.utils.register_class(OBJECT_OT_move_template_up)
-    bpy.utils.register_class(OBJECT_OT_move_template_down)
+    bpy.utils.register_class(AssignDefaultRenderDefault)
     
     bpy.utils.register_class(VIEW3D_PT_my_custom_panel)  
     
@@ -546,11 +485,7 @@ def unregister():
     bpy.utils.unregister_class(DuplicateFaceModel)
     bpy.utils.unregister_class(RemoveDuplicateFaceModel)
     
-    bpy.utils.unregister_class(OBJECT_OT_manage_templates)
-    bpy.utils.unregister_class(OBJECT_OT_move_template_up)
-    bpy.utils.unregister_class(OBJECT_OT_move_template_down)
-    del bpy.types.WindowManager.template_items
-    bpy.utils.unregister_class(TemplateItem)    
+    bpy.utils.unregister_class(AssignDefaultRenderDefault)
     
     bpy.utils.unregister_class(VIEW3D_PT_my_custom_panel)
     

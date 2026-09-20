@@ -1,5 +1,7 @@
 import io
 import os
+import json
+import zlib
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
@@ -11,7 +13,7 @@ from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
 from ..formats import xmpr, atr, res
-from ..templates import *
+from ..rendering import project as rendering_project
 from ..utils.mesh_faces_utils import MeshFaceUtils
 
 ##########################################
@@ -361,7 +363,7 @@ def refresh_sampler_preview(image):
             if node.type == 'TEX_IMAGE' and node.image == image:
                 apply_sampler_preview(node)
 
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None):
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None):
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
     
@@ -386,6 +388,11 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
     
     mesh.level5_properties.draw_priority = draw_priority
     mesh.level5_properties.mesh_type = MESH_TYPE_INT_TO_ENUM.get(mesh_type, 'UNK')
+    rendering_project.assign_imported_render_program(mesh, model_data["render_program_hash"])
+
+    # A skinned mesh names its parent node too, the game doesn't ignore it
+    if bones and model_data["single_bind"] is None:
+        mesh.level5_properties.parent_node = bones.get(model_data["parent_node_hash"], "")
     
     mesh.from_pydata(positions, [], model_data["triangles"])  
     
@@ -568,12 +575,29 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         if atr_state is not None:
             apply_atr_state(material, atr_state)
         
+        # The lighting material of the model, StudioRender and the export read it back
+        if mtr_material is not None:
+            material.level5_mtr.data = json.dumps(mtr_material.to_dict())
+
         # Add material
         mesh_obj.data.materials.append(material)
     
     return mesh_obj
 
-def fileio_write_xmpr(context, mesh_name, library_name, mode):
+def get_parent_node_name(mesh, bone_names):
+    if mesh.parent_type == 'BONE' and mesh.parent_bone:
+        return mesh.parent_bone
+
+    stored = mesh.data.level5_properties.parent_node
+    if stored:
+        return stored
+
+    # Original models name the node after the part of the mesh name that follows the first dot
+    suffix = mesh.name.split(".", 1)[1] if "." in mesh.name else ""
+    return suffix if suffix in bone_names else ""
+
+
+def fileio_write_xmpr(context, mesh_name, library_name, operator=None):
     mesh = bpy.data.objects[mesh_name]
 
     bone_names = []
@@ -584,8 +608,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
 
     # Cancel if mesh info is empty
     if not (indices or vertices or uvs or normals or colors):
-        self.report({'ERROR'}, f"Mesh {mesh_name} has invalid or empty data, export canceled")
-        return {'CANCELLED'}
+        raise ValueError(f"Mesh {mesh_name} has invalid or empty data, export canceled")
 
     single_bind = None
     if mesh.parent_type == 'BONE' and mesh.parent_bone:
@@ -599,11 +622,24 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         list(mesh.data.texspace_size)
     ]
 
+    render_default = rendering_project.get_mesh_render_default(mesh.data)
+    skinned = len(xmpr.used_bones(weights, bone_names)) > 0
+    parent_node = get_parent_node_name(mesh, bone_names)
+
+    # Rigid meshes never use a skinned program in the original models (0 out of 870), skinned meshes do in all but 4
+    if render_default.data.get("skinned") is not None and render_default.data["skinned"] != skinned:
+        message = f"{mesh_name}: render default {render_default.name} is {'skinned' if render_default.data['skinned'] else 'rigid'} but the mesh is {'skinned' if skinned else 'rigid'}"
+        if operator:
+            operator.report({'WARNING'}, message)
+        else:
+            print(f"[Studio Eleven] {message}")
+
     return xmpr.write(
         mesh.name_full, texspace_array,
         indices, vertices, uvs, normals, colors,
-        weights, bone_names, library_name, mode,
-        single_bind, draw_priority, mesh_type, tints
+        weights, bone_names, library_name, render_default.render_program_hash,
+        zlib.crc32(parent_node.encode("shift-jis")) if parent_node else 0,
+        draw_priority, mesh_type, tints
     )
     
 def fileio_open_xmpr(context, filepath):
@@ -637,16 +673,6 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
                 items.append((o.name, o.name, ""))
         return items
         
-    def template_items_callback(self, context):
-        my_templates = get_templates()
-        items = [(template.name, template.name, "") for template in my_templates]
-        return items        
-
-    def template_mode_items_callback(self, context):
-        my_template = get_template_by_name(self.template_name)
-        items = [(mode, mode, "") for mode in my_template.modes.keys()]
-        return items
-
     def update_mesh_name(self, context):
         # Retrieve the mesh object by name
         obj = bpy.data.objects.get(self.mesh_name) 
@@ -670,20 +696,6 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
         update=update_mesh_name,
     )
     
-    template_name: EnumProperty(
-        name="Templates",
-        description="Choose a template",
-        items=template_items_callback,
-        default=0,
-    )
-    
-    template_mode_name: EnumProperty(
-        name="Mode",
-        description="Choose a mode",
-        items=template_mode_items_callback,
-        default=0,
-    ) 
-    
     material_name: StringProperty(
         name="Material",
         description="Write a material name",
@@ -695,19 +707,25 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
             self.report({'ERROR'}, "No mesh found")
             return {'FINISHED'}
             
-        if not self.template_name:
-            self.report({'ERROR'}, "No template found")
-            return {'FINISHED'}
-            
         if not self.material_name:
             self.report({'ERROR'}, "Material name cannot be null")
             return {'FINISHED'}               
             
+        try:
+            data = fileio_write_xmpr(context, self.mesh_name, self.material_name, self)
+        except ValueError as error:
+            self.report({'ERROR'}, str(error))
+            return {'CANCELLED'}
+
         with open(self.filepath, "wb") as f:
-            template = get_template_by_name(self.template_name)
-            mode = template.modes[self.template_mode_name]
-            f.write(fileio_write_xmpr(context, self.mesh_name, self.material_name, mode))
+            f.write(data)
             return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop(self, "mesh_name")
+        layout.prop(self, "material_name")
+        layout.label(text=f"Game Engine: {rendering_project.get_scene_engine(context.scene).name}")
 
     def invoke(self, context, event):
         """Ensure the update function is called on the menu launch."""

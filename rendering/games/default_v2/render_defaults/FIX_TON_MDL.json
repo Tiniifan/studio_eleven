@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_TON_MDL",
+  "vertex_program": "#FIX_MDL",
+  "combiner": "#FIX_TON_IMG0",
+  "skinned": false,
+  "fragment_lighting": true
+}

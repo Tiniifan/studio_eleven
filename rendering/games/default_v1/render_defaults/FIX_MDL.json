@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_MDL",
+  "vertex_program": "#FIX_MDL",
+  "combiner": "#FIX_MDS",
+  "skinned": false,
+  "fragment_lighting": true
+}

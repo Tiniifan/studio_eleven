@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_FNT",
+  "vertex_program": "#FIX_FNT",
+  "combiner": "#FIX_FNT",
+  "skinned": false,
+  "fragment_lighting": false
+}

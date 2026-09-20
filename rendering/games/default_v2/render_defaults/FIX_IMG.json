@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_IMG",
+  "vertex_program": "#FIX_SPR",
+  "combiner": "#FIX_IMG",
+  "skinned": false,
+  "fragment_lighting": false
+}

@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_FRM",
+  "vertex_program": "#FIX_SPR",
+  "combiner": "#FIX_FRM",
+  "skinned": false,
+  "fragment_lighting": false
+}

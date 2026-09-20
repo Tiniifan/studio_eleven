@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_MRG_POS_IMG0",
+  "vertex_program": "#FIX_MRG_POS",
+  "combiner": "#FIX_IMG",
+  "skinned": true,
+  "fragment_lighting": false
+}

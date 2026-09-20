@@ -517,7 +517,7 @@ def read_atr(data):
 
 
 def write_atr(state, file_version):
-    """file_version is the one of the export templates: 1 writes ATRC00, 2 writes ATRC01."""
+    """file_version is the one of the game engine: 1 writes ATRC00, 2 writes ATRC01."""
     if file_version == 1:
         version = b"00"
         payload = write_v1(state)

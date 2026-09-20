@@ -13,3 +13,6 @@ from .txp import *
 from .atr import *
 from .animation_manager import *
 from .animation_support import *
+from .cmb import *
+from .lut import *
+from .mtr import *

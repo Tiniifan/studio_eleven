@@ -1,0 +1,50 @@
+{
+  "name": "#FIX_FRG1_ONLY",
+  "file_version": 1,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "FRAGMENT_PRIMARY_COLOR",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "FRAGMENT_PRIMARY_COLOR",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}
