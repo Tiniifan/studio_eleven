@@ -508,9 +508,10 @@ class AnimationManager:
             
             # Decode animation data
             for k in range(node.DataVectorSize):
-                if node.DataType == 1:
+                # V1 rotations have DataType 1 but are stored as floats, the byte size tells them apart from shorts
+                if node.DataType == 1 and node.DataByteSize == 2:
                     animData[k] = unpack("<h", reader.read(2))[0] / 0x7FFF
-                elif node.DataType == 2:
+                elif node.DataType == 2 or (node.DataType == 1 and node.DataByteSize == 4):
                     animData[k] = unpack("<f", reader.read(4))[0]
                 elif node.DataType == 3:
                     animData[k] = unpack("<f", reader.read(4))[0]
