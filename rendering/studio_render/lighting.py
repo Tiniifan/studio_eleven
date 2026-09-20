@@ -1,41 +1,30 @@
 """Fragment lighting of the fixed pipeline, ported from gls/FRG001.frag.
 
-STATUS: the LUT sampling, the table indices, the input selectors, the eight config layouts and the
-primary / secondary colour math are transcribed from that shipped GLSL (confirmed). What is left out
-for lack of evidence: distance attenuation and the spot LUT (nothing says which LUT they sample),
-shadow, bump mapping. Which LUT a model binds to which table is unknown, see DEFAULT_LUT_TABLES.
+STATUS: the LUT sampling, the table rows, the input selectors, the eight config layouts and the
+primary / secondary colour math are transcribed from that shipped GLSL (confirmed). The material
+values and the LUTs come from the .mtr of each material. What is left out: distance attenuation and the
+spot LUT (the game builds them per light from data the addon does not read), shadow, bump mapping (no
+shipped material uses the shadow or bump fields).
 """
 
 import math
 
 import mathutils
 
-from . import resources
-
-STATUS = "math confirmed against gls/FRG001.frag, LUT assignment is a hypothesis"
+STATUS = "math and table rows confirmed against gls/FRG001.frag and the game state code, values from the .mtr"
 
 LUT_ENTRY_COUNT = 256
 LUT_TEXTURE_WIDTH = 512
 LUT_TEXTURE_HEIGHT = 32
 MAX_LIGHTS = 8
 
-# Table index of each LUT, read off the getLutInSelect calls of FRG001
+# Table row of each LUT: the getLutInSelect calls of FRG001, and the hardware ids the game uploads the material LUTs to
+# (device slots 0..5 = D0 D1 FR RB RG RR, IEGO sub_53EA98 / CS the same)
 LUT_TABLES = ("D0", "D1", "FR", "RB", "RG", "RR")
 LUT_TABLE_INDEX = {name: index for index, name in enumerate(LUT_TABLES)}
 
 # Input of a LUT, in the order of the getLutInSelect ternary
 LUT_INPUTS = ("NH", "VH", "NV", "LN", "SP", "CP")
-
-# HYPOTHESIS: the six shipped LUT names line up with the six tables by their suffix, nothing in the
-# render library states it. #FIX_PR/PG/PB are read as the three reflection tables and #FIX_TN as D0.
-DEFAULT_LUT_TABLES = {
-    "D0": "#FIX_TN",
-    "D1": None,
-    "FR": "#FIX_FR",
-    "RB": "#FIX_PB",
-    "RG": "#FIX_PG",
-    "RR": "#FIX_PR",
-}
 
 ##########################################
 # LUT sampling
@@ -64,26 +53,24 @@ def sample(table, value, absolute):
     return sample_lut(table.values, table.deltas, value, absolute)
 
 
-def load_tables(engine_id, tables=None):
-    """Lut object of every table that has a LUT assigned, missing ones are left out."""
-    tables = tables or DEFAULT_LUT_TABLES
-    loaded = {}
+def material_tables(material):
+    """Lut object of every table the .mtr material embeds, missing ones are left out."""
+    tables = {}
 
     for name in LUT_TABLES:
-        lut_name = tables.get(name)
-        table = resources.load_lut(engine_id, lut_name) if lut_name else None
+        table = material.tables[name].lut
         if table is not None:
-            loaded[name] = table
+            tables[name] = table
 
-    return loaded
+    return tables
 
 
-def lut_texture_rows(engine_id, tables=None):
+def lut_texture_rows(material):
     """One row per table, 256 values then 256 deltas, laid out the way FRG001 indexes the LUT texture."""
     rows = [[0.0] * LUT_TEXTURE_WIDTH for _ in range(LUT_TEXTURE_HEIGHT)]
 
     # The hardware table quantizes both to 12 bits, the shipped GLSL samples the floats as they are
-    for name, table in load_tables(engine_id, tables).items():
+    for name, table in material_tables(material).items():
         rows[LUT_TABLE_INDEX[name]] = list(table.values) + list(table.deltas)
 
     return rows
@@ -178,6 +165,37 @@ class LightEnvironment:
         self.fresnel_selector = 0
         self.clamp_highlights = False
         self.two_side_diffuse = False
+
+def environment_of(material):
+    """The light environment of an .mtr material (formats/mtr.py Material).
+
+    A table that is enabled without a LUT in the file would read the previous contents of the hardware
+    table, StudioRender leaves it out instead. FR only matters through the Fresnel selector.
+    """
+    environment = LightEnvironment()
+    environment.enabled = True
+    environment.config = material.config
+    environment.emission = tuple(material.emission) + (1.0,)
+    environment.ambient = tuple(material.ambient) + (1.0,)
+    environment.diffuse = tuple(material.diffuse) + (1.0,)
+    environment.specular0 = tuple(material.specular0) + (1.0,)
+    environment.specular1 = tuple(material.specular1) + (1.0,)
+
+    tables = material.tables
+    environment.lut_enabled_d0 = material.lut_enabled_d0 and tables["D0"].lut is not None
+    environment.lut_enabled_d1 = material.lut_enabled_d1 and tables["D1"].lut is not None
+    environment.lut_enabled_refl = material.lut_enabled_refl and all(tables[name].lut is not None for name in ("RR", "RG", "RB"))
+
+    for name in LUT_TABLES:
+        environment.lut_input[name] = min(tables[name].input_select, len(LUT_INPUTS) - 1)
+        environment.lut_abs[name] = tables[name].abs_input
+        # The two undefined scale indices are not used by any shipped material
+        environment.lut_scale[name] = tables[name].scale_value or 1.0
+
+    environment.fresnel_selector = material.fresnel_selector
+    environment.clamp_highlights = material.clamp_highlights
+
+    return environment
 
 ##########################################
 # Reference evaluator

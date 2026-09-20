@@ -8,7 +8,7 @@ import bpy
 from collections import namedtuple
 from mathutils import Vector
 
-from bpy.props import BoolProperty, EnumProperty, FloatVectorProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, FloatVectorProperty, IntProperty, PointerProperty
 
 from ..engines import get_engine
 from . import draw, lighting, material, resources, shaders, state
@@ -28,11 +28,6 @@ COMPATIBLE_PANELS = (
     "DATA_PT_EEVEE_light",
     "WORLD_PT_context_world",
 )
-
-LUT_INPUT_ITEMS = [(name, name, "") for name in lighting.LUT_INPUTS]
-
-CONFIG_ITEMS = [(str(index), f"Config {index}", "") for index in range(8)]
-
 
 class StudioRenderSettings(bpy.types.PropertyGroup):
     tint: FloatVectorProperty(
@@ -59,26 +54,6 @@ class StudioRenderSettings(bpy.types.PropertyGroup):
     scene_ambient: FloatVectorProperty(name="Scene Ambient", description="Ambient light added everywhere", size=3,
                                        subtype='COLOR', min=0.0, max=1.0, default=(0.2, 0.2, 0.2))
 
-    material_diffuse: FloatVectorProperty(name="Diffuse", description="How much the lights light the mesh", size=4,
-                                          subtype='COLOR', min=0.0, max=1.0, default=(1.0, 1.0, 1.0, 1.0))
-    material_ambient: FloatVectorProperty(name="Ambient", description="How much the ambient light lights the mesh", size=4,
-                                          subtype='COLOR', min=0.0, max=1.0, default=(1.0, 1.0, 1.0, 1.0))
-    material_specular0: FloatVectorProperty(name="Specular 0", description="First highlight color", size=4,
-                                            subtype='COLOR', min=0.0, max=1.0, default=(0.0, 0.0, 0.0, 1.0))
-    material_specular1: FloatVectorProperty(name="Specular 1", description="Second highlight color", size=4,
-                                            subtype='COLOR', min=0.0, max=1.0, default=(0.0, 0.0, 0.0, 1.0))
-    material_emission: FloatVectorProperty(name="Emission", description="Color the mesh gives off by itself", size=4,
-                                           subtype='COLOR', min=0.0, max=1.0, default=(0.0, 0.0, 0.0, 1.0))
-
-    # Nothing in the render library says which LUT a model binds, these stay off until asked for
-    lut_enabled_d0: BoolProperty(name="Diffuse LUT", description="Shape the diffuse light with a lookup table (toon ramp)", default=False)
-    lut_enabled_d1: BoolProperty(name="Specular LUT", description="Shape the highlights with a lookup table", default=False)
-    lut_enabled_refl: BoolProperty(name="Reflection LUT", description="Add the reflection lookup tables", default=False)
-    lut_input_d0: EnumProperty(name="Diffuse Input", description="Angle the diffuse lookup table reads", items=LUT_INPUT_ITEMS, default="NH")
-    lut_input_d1: EnumProperty(name="Specular Input", description="Angle the specular lookup table reads", items=LUT_INPUT_ITEMS, default="NH")
-    lut_config: EnumProperty(name="Light Config", description="How the lookup tables are combined, the eight layouts of the 3DS lighting unit",
-                             items=CONFIG_ITEMS, default="0")
-
     outline: BoolProperty(
         name="Draw Outlines",
         description="Draw the outlines of the export settings of the armatures, their width, color and depth range are set there",
@@ -91,8 +66,8 @@ Outline = namedtuple("Outline", ("thickness", "visibility", "scale", "depth_min"
 # unf_vtx_silhouette_1.x of the game is the thickness times this when the width follows the screen
 OUTLINE_WIDTH_SCALE = 4.219409
 
-# Vertical projection scale the width is measured against: 1.0 makes a thickness of 0.002 one pixel of the
-# 240 lines of the game screen (0.002 * 4.219409 * 120 = 1.01), whatever the lens and the size of the Blender view
+# The game multiplies the width by params[128] = 1 / projection[1][1], which cancels the lens: the ring is a fixed share of
+# the half height of the view, a thickness of 0.002 is one pixel of the 240 lines of the game screen (0.002 * 4.219409 * 120 = 1.01)
 OUTLINE_REFERENCE_PROJECTION = 1.0
 
 # The outline is never thicker than this share of the size of the character on screen: the game shows its
@@ -148,26 +123,27 @@ def _bind_transforms(shader, model_matrix, view_matrix, projection_matrix, tint)
         _set(shader.uniform_float, f"unf_vtx_txt_{index}", row)
 
 
-def _bind_lighting(shader, settings, lights, engine_id):
-    _set(shader.uniform_int, "unf_lgt_config", int(settings.lut_config))
-    _set(shader.uniform_float, "unf_lgt_scene_ambient", tuple(settings.scene_ambient))
-    _set(shader.uniform_float, "unf_mat_emission", tuple(settings.material_emission))
-    _set(shader.uniform_float, "unf_mat_ambient", tuple(settings.material_ambient))
-    _set(shader.uniform_float, "unf_mat_diffuse", tuple(settings.material_diffuse))
-    _set(shader.uniform_float, "unf_mat_specular0", tuple(settings.material_specular0))
-    _set(shader.uniform_float, "unf_mat_specular1", tuple(settings.material_specular1))
-    _set(shader.uniform_int, "unf_lgt_fresnel_selector", 0)
-    _set(shader.uniform_bool, "unf_lgt_clamp_highlights", [False])
-    _set(shader.uniform_bool, "unf_lgt_two_side_diffuse", [False])
-    _set(shader.uniform_bool, "unf_lgt_enabled_d0", [settings.lut_enabled_d0])
-    _set(shader.uniform_bool, "unf_lgt_enabled_d1", [settings.lut_enabled_d1])
-    _set(shader.uniform_bool, "unf_lgt_enabled_refl", [settings.lut_enabled_refl])
+def _bind_lighting(shader, settings, lights, material_lighting):
+    environment = lighting.environment_of(material_lighting)
 
-    inputs = {"D0": settings.lut_input_d0, "D1": settings.lut_input_d1}
+    _set(shader.uniform_int, "unf_lgt_config", environment.config)
+    _set(shader.uniform_float, "unf_lgt_scene_ambient", tuple(settings.scene_ambient))
+    _set(shader.uniform_float, "unf_mat_emission", environment.emission)
+    _set(shader.uniform_float, "unf_mat_ambient", environment.ambient)
+    _set(shader.uniform_float, "unf_mat_diffuse", environment.diffuse)
+    _set(shader.uniform_float, "unf_mat_specular0", environment.specular0)
+    _set(shader.uniform_float, "unf_mat_specular1", environment.specular1)
+    _set(shader.uniform_int, "unf_lgt_fresnel_selector", environment.fresnel_selector)
+    _set(shader.uniform_bool, "unf_lgt_clamp_highlights", [environment.clamp_highlights])
+    _set(shader.uniform_bool, "unf_lgt_two_side_diffuse", [environment.two_side_diffuse])
+    _set(shader.uniform_bool, "unf_lgt_enabled_d0", [environment.lut_enabled_d0])
+    _set(shader.uniform_bool, "unf_lgt_enabled_d1", [environment.lut_enabled_d1])
+    _set(shader.uniform_bool, "unf_lgt_enabled_refl", [environment.lut_enabled_refl])
+
     for table in lighting.LUT_TABLES:
-        _set(shader.uniform_int, f"unf_lut_input_{table}", lighting.LUT_INPUTS.index(inputs.get(table, "NH")))
-        _set(shader.uniform_bool, f"unf_lut_abs_{table}", [True])
-        _set(shader.uniform_float, f"unf_lut_scale_{table}", 1.0)
+        _set(shader.uniform_int, f"unf_lut_input_{table}", environment.lut_input[table])
+        _set(shader.uniform_bool, f"unf_lut_abs_{table}", [environment.lut_abs[table]])
+        _set(shader.uniform_float, f"unf_lut_scale_{table}", environment.lut_scale[table])
 
     for index, light in enumerate(lights):
         _set(shader.uniform_float, f"unf_lgt_position_{index}", light.position)
@@ -176,25 +152,26 @@ def _bind_lighting(shader, settings, lights, engine_id):
         _set(shader.uniform_float, f"unf_lgt_specular0_{index}", light.specular0)
         _set(shader.uniform_float, f"unf_lgt_specular1_{index}", light.specular1)
 
-    texture = _lut_texture(engine_id)
-    if texture is not None:
-        _set(shader.uniform_sampler, "unf_frg_txt_lut", texture)
+    _set(shader.uniform_sampler, "unf_frg_txt_lut", _lut_texture(material_lighting))
 
 
+# The material is kept next to its texture so its id can't be given to another material
 _lut_textures = {}
 
 
-def _lut_texture(engine_id):
+def _lut_texture(material_lighting):
     import gpu
 
-    if engine_id not in _lut_textures:
-        rows = lighting.lut_texture_rows(engine_id)
+    key = id(material_lighting)
+    if key not in _lut_textures:
+        rows = lighting.lut_texture_rows(material_lighting)
         values = [value for row in rows for value in row]
         buffer = gpu.types.Buffer('FLOAT', len(values), values)
-        _lut_textures[engine_id] = gpu.types.GPUTexture(
+        texture = gpu.types.GPUTexture(
             (lighting.LUT_TEXTURE_WIDTH, lighting.LUT_TEXTURE_HEIGHT), format='R32F', data=buffer)
+        _lut_textures[key] = (material_lighting, texture)
 
-    return _lut_textures[engine_id]
+    return _lut_textures[key][1]
 
 
 _image_textures = {}
@@ -341,7 +318,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                     _set(shader.uniform_float, f"unf_frg_palette_{channel}", color)
 
             if options.fragment_lighting:
-                _bind_lighting(shader, settings, lights, engine_id)
+                _bind_lighting(shader, settings, lights, bound.lighting)
 
             batch.draw(shader)
 
@@ -401,7 +378,8 @@ class StudioRenderEngine(bpy.types.RenderEngine):
             _bind_transforms(shader, model_matrix, view_matrix, projection_matrix, settings.tint)
             _set(shader.uniform_float, "unf_frg_outline_color", outline.color)
             _set(shader.uniform_float, "unf_frg_alpha_ref", bound.state.alpha_ref)
-            _set(shader.uniform_float, "unf_vtx_silhouette_0", (1.0, outline.depth_min, outline.depth_max, 0.0))
+            _set(shader.uniform_float, "unf_vtx_silhouette_0",
+                 (1.0, outline.depth_min, outline.depth_max, 1.0 if geometry.has_silhouette else 0.0))
             _set(shader.uniform_float, "unf_vtx_silhouette_1", (width, 1.0 - outline.visibility, 1.0 - outline.scale, clamp_depth))
             _set(shader.uniform_float, "unf_vtx_outline_view", view_scale)
 
@@ -582,23 +560,7 @@ class STUDIORENDER_PT_lighting(StudioRenderPanel, bpy.types.Panel):
         layout.prop(settings, "light_limit")
         layout.prop(settings, "scene_ambient")
 
-        box = layout.box()
-        box.label(text="Material")
-        box.prop(settings, "material_ambient")
-        box.prop(settings, "material_diffuse")
-        box.prop(settings, "material_specular0")
-        box.prop(settings, "material_specular1")
-        box.prop(settings, "material_emission")
-
-        box = layout.box()
-        box.label(text="Lookup tables (experimental)")
-        box.label(text="The game data doesn't say which one a model uses.")
-        box.prop(settings, "lut_config")
-        box.prop(settings, "lut_enabled_d0")
-        box.prop(settings, "lut_input_d0")
-        box.prop(settings, "lut_enabled_d1")
-        box.prop(settings, "lut_input_d1")
-        box.prop(settings, "lut_enabled_refl")
+        layout.label(text="Material values and lookup tables come from the .mtr of each material.")
 
 
 CLASSES = (StudioRenderSettings, StudioRenderEngine, STUDIORENDER_OT_standard_view, STUDIORENDER_OT_create_outlines, STUDIORENDER_OT_reset_settings, STUDIORENDER_PT_settings,

@@ -65,11 +65,13 @@ void main() {
 }
 """
 
-# Extrusion of gls/VTX012.vert, unf_vtx_silhouette_0 = (on, depth min, depth max, per vertex width)
+# Extrusion of gls/VTX012.vert, unf_vtx_silhouette_0 = (on, depth min, depth max, per vertex flags)
 # and unf_vtx_silhouette_1 = (width, 1 - first color, 1 - second color, clamp the depth).
-# atr_pr2 is not in the batch, so silhouette_0.w stays at 0: every vertex takes the width and the
-# first color of the export settings.
+# With the per vertex flags off every vertex takes the width and the first color of the outline settings,
+# on, atr_pr2.x scales the width of the vertex and atr_pr2.y picks the second color.
 OUTLINE_BODY = """
+in vec4 atr_pr2;
+
 uniform vec4 unf_vtx_silhouette_0;
 uniform vec4 unf_vtx_silhouette_1;
 uniform float unf_vtx_outline_view;
@@ -84,11 +86,14 @@ void main() {
     vec4 position = unf_vtx_cmr_prj * eye;
     float clamped = min(max(position.w, unf_vtx_silhouette_0.y), unf_vtx_silhouette_0.z);
     float depth = mix(position.w, position.w / clamped, unf_vtx_silhouette_1.w);
-    float width = unf_vtx_silhouette_0.x * depth * unf_vtx_silhouette_1.x * unf_vtx_outline_view;
+    float flag_x = (1.0 - unf_vtx_silhouette_0.w) + atr_pr2.x * unf_vtx_silhouette_0.w;
+    float flag_y = atr_pr2.y * unf_vtx_silhouette_0.w;
+    float width = unf_vtx_silhouette_0.x * depth * flag_x * unf_vtx_silhouette_1.x * unf_vtx_outline_view;
     vec3 offset = normal * width;
 
     vec4 tint = unf_vtx_clr * atr_clr * 0.5;
-    tint.xyz = tint.xyz * (1.0 - unf_vtx_silhouette_1.y * unf_vtx_silhouette_0.x);
+    tint.xyz = tint.xyz * (1.0 - (unf_vtx_silhouette_1.y * floor(flag_x + 0.95) * (1.0 - flag_y)
+                                  + unf_vtx_silhouette_1.z * flag_y) * unf_vtx_silhouette_0.x);
 
     frg_clr = tint;
     frg_tx0 = studio_uv(atr_tx0, unf_vtx_txt_0, unf_vtx_txt_1);

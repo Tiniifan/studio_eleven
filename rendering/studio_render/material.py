@@ -1,7 +1,7 @@
 """Binds Blender data to the render data of a game engine: render default, combiner, ATR, textures."""
 
 from ...formats import atr
-from .. import project, render_defaults
+from .. import game_material, project, render_defaults
 from . import combiner, resources, state
 
 STATUS = "the texture order follows what operators/fileio_xmpr.py builds at import"
@@ -65,8 +65,9 @@ def material_state(material, file_version):
 class MaterialRender:
     """Everything one draw of one material needs, built once and cached."""
 
-    def __init__(self, engine_id, render_default, program, resolved_state, images):
+    def __init__(self, engine_id, render_default, program, resolved_state, images, lighting):
         self.engine_id = engine_id
+        self.lighting = lighting
         self.render_default = render_default
         self.program = program
         self.state = resolved_state
@@ -124,4 +125,5 @@ def build(engine_id, mesh, material, file_version):
     render_default = render_default_of(engine_id, mesh)
 
     return MaterialRender(engine_id, render_default, program_of(engine_id, render_default),
-                          material_state(material, file_version), material_images(material))
+                          material_state(material, file_version), material_images(material),
+                          game_material.material_of(material, engine_id))

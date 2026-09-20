@@ -7,6 +7,7 @@ never re-implements the skinning the game vertex stage does.
 import bpy
 
 TINT_LAYER = "Tint"
+SILHOUETTE_LAYER = "Col"
 
 _smooth_requests = set()
 
@@ -34,10 +35,11 @@ STATUS = "atr_clr is the Tint layer of operators/fileio_xmpr.py, white when the 
 class Geometry:
     """Loop attributes of one evaluated mesh plus the triangles of each material slot."""
 
-    def __init__(self, attributes, triangles, uv_count):
+    def __init__(self, attributes, triangles, uv_count, has_silhouette=False):
         self.attributes = attributes
         self.triangles = triangles
         self.uv_count = uv_count
+        self.has_silhouette = has_silhouette
 
 
 def _uv_arrays(mesh, loop_count):
@@ -61,6 +63,16 @@ def _tint_array(mesh, loop_count):
         return [(1.0, 1.0, 1.0, 1.0)] * loop_count
 
     return [tuple(tints.data[loop].color) for loop in range(loop_count)]
+
+
+def _silhouette_array(mesh, loop_count):
+    layers = mesh.vertex_colors if hasattr(mesh, "vertex_colors") else None
+    flags = layers.get(SILHOUETTE_LAYER) if layers else None
+
+    if flags is None:
+        return [(0.0, 0.0, 0.0, 0.0)] * loop_count, False
+
+    return [tuple(flags.data[loop].color) for loop in range(loop_count)], True
 
 
 def extract(obj, depsgraph):
@@ -92,6 +104,7 @@ def extract(obj, depsgraph):
         loop_count = len(mesh.loops)
         positions = [tuple(mesh.vertices[loop.vertex_index].co) for loop in mesh.loops]
         uvs = _uv_arrays(mesh, loop_count)
+        silhouette, has_silhouette = _silhouette_array(mesh, loop_count)
 
         attributes = {
             "atr_pos": positions,
@@ -100,13 +113,14 @@ def extract(obj, depsgraph):
             "atr_tx0": uvs[0],
             "atr_tx1": uvs[1],
             "atr_tx2": uvs[2],
+            "atr_pr2": silhouette,
         }
 
         triangles = {}
         for triangle in mesh.loop_triangles:
             triangles.setdefault(triangle.material_index, []).append(tuple(triangle.loops))
 
-        return Geometry(attributes, triangles, len(mesh.uv_layers))
+        return Geometry(attributes, triangles, len(mesh.uv_layers), has_silhouette)
     finally:
         evaluated.to_mesh_clear()
 
