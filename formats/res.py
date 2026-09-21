@@ -76,8 +76,8 @@ CLAMP, BORDER, REPEAT, MIRROR = 0, 1, 2, 3
 NEAREST, LINEAR = 0, 1
 
 WRAP_MODES = [
-    ("CLAMP", CLAMP),
-    ("BORDER", BORDER),
+    ("EXTEND", CLAMP),
+    ("CLIP", BORDER),
     ("REPEAT", REPEAT),
     ("MIRROR", MIRROR),
 ]
@@ -85,6 +85,11 @@ WRAP_MODES = [
 FILTER_MODES = [
     ("NEAREST", NEAREST),
     ("LINEAR", LINEAR),
+]
+
+MIPMAP_MODES = [
+    ("DISABLED", 0),
+    ("ENABLED", 1),
 ]
 
 
@@ -96,22 +101,24 @@ def _tables(entries):
 
 WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME = _tables(WRAP_MODES)
 FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME = _tables(FILTER_MODES)
+MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME = _tables(MIPMAP_MODES)
 
 SamplerState = namedtuple("SamplerState", "wrap_s wrap_t mag_filter min_filter mip_filter")
 
-# What today's export hardcoded, an untouched texture keeps writing 03 0A
-DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=NEAREST)
+# What an untouched texture writes: 03 0A (linear, no mipmap, repeat on both axes)
+DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=0)
 
+# (SamplerState field, property of Material.level5_image, name -> value, value -> name)
 SAMPLER_FIELDS = (
-    ("wrap_s", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("wrap_t", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("mag_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("min_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("mip_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("wrap_s", "wrap_x", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("wrap_t", "wrap_y", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("mag_filter", "magnification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("min_filter", "minification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("mip_filter", "mipmap", MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME),
 )
 
 
-# Both games read these two bytes the same way, whatever the container version is
+# wrapS = wrap & 3, wrapT = wrap >> 2; filter bit 0 magnification, bit 1 minification, bit 2 mipmap (sub_5485DC of IEGO)
 def decode_sampler(filter_byte, wrap_byte):
     return SamplerState(
         wrap_s=wrap_byte & 3,
@@ -132,21 +139,26 @@ def encode_sampler(state):
 ##########################################
 
 WRAP_ITEMS = [
-    ('CLAMP', "Clamp", "Outside the texture, the pixels of its edge are stretched out"),
-    ('BORDER', "Border", "Outside the texture, nothing is drawn"),
     ('REPEAT', "Repeat", "The texture is tiled over and over"),
-    ('MIRROR', "Mirror", "The texture is tiled, every other copy being flipped"),
+    ('EXTEND', "Extend", "Outside the texture, the pixels of its edge are stretched out"),
+    ('CLIP', "Clip", "Outside the texture, the border of the texture is drawn, which is transparent black"),
+    ('MIRROR', "Miror", "The texture is tiled, every other copy being flipped"),
 ]
 
 FILTER_ITEMS = [
-    ('NEAREST', "Nearest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
+    ('NEAREST', "Closet", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
     ('LINEAR', "Linear", "Mix the pixels of the texture together, which makes it smooth"),
+]
+
+MIPMAP_ITEMS = [
+    ('ENABLED', "Enabled", "The game switches to smaller copies of the texture with the distance"),
+    ('DISABLED', "Disabled", "The game always samples the full size texture"),
 ]
 
 
 def sampler_to_properties(state, properties):
-    for name, _, value_to_name in SAMPLER_FIELDS:
-        value = getattr(state, name)
+    for field, name, _, value_to_name in SAMPLER_FIELDS:
+        value = getattr(state, field)
 
         if value in value_to_name:
             setattr(properties, name, value_to_name[value])
@@ -155,9 +167,9 @@ def sampler_to_properties(state, properties):
 def properties_to_sampler(properties):
     values = {}
 
-    for name, name_to_value, _ in SAMPLER_FIELDS:
+    for field, name, name_to_value, _ in SAMPLER_FIELDS:
         value = getattr(properties, name, None)
-        values[name] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, name))
+        values[field] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, field))
 
     return SamplerState(**values)
 

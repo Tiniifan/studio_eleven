@@ -149,7 +149,14 @@ def get_object_hashes(obj):
 def count_matching_nodes(node_hashes, obj):
     return len(node_hashes & get_object_hashes(obj))
 
-def process_bone_track(track, node, armature, action, bone_names):
+def get_keyframe_interpolation(animData, track, node):
+    # V1 files hold the values of their fourth node group, the other groups are lerped; V2 holds the nodes of mode 0
+    if animData.Version == "V1":
+        return 'CONSTANT' if track.Index == 3 else 'LINEAR'
+
+    return 'CONSTANT' if not node.isMainTrack and get_track_type(track.Name) != 'uv' else 'LINEAR'
+
+def process_bone_track(track, node, armature, action, bone_names, interpolation):
     """Process a track related to bones."""
     bone_name = bone_names.get(node.Name)
     if not bone_name:
@@ -195,9 +202,9 @@ def process_bone_track(track, node, armature, action, bone_names):
             fcurve = action.fcurves.new(data_path=data_path, index=index)
 
         for frame_num, transformation in transformations:
-            fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
+            fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index]).interpolation = interpolation
 
-def process_uv_track(track, node, action, meshes):
+def process_uv_track(track, node, action, meshes, interpolation):
     """Process a track related to UVs using FCurves."""
     for mesh in meshes:
         node_name = findCrc32(node.Name, modifier=mesh.modifiers)
@@ -238,14 +245,17 @@ def process_uv_track(track, node, action, meshes):
                 frame_num = frame.Key
                 value = frame.Value
 
-                if track.Name == "UVMove":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
-                elif track.Name == "UVScale":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
-                elif track.Name == "UVRotate":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
+                if track.Name == "UVRotate":
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
+                elif track.Name == "UVMove" and index == 0:
+                    # The game samples at u - move, the UV_WARP modifier adds its offset (V is flipped when the mesh is read)
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=-value.X)
+                else:
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
 
-def process_material_track(track, node, action_name, meshes, material_actions):
+                keyframe.interpolation = interpolation
+
+def process_material_track(track, node, action_name, meshes, material_actions, interpolation):
     """Process a track related to material, each material gets its own action."""
     for mesh in meshes:
         if not findCrc32(node.Name, mesh=mesh):
@@ -297,7 +307,7 @@ def process_material_track(track, node, action_name, meshes, material_actions):
                 material_value = frame.Value
 
                 if track.Name == "MaterialAttribute":
-                    fcurve.keyframe_points.insert(
+                    keyframe = fcurve.keyframe_points.insert(
                         frame=frame_num,
                         value=(
                             material_value.hue if index == 0
@@ -306,7 +316,11 @@ def process_material_track(track, node, action_name, meshes, material_actions):
                         )
                     )
                 elif track.Name == "MaterialTransparency":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
+                else:
+                    continue
+
+                keyframe.interpolation = interpolation
 
 def create_animation(animData, active_obj, action=None, track_types=None, material_actions=None):
     """Create the Blender animation of an AnimationManager object on an armature or a mesh.
@@ -350,14 +364,16 @@ def create_animation(animData, active_obj, action=None, track_types=None, materi
 
         # Node refers to a bone or a txtproj
         for node in track.Nodes:
+            interpolation = get_keyframe_interpolation(animData, track, node)
+
             # Check track type
             if track_type == 'bone':
                 if armature:
-                    process_bone_track(track, node, armature, action, bone_names)
+                    process_bone_track(track, node, armature, action, bone_names, interpolation)
             elif track_type == 'uv':
-                process_uv_track(track, node, action, meshes)
+                process_uv_track(track, node, action, meshes, interpolation)
             elif track_type == 'material':
-                process_material_track(track, node, animData.AnimationName, meshes, material_actions)
+                process_material_track(track, node, animData.AnimationName, meshes, material_actions, interpolation)
 
     return action
 
@@ -574,7 +590,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                     if transformation == 'offset':
                         location = modifier.offset
                         tracks['offset'].GetNodeByName(name_crc32).add_frame(
-                            frame, UVMove(*map(float, location))
+                            frame, UVMove(-float(location[0]), float(location[1]))
                         )
                     elif transformation == 'scale':
                         scale = modifier.scale

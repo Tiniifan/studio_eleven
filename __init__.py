@@ -487,6 +487,19 @@ class Level5_Material_Panel(bpy.types.Panel):
 
         properties = material.level5_atr
 
+        if hasattr(material, "level5_image"):
+            image = material.level5_image
+            box = layout.box()
+            box.label(text="Image:")
+            box.prop(image, "wrap_x")
+            box.prop(image, "wrap_y")
+            box.prop(image, "magnification")
+            box.prop(image, "minification")
+            box.prop(image, "mipmap")
+
+            if image.magnification != image.minification:
+                box.label(text="Eevee uses the Magnification for both", icon='INFO')
+
         box = layout.box()
         box.label(text="Material Render:")
         box.prop(properties, "panel_mode", expand=True)
@@ -546,87 +559,50 @@ class Level5_Material_Panel(bpy.types.Panel):
         group.prop(properties, "stencil_zfail_op")
         group.prop(properties, "stencil_zpass_op")
 
-def update_sampler_preview(self, context):
-    refresh_sampler_preview(self.id_data)
+def update_material_sampler(self, context):
+    apply_material_sampler(self.id_data)
 
-class Level5TextureProperties(bpy.types.PropertyGroup):
-    wrap_s: EnumProperty(
+class Level5ImageProperties(bpy.types.PropertyGroup):
+    wrap_x: EnumProperty(
         name="Wrap X",
         description="What is drawn left and right of the texture, once the UVs go past its edge",
         items=res.WRAP_ITEMS,
         default='REPEAT',
-        update=update_sampler_preview
+        update=update_material_sampler
     )
 
-    wrap_t: EnumProperty(
+    wrap_y: EnumProperty(
         name="Wrap Y",
         description="What is drawn above and below the texture, once the UVs go past its edge",
         items=res.WRAP_ITEMS,
         default='REPEAT',
-        update=update_sampler_preview
+        update=update_material_sampler
     )
 
-    mag_filter: EnumProperty(
+    magnification: EnumProperty(
         name="Magnification",
         description="How the texture is sampled when it is drawn bigger than it really is, up close",
         items=res.FILTER_ITEMS,
         default='LINEAR',
-        update=update_sampler_preview
+        update=update_material_sampler
     )
 
-    min_filter: EnumProperty(
+    minification: EnumProperty(
         name="Minification",
         description="How the texture is sampled when it is drawn smaller than it really is, far away",
         items=res.FILTER_ITEMS,
         default='LINEAR',
-        update=update_sampler_preview
+        update=update_material_sampler
     )
 
-    mip_filter: EnumProperty(
+    mipmap: EnumProperty(
         name="Mipmap",
-        description="How the smaller copies of the texture the game switches to with the distance are mixed. "
-                    "Linear fades from one to the next, Nearest jumps straight to it",
-        items=res.FILTER_ITEMS,
-        default='NEAREST',
-        update=update_sampler_preview
+        description="Whether the game samples smaller copies of the texture with the distance. "
+                    "StudioRender handles it, the Blender shader does not",
+        items=res.MIPMAP_ITEMS,
+        default='DISABLED',
+        update=update_material_sampler
     )
-
-class Level5_Texture_Panel(bpy.types.Panel):
-    bl_label = "Level 5"
-    bl_idname = "NODE_PT_level5_texture_panel"
-    bl_space_type = 'NODE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "Item"
-
-    @classmethod
-    def poll(cls, context):
-        if context.space_data is None or context.space_data.tree_type != 'ShaderNodeTree':
-            return False
-
-        node = context.active_node
-
-        return node is not None and node.type == 'TEX_IMAGE' and node.image is not None
-
-    def draw(self, context):
-        layout = self.layout
-        image = context.active_node.image
-
-        if not hasattr(image, "level5_texture"):
-            layout.label(text="No Level 5 properties found.")
-            return
-
-        properties = image.level5_texture
-
-        box = layout.box()
-        box.label(text="Wrap:")
-        box.prop(properties, "wrap_s")
-        box.prop(properties, "wrap_t")
-
-        box = layout.box()
-        box.label(text="Filter:")
-        box.prop(properties, "mag_filter")
-        box.prop(properties, "min_filter")
-        box.prop(properties, "mip_filter")
 
 class Level5_Menu_Export(bpy.types.Menu):
     bl_label = "Studio Eleven (.mtn, .mtm, .imm, .prm, .xc, .cmr2)"
@@ -650,6 +626,10 @@ class Level5_Menu_Import(bpy.types.Menu):
         layout.operator(ImportXC.bl_idname, text="Archive (xpck)", icon="FILE_3D")  
         layout.operator(ImportXCMA.bl_idname, text="Camera (xcma)", icon="OUTLINER_OB_CAMERA")
     
+@persistent
+def migrate_image_samplers_on_load(_dummy=None):
+    migrate_image_samplers()
+
 def draw_menu_export(self, context):
     self.layout.menu(Level5_Menu_Export.bl_idname)
     
@@ -701,10 +681,13 @@ def register():
     bpy.utils.register_class(MATERIAL_OT_level5_reset_mtr)
     bpy.types.Material.level5_mtr = bpy.props.PointerProperty(type=Level5MtrProperties)
 
-    # Level 5 Texture Panel
-    bpy.utils.register_class(Level5TextureProperties)
-    bpy.utils.register_class(Level5_Texture_Panel)
-    bpy.types.Image.level5_texture = bpy.props.PointerProperty(type=Level5TextureProperties)
+    # Sampler of the textures of a material
+    bpy.utils.register_class(Level5ImageProperties)
+    bpy.types.Material.level5_image = bpy.props.PointerProperty(type=Level5ImageProperties)
+    bpy.app.handlers.load_post.append(migrate_image_samplers_on_load)
+
+    # bpy.data is restricted while the addon registers, and load_post has already run when it is enabled later
+    bpy.app.timers.register(migrate_image_samplers, first_interval=0.0)
 
     # Auto Collision Generator
     bpy.utils.register_class(OBJECT_OT_CreateFloorCollision)
@@ -764,10 +747,13 @@ def unregister():
     bpy.utils.unregister_class(Level5MtrProperties)
     del bpy.types.Material.level5_mtr
 
-    # Level 5 Texture Panel
-    bpy.utils.unregister_class(Level5_Texture_Panel)
-    bpy.utils.unregister_class(Level5TextureProperties)
-    del bpy.types.Image.level5_texture
+    # Sampler of the textures of a material
+    if bpy.app.timers.is_registered(migrate_image_samplers):
+        bpy.app.timers.unregister(migrate_image_samplers)
+
+    bpy.app.handlers.load_post.remove(migrate_image_samplers_on_load)
+    del bpy.types.Material.level5_image
+    bpy.utils.unregister_class(Level5ImageProperties)
 
     # Auto Collision Generator
     bpy.utils.unregister_class(OBJECT_OT_CreateFloorCollision)

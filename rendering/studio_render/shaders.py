@@ -135,6 +135,99 @@ vec3 studio_to_scene(vec3 color) {
 """
 
 
+# The GPU texture of Blender 3.4 has a fixed sampler, wrap and filtering are done here on the texels: unf_frg_smp_N is
+# (wrap S, wrap T, magnification | minification << 1, size of the image when the texture holds its mip chain), the wrap
+# values are the ones of the PICA (0 clamp, 1 border, 2 repeat, 3 mirror), a border texel is transparent black
+SAMPLER_GLSL = """
+int studio_wrap_index(int i, int n, int mode, inout bool inside) {
+    if (mode == 2) {
+        return i - n * int(floor(float(i) / float(n)));
+    }
+    if (mode == 3) {
+        int period = 2 * n;
+        int m = i - period * int(floor(float(i) / float(period)));
+        return m < n ? m : period - 1 - m;
+    }
+    if (mode == 1 && (i < 0 || i >= n)) {
+        inside = false;
+    }
+    return clamp(i, 0, n - 1);
+}
+
+vec4 studio_texel(sampler2D smp, ivec2 p, ivec2 size, ivec2 mode, ivec2 origin) {
+    bool inside = true;
+    ivec2 texel = ivec2(studio_wrap_index(p.x, size.x, mode.x, inside), studio_wrap_index(p.y, size.y, mode.y, inside));
+    return inside ? texelFetch(smp, origin + texel, 0) : vec4(0.0);
+}
+
+vec4 studio_filter(sampler2D smp, vec2 uv, ivec2 mode, ivec2 size, ivec2 origin, bool linear) {
+    vec2 scaled = uv * vec2(size);
+    if (!linear) {
+        return studio_texel(smp, ivec2(floor(scaled)), size, mode, origin);
+    }
+    vec2 corner = scaled - 0.5;
+    ivec2 first = ivec2(floor(corner));
+    vec2 f = corner - vec2(first);
+    vec4 a = studio_texel(smp, first, size, mode, origin);
+    vec4 b = studio_texel(smp, first + ivec2(1, 0), size, mode, origin);
+    vec4 c = studio_texel(smp, first + ivec2(0, 1), size, mode, origin);
+    vec4 d = studio_texel(smp, first + ivec2(1, 1), size, mode, origin);
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+vec4 studio_level(sampler2D smp, vec2 uv, ivec2 mode, ivec2 size0, int level, bool linear) {
+    if (level == 0) {
+        return studio_filter(smp, uv, mode, size0, ivec2(0), linear);
+    }
+    int row = 0;
+    for (int j = 1; j < level; j++) {
+        row += max(size0.y >> j, 1);
+    }
+    return studio_filter(smp, uv, mode, max(size0 >> level, ivec2(1)), ivec2(size0.x, row), linear);
+}
+
+vec4 studio_sample(sampler2D smp, vec2 uv, ivec4 setup) {
+    bool chain = setup.w != 0;
+    ivec2 size0 = chain ? ivec2(setup.w & 65535, setup.w >> 16) : textureSize(smp, 0);
+    vec2 dx = dFdx(uv * vec2(size0));
+    vec2 dy = dFdy(uv * vec2(size0));
+    float lod = 0.5 * log2(max(max(dot(dx, dx), dot(dy, dy)), 0.00000001));
+    bool minify = lod > 0.0;
+    bool linear = ((setup.z >> (minify ? 1 : 0)) & 1) != 0;
+    if (!chain || !minify) {
+        return studio_level(smp, uv, setup.xy, size0, 0, linear);
+    }
+    int top = int(floor(log2(float(max(size0.x, size0.y)))));
+    float level = min(lod, float(top));
+    int lower = int(floor(level));
+    return mix(studio_level(smp, uv, setup.xy, size0, lower, linear),
+               studio_level(smp, uv, setup.xy, size0, min(lower + 1, top), linear), level - float(lower));
+}
+"""
+
+
+def sampler_uniforms(units):
+    lines = []
+    for unit in units:
+        lines.append(f"uniform sampler2D unf_frg_txt_2d_{unit};")
+        lines.append(f"uniform ivec4 unf_frg_smp_{unit};")
+
+    return "\n".join(lines)
+
+
+def output_line(options):
+    # The final render blends in display space like the 3DS does, the frame is converted to scene linear once it is read back
+    if options.gamma_correct and not options.display_output:
+        return "    fragColor = vec4(studio_to_scene(result.rgb), result.a);"
+
+    return "    fragColor = result;"
+
+
+def texture_fetch(unit, coordinate, gamma_correct):
+    fetch = f"studio_sample(unf_frg_txt_2d_{unit}, {coordinate}, unf_frg_smp_{unit})"
+    return f"vec4(studio_to_display({fetch}.rgb), {fetch}.a)" if gamma_correct else fetch
+
+
 def combiner_function(program):
     parameters = ", ".join(f"vec4 {name}" for name in
                            ("var_clr", "tex0", "tex1", "tex2", "tex3", "clr_1st", "clr_2nd"))
@@ -143,18 +236,19 @@ def combiner_function(program):
 
 class ShaderOptions:
     def __init__(self, texture_units=(), fragment_lighting=False, light_count=0, alpha_test=False,
-                 alpha_func=None, gamma_correct=True, outline=False):
+                 alpha_func=None, gamma_correct=True, outline=False, display_output=False):
         self.texture_units = tuple(sorted(texture_units))
         self.fragment_lighting = bool(fragment_lighting)
         self.light_count = int(light_count)
         self.alpha_test = bool(alpha_test)
         self.alpha_func = alpha_func
         self.gamma_correct = bool(gamma_correct)
+        self.display_output = bool(display_output and gamma_correct)
         self.outline = bool(outline)
 
     def key(self):
         return (self.texture_units, self.fragment_lighting, self.light_count, self.alpha_test,
-                self.alpha_func, self.gamma_correct, self.outline)
+                self.alpha_func, self.gamma_correct, self.outline, self.display_output)
 
 
 def vertex_source(options):
@@ -164,8 +258,9 @@ def vertex_source(options):
 def fragment_source(program, options):
     lines = [FRAGMENT_HEADER]
 
-    for unit in options.texture_units:
-        lines.append(f"uniform sampler2D unf_frg_txt_2d_{unit};")
+    if options.texture_units:
+        lines.append(sampler_uniforms(options.texture_units))
+        lines.append(SAMPLER_GLSL)
 
     if options.fragment_lighting:
         lines.append(lighting.lighting_uniforms(options.light_count))
@@ -181,10 +276,7 @@ def fragment_source(program, options):
     samples = []
     for unit in range(MAX_TEXTURES):
         if unit in options.texture_units:
-            fetch = f"texture(unf_frg_txt_2d_{unit}, {coordinates[unit]})"
-            if options.gamma_correct:
-                fetch = f"vec4(studio_to_display({fetch}.rgb), {fetch}.a)"
-            samples.append(f"    vec4 tex{unit} = {fetch};")
+            samples.append(f"    vec4 tex{unit} = {texture_fetch(unit, coordinates[unit], options.gamma_correct)};")
         else:
             # samplerType 0 gives an opaque white sample in the shipped emulators
             samples.append(f"    vec4 tex{unit} = vec4(1.0, 1.0, 1.0, 1.0);")
@@ -201,8 +293,7 @@ def fragment_source(program, options):
         discard = (f"    float alpha = result.a;\n"
                    f"    if (!({state.alpha_test_expression(options.alpha_func)})) {{ discard; }}\n")
 
-    output = "    fragColor = vec4(studio_to_scene(result.rgb), result.a);" if options.gamma_correct \
-        else "    fragColor = result;"
+    output = output_line(options)
 
     body = "\n".join(samples)
     lines.append(f"""
@@ -245,11 +336,12 @@ void main() {
 def outline_fragment_source(options, base=None):
     """The textured outline: texture 0 x primary color, or the merged color of a character (base program)."""
     if base is None and 0 not in options.texture_units:
-        return OUTLINE_FRAGMENT
+        return OUTLINE_FRAGMENT.replace("vec4(studio_to_scene(result.rgb), result.a)", "result") if options.display_output else OUTLINE_FRAGMENT
 
     lines = [OUTLINE_FRAGMENT_HEADER]
-    for unit in options.texture_units:
-        lines.append(f"uniform sampler2D unf_frg_txt_2d_{unit};")
+    if options.texture_units:
+        lines.append(sampler_uniforms(options.texture_units))
+        lines.append(SAMPLER_GLSL)
 
     if base is not None:
         for channel in sorted(set(base.palette_channels.values())):
@@ -260,10 +352,7 @@ def outline_fragment_source(options, base=None):
     coordinates = {0: "frg_tx0", 1: "frg_tx1", 2: "frg_tx2", 3: "frg_tx2"}
     for unit in range(MAX_TEXTURES):
         if unit in options.texture_units:
-            fetch = f"texture(unf_frg_txt_2d_{unit}, {coordinates[unit]})"
-            if options.gamma_correct:
-                fetch = f"vec4(studio_to_display({fetch}.rgb), {fetch}.a)"
-            samples.append(f"    vec4 tex{unit} = {fetch};")
+            samples.append(f"    vec4 tex{unit} = {texture_fetch(unit, coordinates[unit], options.gamma_correct)};")
         else:
             samples.append(f"    vec4 tex{unit} = vec4(1.0, 1.0, 1.0, 1.0);")
 
@@ -277,8 +366,7 @@ def outline_fragment_source(options, base=None):
         discard = (f"    float alpha = result.a;\n"
                    f"    if (!({state.alpha_test_expression(options.alpha_func)})) {{ discard; }}\n")
 
-    output = "    fragColor = vec4(studio_to_scene(result.rgb), result.a);" if options.gamma_correct \
-        else "    fragColor = result;"
+    output = output_line(options)
 
     body = "\n".join(samples)
     lines.append(f"""

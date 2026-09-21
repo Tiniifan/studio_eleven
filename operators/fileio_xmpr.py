@@ -28,14 +28,17 @@ MESH_TYPE_INT_TO_ENUM = {
 
 MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
 
-WRAP_EXTENSION = {
-    'CLAMP': 'EXTEND',
-    'BORDER': 'CLIP',
-    'REPEAT': 'REPEAT',
-    'MIRROR': 'MIRROR',
-}
+TINT_NODE_PREFIX = "Level5 Tint"
+TINT_LAYER = "Tint"
+SAMPLER_NODE_PREFIX = "Level5 Sampler"
+SAMPLER_UV_NODE = f"{SAMPLER_NODE_PREFIX} Texture Coordinate"
 
-WRAP_GROUP_PREFIX = "Level Five Wrap"
+WRAP_OPERATIONS = {
+    'REPEAT': 'FRACT',
+    'MIRROR': 'PINGPONG',
+    'EXTEND': 'ADD',
+    'CLIP': 'ADD',
+}
 
 ##########################################
 # XMPR Function
@@ -225,145 +228,221 @@ def apply_atr_state(material, atr_state):
 
     material.show_transparent_back = not resolved["depth_write"]
 
-def new_group_socket(group, in_out, name):
-    # The sockets of a node group moved to an interface in Blender 4.0
-    if hasattr(group, "interface"):
-        group.interface.new_socket(name=name, in_out=in_out, socket_type='NodeSocketVector')
-    elif in_out == 'INPUT':
-        group.inputs.new('NodeSocketVector', name)
-    else:
-        group.outputs.new('NodeSocketVector', name)
+def get_sampler_node(tree, name, bl_idname, location):
+    node = tree.nodes.get(name)
 
-def make_wrap_group(wrap_s, wrap_t):
-    name = f"{WRAP_GROUP_PREFIX} {wrap_s}/{wrap_t}"
-    group = bpy.data.node_groups.get(name)
+    if node is not None and node.bl_idname != bl_idname:
+        tree.nodes.remove(node)
+        node = None
 
-    if group is not None:
-        return group
+    if node is None:
+        node = tree.nodes.new(bl_idname)
+        node.name = name
+        node.label = name
+        node.location = location
 
-    group = bpy.data.node_groups.new(name, 'ShaderNodeTree')
-    new_group_socket(group, 'INPUT', "Vector")
-    new_group_socket(group, 'OUTPUT', "Vector")
+    return node
 
-    nodes = group.nodes
-    links = group.links
+def link_sampler_sockets(tree, output, target):
+    if len(target.links) == 1 and target.links[0].from_socket == output:
+        return
 
-    group_input = nodes.new('NodeGroupInput')
-    group_input.location = (-400, 0)
-    group_output = nodes.new('NodeGroupOutput')
-    group_output.location = (400, 0)
+    for link in list(target.links):
+        tree.links.remove(link)
 
-    separate = nodes.new('ShaderNodeSeparateXYZ')
-    separate.location = (-200, 0)
-    combine = nodes.new('ShaderNodeCombineXYZ')
-    combine.location = (200, 0)
+    tree.links.new(output, target)
 
-    links.new(group_input.outputs[0], separate.inputs[0])
-    links.new(combine.outputs[0], group_output.inputs[0])
+def get_uv_source(tree, texture_node, separate):
+    # An UV source wired by hand is kept, otherwise the UV output of one Texture Coordinate node feeds every texture
+    for link in separate.inputs[0].links:
+        return link.from_socket
 
-    for index, mode in enumerate((wrap_s, wrap_t)):
-        math = nodes.new('ShaderNodeMath')
-        math.location = (0, -200 * index)
+    for link in texture_node.inputs['Vector'].links:
+        if not link.from_node.name.startswith(SAMPLER_NODE_PREFIX):
+            return link.from_socket
 
-        if mode == 'REPEAT':
-            math.operation = 'FRACT'
-        elif mode == 'MIRROR':
-            math.operation = 'PINGPONG'
+    uv_node = get_sampler_node(tree, SAMPLER_UV_NODE, 'ShaderNodeTexCoord', (texture_node.location.x - 900, texture_node.location.y))
+
+    return uv_node.outputs['UV']
+
+def get_image_extension(wrap_x, wrap_y):
+    # The Image Texture node has one extension for both axes, the wrapping itself is done on the coordinates
+    if 'CLIP' in (wrap_x, wrap_y):
+        return 'CLIP'
+
+    if wrap_x == wrap_y == 'REPEAT':
+        return 'REPEAT'
+
+    return 'EXTEND'
+
+def apply_texture_sampler(tree, texture_node, properties):
+    origin = texture_node.location
+    prefix = f"{SAMPLER_NODE_PREFIX} %s {texture_node.name}"
+
+    separate = get_sampler_node(tree, prefix % "Separate", 'ShaderNodeSeparateXYZ', (origin.x - 700, origin.y))
+    combine = get_sampler_node(tree, prefix % "Combine", 'ShaderNodeCombineXYZ', (origin.x - 200, origin.y))
+
+    link_sampler_sockets(tree, get_uv_source(tree, texture_node, separate), separate.inputs[0])
+
+    for index, (axis, mode) in enumerate((("X", properties.wrap_x), ("Y", properties.wrap_y))):
+        math = get_sampler_node(tree, prefix % f"Wrap {axis}", 'ShaderNodeMath', (origin.x - 450, origin.y - 150 * index))
+        math.operation = WRAP_OPERATIONS[mode]
+        math.use_clamp = mode == 'EXTEND'
+
+        if mode == 'MIRROR':
             math.inputs[1].default_value = 1.0
-        else:
-            # Border is previewed as a clamp to the edge, only the exported bytes have to be exact
-            math.operation = 'ADD'
+        elif mode in ('EXTEND', 'CLIP'):
             math.inputs[1].default_value = 0.0
-            math.use_clamp = True
 
-        links.new(separate.outputs[index], math.inputs[0])
-        links.new(math.outputs[0], combine.inputs[index])
+        link_sampler_sockets(tree, separate.outputs[index], math.inputs[0])
+        link_sampler_sockets(tree, math.outputs[0], combine.inputs[index])
 
-    links.new(separate.outputs[2], combine.inputs[2])
+    link_sampler_sockets(tree, separate.outputs[2], combine.inputs[2])
+    link_sampler_sockets(tree, combine.outputs[0], texture_node.inputs['Vector'])
 
-    return group
+    # One interpolation for both filters: the node cannot tell magnification from minification, the close view is what shows
+    texture_node.interpolation = 'Closest' if properties.magnification == 'NEAREST' else 'Linear'
+    texture_node.extension = get_image_extension(properties.wrap_x, properties.wrap_y)
 
-def get_wrap_node(node):
-    for link in node.inputs['Vector'].links:
-        source = link.from_node
-        if source.type == 'GROUP' and source.node_tree and source.node_tree.name.startswith(WRAP_GROUP_PREFIX):
-            return source
+    # An image nothing reads is wired to the base color of the shader
+    if not any(output.is_linked for output in texture_node.outputs):
+        bsdf = tree.nodes.get("Principled BSDF")
 
-    return None
+        if bsdf is not None and not bsdf.inputs["Base Color"].is_linked:
+            tree.links.new(texture_node.outputs["Color"], bsdf.inputs["Base Color"])
 
-def remove_wrap_node(node):
-    wrap_node = get_wrap_node(node)
+def get_material_meshes(material):
+    return [mesh for mesh in bpy.data.meshes if any(slot == material for slot in mesh.materials)]
 
-    if wrap_node is None:
+def get_tint_dependencies(mesh):
+    """What the combiner of the render default of a mesh takes from the texture and from the vertex color (Tint)."""
+    from ..rendering.studio_render import combiner, resources
+
+    if mesh.vertex_colors.get(TINT_LAYER) is None:
+        return None
+
+    engine_id = rendering_project.get_scene_engine_id(bpy.context.scene)
+    render_default = rendering_project.get_mesh_render_default(mesh, engine_id)
+    stages = resources.load_combiner(engine_id, render_default.data["combiner"]) if render_default is not None else None
+
+    if not stages:
+        return None
+
+    return combiner.input_dependencies(combiner.build_program(stages))
+
+def apply_material_tint(material):
+    """The combiner of the game multiplies by the vertex color (Tint), the shader graph of the material has to do the same."""
+    tree = material.node_tree
+    bsdf = tree.nodes.get("Principled BSDF") if tree else None
+    textures = [node for node in tree.nodes if node.type == 'TEX_IMAGE' and node.image is not None] if tree else []
+
+    if bsdf is None or not textures:
         return
 
-    tree = node.id_data
-    sources = [link.from_node for link in wrap_node.inputs[0].links]
-    tree.nodes.remove(wrap_node)
+    meshes = get_material_meshes(material)
+    dependencies = get_tint_dependencies(meshes[0]) if meshes else None
+    uses_tint = dependencies is not None and any(primary for _, primary in dependencies.values())
 
-    for source in sources:
-        if source.bl_idname == 'ShaderNodeUVMap' and source.label == WRAP_GROUP_PREFIX:
-            tree.nodes.remove(source)
-        else:
-            tree.links.new(source.outputs[0], node.inputs['Vector'])
+    texture = textures[-1]
+    color_name = f"{TINT_NODE_PREFIX} Color"
+    alpha_name = f"{TINT_NODE_PREFIX} Alpha"
+    layer_name = f"{TINT_NODE_PREFIX} Attribute"
+    multiplier = tree.nodes.get("Alpha Multiplier")
+    has_alpha = multiplier is not None and multiplier.outputs[0].is_linked
 
-def insert_wrap_node(node, wrap_s, wrap_t):
-    tree = node.id_data
-    wrap_node = get_wrap_node(node)
+    if not uses_tint:
+        for name in (color_name, alpha_name, layer_name):
+            if name in tree.nodes:
+                tree.nodes.remove(tree.nodes[name])
 
-    if wrap_node is None:
-        sources = [link.from_socket for link in node.inputs['Vector'].links]
+        # What the importer wired before the tint
+        if not bsdf.inputs["Base Color"].is_linked:
+            tree.links.new(texture.outputs["Color"], bsdf.inputs["Base Color"])
+        if has_alpha and not multiplier.inputs[0].is_linked:
+            tree.links.new(texture.outputs["Alpha"], multiplier.inputs[0])
 
-        wrap_node = tree.nodes.new('ShaderNodeGroup')
-        wrap_node.location = (node.location.x - 250, node.location.y - 150)
-        # The group has no sockets until a node_tree is assigned, do that before wiring any link into it
-        wrap_node.node_tree = make_wrap_group(wrap_s, wrap_t)
-
-        if sources:
-            tree.links.new(sources[0], wrap_node.inputs[0])
-        else:
-            uv_node = tree.nodes.new('ShaderNodeUVMap')
-            uv_node.label = WRAP_GROUP_PREFIX
-            uv_node.location = (node.location.x - 450, node.location.y - 150)
-            tree.links.new(uv_node.outputs[0], wrap_node.inputs[0])
-
-        tree.links.new(wrap_node.outputs[0], node.inputs['Vector'])
-
-    wrap_node.node_tree = make_wrap_group(wrap_s, wrap_t)
-
-def apply_sampler_preview(node):
-    # The state is kept as is in level5_texture, the Blender properties are only a preview
-    if node.image is None or not hasattr(node.image, "level5_texture"):
         return
 
-    properties = node.image.level5_texture
+    rgb, alpha = dependencies["rgb"], dependencies["alpha"]
+    origin = texture.location
 
-    node.interpolation = 'Closest' if properties.mag_filter == 'NEAREST' else 'Linear'
+    layer = get_sampler_node(tree, layer_name, 'ShaderNodeVertexColor', (origin.x, origin.y - 350))
+    layer.layer_name = TINT_LAYER
 
-    if properties.wrap_s == properties.wrap_t:
-        remove_wrap_node(node)
-        extension = WRAP_EXTENSION.get(properties.wrap_s, 'REPEAT')
+    color = get_sampler_node(tree, color_name, 'ShaderNodeMixRGB', (origin.x + 250, origin.y - 250))
+    color.blend_type = 'MULTIPLY'
+    color.inputs[0].default_value = 1.0
+    color.inputs[1].default_value = (1.0, 1.0, 1.0, 1.0)
+    color.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
 
-        # Mirror isn't in this node's extension enum on every Blender version this addon supports (e.g. not on 3.4)
-        if extension not in node.bl_rna.properties['extension'].enum_items:
-            extension = 'REPEAT'
-
-        node.extension = extension
+    if rgb[0]:
+        link_sampler_sockets(tree, texture.outputs["Color"], color.inputs[1])
     else:
-        # Blender has a single wrap mode for both axes, a node group remaps the UV instead
-        insert_wrap_node(node, properties.wrap_s, properties.wrap_t)
-        node.extension = 'EXTEND'
+        for link in list(color.inputs[1].links):
+            tree.links.remove(link)
 
-def refresh_sampler_preview(image):
-    for material in bpy.data.materials:
-        if not material.use_nodes or material.node_tree is None:
+    link_sampler_sockets(tree, layer.outputs["Color"], color.inputs[2])
+    link_sampler_sockets(tree, color.outputs[0], bsdf.inputs["Base Color"])
+
+    if has_alpha:
+        product = get_sampler_node(tree, alpha_name, 'ShaderNodeMath', (origin.x + 250, origin.y - 450))
+        product.operation = 'MULTIPLY'
+        product.inputs[0].default_value = 1.0
+        product.inputs[1].default_value = 1.0
+
+        if alpha[0]:
+            link_sampler_sockets(tree, texture.outputs["Alpha"], product.inputs[0])
+        else:
+            for link in list(product.inputs[0].links):
+                tree.links.remove(link)
+
+        if alpha[1]:
+            link_sampler_sockets(tree, layer.outputs["Alpha"], product.inputs[1])
+        else:
+            for link in list(product.inputs[1].links):
+                tree.links.remove(link)
+
+        link_sampler_sockets(tree, product.outputs[0], multiplier.inputs[0])
+
+def apply_material_sampler(material):
+    if material is None or not hasattr(material, "level5_image"):
+        return
+
+    if not material.use_nodes:
+        material.use_nodes = True
+
+    tree = material.node_tree
+
+    if tree is None:
+        return
+
+    for node in list(tree.nodes):
+        if node.type == 'TEX_IMAGE' and node.image is not None:
+            apply_texture_sampler(tree, node, material.level5_image)
+
+    apply_material_tint(material)
+
+def migrate_image_samplers():
+    # The sampler was stored on the Image (Image.level5_texture) before it moved to the Material
+    for image in bpy.data.images:
+        old = image.get("level5_texture")
+
+        if old is None:
             continue
 
-        for node in material.node_tree.nodes:
-            if node.type == 'TEX_IMAGE' and node.image == image:
-                apply_sampler_preview(node)
+        values = {field: old.get(field, getattr(res.DEFAULT_SAMPLER, field)) for field in res.SamplerState._fields}
+        sampler = res.SamplerState(**values)
 
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None):
+        for material in bpy.data.materials:
+            if material.node_tree is None or "level5_image" in material.keys():
+                continue
+
+            if any(node.type == 'TEX_IMAGE' and node.image == image for node in material.node_tree.nodes):
+                res.sampler_to_properties(sampler, material.level5_image)
+
+        del image["level5_texture"]
+
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None, sampler=None):
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
     
@@ -496,6 +575,11 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             mesh_obj.parent_type = 'BONE'
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
+
+            # Blender attaches a child to the tail of the bone, the vertices of the game are relative to its head
+            bone = armature.data.bones.get(single_bind)
+            if bone is not None:
+                mesh_obj.matrix_parent_inverse = Matrix.Translation((0, -bone.length, 0))
     
     if lib is not None:
         material = bpy.data.materials.new(name=model_data['material_name'])
@@ -523,7 +607,6 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         for texture in lib:
             texture_node = material.node_tree.nodes.new('ShaderNodeTexImage')
             texture_node.image = texture
-            apply_sampler_preview(texture_node)
 
         # Link only the last texture to principled bsdf then to material
         if texture_node:
@@ -579,8 +662,11 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         if mtr_material is not None:
             material.level5_mtr.data = json.dumps(mtr_material.to_dict())
 
+        res.sampler_to_properties(sampler or res.DEFAULT_SAMPLER, material.level5_image)
+
         # Add material
         mesh_obj.data.materials.append(material)
+        apply_material_sampler(material)
     
     return mesh_obj
 

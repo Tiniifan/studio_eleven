@@ -328,6 +328,27 @@ def evaluate(program, inputs):
 
     return values["prv"]
 
+DEPENDENCY_BASES = ((0.25, 0.5, 0.75, 0.4), (0.7, 0.3, 0.55, 0.85), (0.4, 0.9, 0.2, 0.6))
+
+
+def input_dependencies(program):
+    """{"rgb": (texture 0, primary color), "alpha": (texture 0, primary color)}: what the result depends on, found by changing each input."""
+    found = {"rgb": [False, False], "alpha": [False, False]}
+
+    for index, variable in enumerate(("tex0", "var_clr")):
+        for base in DEPENDENCY_BASES:
+            inputs = {name: base for name in SOURCE_VARIABLES.values() if name not in STATE_VARIABLES}
+            reference = evaluate(program, inputs)
+            inputs[variable] = tuple(1.0 - value for value in base)
+            changed = evaluate(program, inputs)
+
+            if any(abs(a - b) > 1e-6 for a, b in zip(reference[:3], changed[:3])):
+                found["rgb"][index] = True
+            if abs(reference[3] - changed[3]) > 1e-6:
+                found["alpha"][index] = True
+
+    return {channel: tuple(values) for channel, values in found.items()}
+
 ##########################################
 # GLSL generator
 ##########################################

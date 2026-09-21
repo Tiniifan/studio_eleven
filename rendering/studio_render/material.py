@@ -1,6 +1,6 @@
 """Binds Blender data to the render data of a game engine: render default, combiner, ATR, textures."""
 
-from ...formats import atr
+from ...formats import atr, res
 from .. import game_material, project, render_defaults
 from . import combiner, resources, state
 
@@ -29,6 +29,64 @@ def image_texture(image):
         _image_textures[key] = gpu.texture.from_image(image)
 
     return _image_textures[key]
+
+
+_mip_textures = {}
+
+
+def is_power_of_two(value):
+    return value > 1 and value & (value - 1) == 0
+
+
+def can_mip(image):
+    return is_power_of_two(image.size[0]) and is_power_of_two(image.size[1])
+
+
+def mip_texture(image):
+    """The mip chain of an image in one texture, level 0 on the left and the other levels stacked on its right.
+
+    Blender 3.4 builds no levels for the textures of gpu.texture.from_image, the shader picks a level with the offsets.
+    """
+    import gpu
+    import numpy
+
+    key = image.name_full
+    if key not in _mip_textures:
+        base = image_texture(image)
+        width, height = base.width, base.height
+        pixels = numpy.array(base.read().to_list(), dtype=numpy.float32).reshape(height, width, 4)
+
+        # A byte texture is read back as its stored 0..255 values, the sampler of an SRGB8_A8 one gives them scene linear
+        if base.format in ('RGBA8', 'SRGB8_A8'):
+            pixels /= 255.0
+
+        if base.format == 'SRGB8_A8':
+            color = pixels[..., :3]
+            pixels[..., :3] = numpy.where(color <= 0.04045, color / 12.92, ((color + 0.055) / 1.055) ** 2.4)
+
+        levels = [pixels]
+
+        while max(levels[-1].shape[:2]) > 1:
+            level = levels[-1]
+            if level.shape[0] > 1:
+                level = level.reshape(level.shape[0] // 2, 2, level.shape[1], 4).mean(axis=1)
+            if level.shape[1] > 1:
+                level = level.reshape(level.shape[0], level.shape[1] // 2, 2, 4).mean(axis=2)
+            levels.append(level)
+
+        rows = max(height, sum(level.shape[0] for level in levels[1:]))
+        atlas = numpy.zeros((rows, width + levels[1].shape[1], 4), dtype=numpy.float32)
+        atlas[:height, :width] = levels[0]
+
+        row = 0
+        for level in levels[1:]:
+            atlas[row:row + level.shape[0], width:width + level.shape[1]] = level
+            row += level.shape[0]
+
+        buffer = gpu.types.Buffer('FLOAT', atlas.size, atlas.ravel().tolist())
+        _mip_textures[key] = gpu.types.GPUTexture((atlas.shape[1], atlas.shape[0]), format='RGBA16F', data=buffer)
+
+    return _mip_textures[key]
 
 
 def material_images(material):
@@ -70,6 +128,7 @@ def clear_palettes():
 
 def clear_textures():
     _image_textures.clear()
+    _mip_textures.clear()
 
 
 # The inputs the importer animates for a MaterialTransparency track (fileio_animation_manager.process_material_track)
@@ -95,6 +154,14 @@ def fade_of(material, fade_input):
     return node.inputs[fade_input[1]].default_value if node is not None else 1.0
 
 
+def sampler_of(material):
+    """(wrap S, wrap T, magnification | minification << 1, mipmap) of the Level5 image settings of a material."""
+    properties = getattr(material, "level5_image", None) if material is not None else None
+    sampler = res.properties_to_sampler(properties) if properties is not None else res.DEFAULT_SAMPLER
+
+    return (sampler.wrap_s, sampler.wrap_t, sampler.mag_filter | (sampler.min_filter << 1), sampler.mip_filter)
+
+
 def material_state(material, file_version):
     properties = getattr(material, "level5_atr", None) if material is not None else None
     atr_state = atr.state_from_properties(properties) if properties is not None else atr.default_state(file_version)
@@ -106,25 +173,35 @@ def material_state(material, file_version):
 class MaterialRender:
     """Everything one draw of one material needs, built once and cached until Blender reports a change."""
 
-    def __init__(self, engine_id, render_default, program, resolved_state, images, lighting, fade_input=None):
+    def __init__(self, engine_id, render_default, program, resolved_state, images, lighting, fade_input=None, sampler=None):
         self.engine_id = engine_id
         self.fade_input = fade_input
+        self.sampler = sampler or (2, 2, 3, 0)
         self.lighting = lighting
         self.render_default = render_default
         self.program = program
         self.state = resolved_state
         self.images = images
         self.program_key = (engine_id, render_default.name if render_default else None)
-        self._textures = {}
         self._palette = None
         self._palette_read = False
 
+    def uses_mip(self, unit):
+        return bool(self.sampler[3]) and can_mip(self.images[unit])
+
     def texture(self, unit):
         """GPU texture of a texture unit, it needs the GPU so it is created on the first draw."""
-        if unit not in self._textures:
-            self._textures[unit] = image_texture(self.images[unit])
+        if self.uses_mip(unit):
+            return mip_texture(self.images[unit])
 
-        return self._textures[unit]
+        return image_texture(self.images[unit])
+
+    def sampler_uniform(self, unit):
+        """The values of unf_frg_smp_N: the last one is the size of the image when the texture holds its mip chain."""
+        wrap_s, wrap_t, filters, _ = self.sampler
+        size = self.images[unit].size
+
+        return (wrap_s, wrap_t, filters, (size[0] | (size[1] << 16)) if self.uses_mip(unit) else 0)
 
     @property
     def palette(self):
@@ -203,7 +280,10 @@ def build(engine_id, mesh, material, file_version):
         render_default = render_default_of(engine_id, mesh)
         bound = MaterialRender(engine_id, render_default, program_of(engine_id, render_default),
                                material_state(material, file_version), material_images(material),
-                               game_material.material_of(material, engine_id), fade_input_of(material))
+                               game_material.material_of(material, engine_id), fade_input_of(material), sampler_of(material))
         _bound[key] = bound
+
+    # Only a few properties, read on every draw so a change of the sampler shows without rebuilding the material
+    bound.sampler = sampler_of(material)
 
     return bound

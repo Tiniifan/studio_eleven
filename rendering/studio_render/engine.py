@@ -133,7 +133,7 @@ def changes_of(updates, animating=False):
     return Changes(everything, objects, materials, meshes)
 
 
-DrawJob = namedtuple("DrawJob", ("geometry", "matrix", "bounds", "outline", "fades"))
+DrawJob = namedtuple("DrawJob", ("geometry", "matrix", "bounds", "outline", "fades", "priority"))
 
 
 def group_extent(jobs):
@@ -168,6 +168,16 @@ def camera_of(scene):
 def background_color(scene):
     world = scene.world
     return tuple(world.color) + (1.0,) if world else (0.05, 0.05, 0.05, 1.0)
+
+
+def scene_to_display(values):
+    values = np.asarray(values, dtype=np.float32)
+    return np.where(values <= 0.0031308, values * 12.92, 1.055 * np.power(np.maximum(values, 0.0), 1.0 / 2.4) - 0.055)
+
+
+def display_to_scene(values):
+    values = np.asarray(values, dtype=np.float32)
+    return np.where(values <= 0.04045, values / 12.92, np.power((np.maximum(values, 0.0) + 0.055) / 1.055, 2.4))
 
 ##########################################
 # Uniforms
@@ -303,6 +313,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         self.geometry = {}
         self.stale = set()
         self.last_frame = None
+        self.display_output = False
 
     def view_update(self, context, depsgraph):
         scene = depsgraph.scene
@@ -369,12 +380,16 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
             key = obj.parent.name if obj.parent else name
             groups.setdefault(key, []).append(
-                DrawJob(geometry, instance.matrix_world.copy(), bounds, outlines.get(name), fades))
+                DrawJob(geometry, instance.matrix_world.copy(), bounds, outlines.get(name), fades,
+                        mesh.level5_properties.draw_priority & 0xFF))
 
         eye = view_matrix.inverted().translation
         perspective = projection_matrix[3][3] == 0.0
 
         for jobs in groups.values():
+            # The game files its meshes by draw priority (low byte, ascending), meshes of the same one keep their order
+            jobs.sort(key=lambda job: job.priority)
+
             # Share of the half height of the view the character takes, the outline never gets thicker than a bit of it
             size_ndc = None
             if perspective and any(job.outline is not None for job in jobs):
@@ -414,6 +429,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                 alpha_test=bound.state.alpha_test,
                 alpha_func=bound.state.alpha_func,
                 gamma_correct=settings.gamma_correct,
+                display_output=self.display_output,
             )
 
             shader = shaders.get_shader(bound.program, options, bound.program_key)
@@ -428,6 +444,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
             for unit in options.texture_units:
                 _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", bound.texture(unit))
+                _set(shader.uniform_int, f"unf_frg_smp_{unit}", bound.sampler_uniform(unit))
 
             palette = bound.palette
             if palette:
@@ -480,6 +497,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                 alpha_func=bound.state.alpha_func if textured else None,
                 gamma_correct=settings.gamma_correct,
                 outline=True,
+                display_output=self.display_output,
             )
             shader = shaders.get_shader(base, options, ("outline", bound.program_key))
 
@@ -498,6 +516,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
 
             for unit in units:
                 _set(shader.uniform_sampler, f"unf_frg_txt_2d_{unit}", bound.texture(unit))
+                _set(shader.uniform_int, f"unf_frg_smp_{unit}", bound.sampler_uniform(unit))
 
             palette = bound.palette if base is not None else None
             if palette:
@@ -523,11 +542,17 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         view_matrix = camera.matrix_world.inverted()
         projection_matrix = camera.calc_matrix_camera(depsgraph, x=width, y=height)
 
+        # The 3DS blends the stored 8 bit values, so the whole frame is drawn in display space and converted once at the end
+        self.display_output = settings.gamma_correct
+        background = background_color(scene)
+        if self.display_output:
+            background = tuple(scene_to_display(background[:3])) + (background[3],)
+
         offscreen = gpu.types.GPUOffScreen(width, height)
         try:
             with offscreen.bind():
                 framebuffer = gpu.state.active_framebuffer_get()
-                framebuffer.clear(color=background_color(scene), depth=1.0)
+                framebuffer.clear(color=background, depth=1.0)
                 self.geometry.clear()
                 self.stale.clear()
                 self.draw_scene(depsgraph, view_matrix, projection_matrix, height)
@@ -536,8 +561,12 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         finally:
             offscreen.free()
 
+        frame = np.array(buffer.to_list(), dtype=np.float32)
+        if self.display_output:
+            frame[..., :3] = display_to_scene(frame[..., :3])
+
         # The pass takes one RGBA list per pixel
-        pixels = [list(pixel) for row in buffer.to_list() for pixel in row]
+        pixels = frame.reshape(-1, 4).tolist()
         result = self.begin_result(0, 0, width, height)
         result.layers[0].passes["Combined"].rect = pixels
         self.end_result(result)

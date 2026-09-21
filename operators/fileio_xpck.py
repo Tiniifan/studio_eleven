@@ -376,8 +376,10 @@ def build_archive(context, content, session):
         session.created_armatures.append(armature.name)
 
     # Make libs
+    samplers = {}
     if res_data is not None:
         images = {}
+        image_samplers = {}
 
         # Make images
         if len(content.textures_data) > 0:
@@ -393,8 +395,7 @@ def build_archive(context, content, session):
                     if has_alpha == False:
                         image.alpha_mode = 'NONE'
 
-                    if hasattr(image, "level5_texture"):
-                        res.sampler_to_properties(res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler'], image.level5_texture)
+                    image_samplers[image.name] = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler']
 
                     # Assign pixel data to the image
                     image.pixels.foreach_set(texture_data)
@@ -424,6 +425,10 @@ def build_archive(context, content, session):
                         material_textures.append(images[texture_key])
 
                 libs[material_name] = material_textures
+
+                # A material has one sampler, the one of its first texture (no shipped material mixes samplers)
+                if material_textures:
+                    samplers[material_name] = image_samplers.get(material_textures[0].name)
 
     # Make render states
     atr_states = {}
@@ -479,7 +484,7 @@ def build_archive(context, content, session):
 
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state,
-                      mtr_material=mtr_materials.get(mesh_data['material_name']))
+                      mtr_material=mtr_materials.get(mesh_data['material_name']), sampler=samplers.get(mesh_data['material_name']))
 
         if armature is not None and content.sil_data:
             import_outlines(armature, content.sil_data, res_data.get(res.RESType.SHADING, {}))
@@ -1032,21 +1037,15 @@ class TexturePropertyGroup(bpy.types.PropertyGroup):
         ],
         default='RGBA8'
     )
-    wrap_s: bpy.props.EnumProperty(name="Wrap X", items=res.WRAP_ITEMS, default='REPEAT')
-    wrap_t: bpy.props.EnumProperty(name="Wrap Y", items=res.WRAP_ITEMS, default='REPEAT')
-    mag_filter: bpy.props.EnumProperty(name="Magnification", items=res.FILTER_ITEMS, default='LINEAR')
-    min_filter: bpy.props.EnumProperty(name="Minification", items=res.FILTER_ITEMS, default='LINEAR')
-    mip_filter: bpy.props.EnumProperty(name="Mipmap", items=res.FILTER_ITEMS, default='NEAREST')
     mesh_name: bpy.props.StringProperty()
 
-def fill_texture_sampler(item):
-    image = bpy.data.images.get(item.name)
+def get_material_sampler(material_name):
+    material = bpy.data.materials.get(material_name)
 
-    if image is None or not hasattr(image, "level5_texture"):
-        return
+    if material is None or not hasattr(material, "level5_image"):
+        return res.DEFAULT_SAMPLER
 
-    for name, _, _ in res.SAMPLER_FIELDS:
-        setattr(item, name, getattr(image.level5_texture, name))
+    return res.properties_to_sampler(material.level5_image)
 
 class TexprojPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Texproj name")
@@ -1382,15 +1381,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         row.label(text=texture_prop.name)
                         row.prop(texture_prop, "format", text="")
 
-                        row = box.row(align=True)
-                        row.prop(texture_prop, "wrap_s", text="")
-                        row.prop(texture_prop, "wrap_t", text="")
-
-                        row = box.row(align=True)
-                        row.prop(texture_prop, "mag_filter", text="")
-                        row.prop(texture_prop, "min_filter", text="")
-                        row.prop(texture_prop, "mip_filter", text="")
-
                         same_texture.append(texture_prop.name)
 
     def draw_settings_armature(self, context, layout):
@@ -1623,7 +1613,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             item = self.texture_properties.add()
                             item.name = texture_name
                             item.mesh_name = mesh.name
-                            fill_texture_sampler(item)
                 else:
                     # If material doesn't use nodes, try to access the texture from the diffuse shader
                     if hasattr(material, 'texture_slots'):
@@ -1633,7 +1622,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             item = self.texture_properties.add()
                             item.name = texture_name
                             item.mesh_name = mesh.name
-                            fill_texture_sampler(item)
                     elif hasattr(material, 'brres'):
                         # Enter in berry bush situation
                         for texture_berry_bush in material.brres.textures:
@@ -1642,7 +1630,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                                 item = self.texture_properties.add()
                                 item.name = texture_name
                                 item.mesh_name = mesh.name
-                                fill_texture_sampler(item)
 
         # Refresh the bones, texprojs, materials and outline meshes saved on the armatures
         for obj in bpy.data.objects:
@@ -1706,7 +1693,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         if texture.name not in textures:
                             textures[texture.name] = {}
                             textures[texture.name]['format'] = texture.format
-                            textures[texture.name]['sampler'] = res.properties_to_sampler(texture)
+                            textures[texture.name]['sampler'] = get_material_sampler(mesh_prop.material_name)
                             textures[texture.name]['linked_material'] = []
 
                         textures[texture.name]['linked_material'].append(mesh_prop.material_name)
