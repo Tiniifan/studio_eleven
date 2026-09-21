@@ -44,6 +44,23 @@ BLEND_PRESETS = {
 
 BLEND_FALLBACK = 'ALPHA'
 
+# A blend without preset is still exact when the fragment stage applies the source factor to the colour and the destination
+# is one of the premultiplied presets (the shader writes colour * factor, the alpha is kept)
+SHADER_SOURCE_FACTORS = {
+    _FACTOR["ZERO"]: "ZERO",
+    _FACTOR["ONE"]: "ONE",
+    _FACTOR["SRC_COLOR"]: "SRC_COLOR",
+    _FACTOR["ONE_MINUS_SRC_COLOR"]: "ONE_MINUS_SRC_COLOR",
+    _FACTOR["SRC_ALPHA"]: "SRC_ALPHA",
+    _FACTOR["ONE_MINUS_SRC_ALPHA"]: "ONE_MINUS_SRC_ALPHA",
+}
+
+SHADER_DESTINATIONS = {
+    _FACTOR["ZERO"]: 'NONE',
+    _FACTOR["ONE"]: 'ADDITIVE_PREMULT',
+    _FACTOR["ONE_MINUS_SRC_ALPHA"]: 'ALPHA_PREMULT',
+}
+
 
 class ResolvedState:
     """An AtrState with every inherited field filled in, plus what the shader has to emulate."""
@@ -72,22 +89,36 @@ class ResolvedState:
         return DEPTH_MODES.get(self.depth_func, DEPTH_FALLBACK)
 
     @property
-    def blend_mode(self):
+    def blend_plan(self):
+        """(gpu.state preset, source factor the fragment stage applies to the colour or None, exact)."""
         if not self.blend:
-            return 'NONE'
+            return 'NONE', None, True
+
         key = (self.blend_rgb_equation, self.blend_rgb_source, self.blend_rgb_destination)
-        return BLEND_PRESETS.get(key, BLEND_FALLBACK)
+        # The separate alpha equation of the file is not settable either
+        same_alpha = self.blend_alpha_equation == self.blend_rgb_equation
+
+        if key in BLEND_PRESETS:
+            return BLEND_PRESETS[key], None, same_alpha
+
+        equation, source, destination = key
+        if equation == _EQUATION["ADD"] and source in SHADER_SOURCE_FACTORS and destination in SHADER_DESTINATIONS:
+            return SHADER_DESTINATIONS[destination], SHADER_SOURCE_FACTORS[source], same_alpha
+
+        return BLEND_FALLBACK, None, False
+
+    @property
+    def blend_mode(self):
+        return self.blend_plan[0]
+
+    @property
+    def blend_source(self):
+        return self.blend_plan[1]
 
     @property
     def blend_is_exact(self):
-        """False when gpu.state has no preset matching the file, the draw then uses the closest one."""
-        if not self.blend:
-            return True
-        key = (self.blend_rgb_equation, self.blend_rgb_source, self.blend_rgb_destination)
-        if key not in BLEND_PRESETS:
-            return False
-        # The separate alpha equation of the file is not settable either
-        return self.blend_alpha_equation == self.blend_rgb_equation
+        """False when neither gpu.state nor the fragment stage can do the blend of the file, the draw then uses the closest preset."""
+        return self.blend_plan[2]
 
     @property
     def cull_mode(self):

@@ -434,16 +434,21 @@ def build_archive(context, content, session):
     atr_states = {}
     mtr_materials = {}
     if res_data is not None and res.RESType.MATERIAL_DATA in res_data:
-        # The .atr files are numbered like the materials, not like the meshes
+        # The game numbers the .atr files like MATERIAL_2 and the .mtr files like MATERIAL_1, MATERIAL_DATA has an order of its own
         materials_data = res_data[res.RESType.MATERIAL_DATA]
-        res_materials_key = list(materials_data)
+        data_names = [value['name'] for value in materials_data.values()]
 
-        for i in range(min(len(content.atr_data), len(res_materials_key))):
-            atr_states[materials_data[res_materials_key[i]]['name']] = content.atr_data[i]
+        def material_names(table_type):
+            names = list(res_data.get(table_type, {}).values())
+            return names if names and all(isinstance(name, str) for name in names) else data_names
 
-        # The .mtr files are numbered like the .atr files
-        for i in range(min(len(content.mtr_data), len(res_materials_key))):
-            mtr_materials[materials_data[res_materials_key[i]]['name']] = content.mtr_data[i]
+        atr_names = material_names(res.RESType.MATERIAL_2)
+        for i in range(min(len(content.atr_data), len(atr_names))):
+            atr_states[atr_names[i]] = content.atr_data[i]
+
+        mtr_names = material_names(res.RESType.MATERIAL_1)
+        for i in range(min(len(content.mtr_data), len(mtr_names))):
+            mtr_materials[mtr_names[i]] = content.mtr_data[i]
 
     # Make txps
     txps = []

@@ -234,9 +234,20 @@ def combiner_function(program):
     return f"vec4 studio_combiner({parameters}) {{\n{combiner.generate_glsl(program)}\n}}\n"
 
 
+# Source blend factors applied to the colour by the fragment stage, see state.SHADER_SOURCE_FACTORS
+# SRC_COLOR draws nothing where the alpha is 0: the game shows a hard edge on the alpha shape, not the whole quad (observed, no code path found)
+SOURCE_FACTOR_GLSL = {
+    "ZERO": "    result.rgb = vec3(0.0);\n",
+    "SRC_COLOR": "    if (result.a < 0.5 / 255.0) { discard; }\n    result.rgb = result.rgb * result.rgb;\n",
+    "ONE_MINUS_SRC_COLOR": "    result.rgb = result.rgb * (vec3(1.0) - result.rgb);\n",
+    "SRC_ALPHA": "    result.rgb = result.rgb * result.a;\n",
+    "ONE_MINUS_SRC_ALPHA": "    result.rgb = result.rgb * (1.0 - result.a);\n",
+}
+
+
 class ShaderOptions:
     def __init__(self, texture_units=(), fragment_lighting=False, light_count=0, alpha_test=False,
-                 alpha_func=None, gamma_correct=True, outline=False, display_output=False):
+                 alpha_func=None, gamma_correct=True, outline=False, display_output=False, source_factor=None):
         self.texture_units = tuple(sorted(texture_units))
         self.fragment_lighting = bool(fragment_lighting)
         self.light_count = int(light_count)
@@ -245,10 +256,11 @@ class ShaderOptions:
         self.gamma_correct = bool(gamma_correct)
         self.display_output = bool(display_output and gamma_correct)
         self.outline = bool(outline)
+        self.source_factor = source_factor
 
     def key(self):
         return (self.texture_units, self.fragment_lighting, self.light_count, self.alpha_test,
-                self.alpha_func, self.gamma_correct, self.outline, self.display_output)
+                self.alpha_func, self.gamma_correct, self.outline, self.display_output, self.source_factor)
 
 
 def vertex_source(options):
@@ -293,7 +305,7 @@ def fragment_source(program, options):
         discard = (f"    float alpha = result.a;\n"
                    f"    if (!({state.alpha_test_expression(options.alpha_func)})) {{ discard; }}\n")
 
-    output = output_line(options)
+    output = SOURCE_FACTOR_GLSL.get(options.source_factor, "") + output_line(options)
 
     body = "\n".join(samples)
     lines.append(f"""

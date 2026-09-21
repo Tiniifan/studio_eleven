@@ -430,6 +430,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                 alpha_func=bound.state.alpha_func,
                 gamma_correct=settings.gamma_correct,
                 display_output=self.display_output,
+                source_factor=bound.state.blend_source,
             )
 
             shader = shaders.get_shader(bound.program, options, bound.program_key)
