@@ -95,7 +95,8 @@ def _decode_pixels(image_format, data, pixel_count):
         b = value & 0x1F
         return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), opaque
     elif name == "LA8":
-        return px[:, 0], px[:, 0], px[:, 0], px[:, 1]
+        # The alpha is the low byte of the texel, the luminance the high byte
+        return px[:, 1], px[:, 1], px[:, 1], px[:, 0]
     elif name == "L8":
         return px[:, 0], px[:, 0], px[:, 0], opaque
     elif name == "A8":

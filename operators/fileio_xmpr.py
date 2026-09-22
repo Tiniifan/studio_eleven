@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty
 
 import bmesh
+import numpy as np
 
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
@@ -442,7 +443,39 @@ def migrate_image_samplers():
 
         del image["level5_texture"]
 
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None, sampler=None):
+def apply_bind_offsets(model_data, bones, bind_offsets):
+    """The vertices of a skinned mesh are in the bind pose of the game, Blender skins from the rest pose of the bones: move them there.
+
+    bind_offsets maps a bone name to rest_matrix @ inverse_bind; a vertex takes the blend of the offsets of its bones.
+    """
+    vertices = model_data["vertices"]
+    weights, bone_indices = vertices["weights"], vertices["bone_indices"]
+    offsets = {crc: np.array(bind_offsets[name]) for crc, name in bones.items() if name in bind_offsets}
+
+    if not offsets or not weights or not bone_indices:
+        return
+
+    identity = np.identity(4)
+    blended = np.empty((len(weights), 4, 4))
+    for vertex, (vertex_weights, vertex_bones) in enumerate(zip(weights, bone_indices)):
+        total = sum(vertex_weights)
+        matrix = np.zeros((4, 4))
+        for weight, crc in zip(vertex_weights, vertex_bones):
+            matrix += (weight / total if total > 0.0 else 0.0) * offsets.get(crc, identity)
+        blended[vertex] = matrix if total > 0.0 else identity
+
+    positions = np.array(vertices["positions"], dtype=float).reshape(-1, 3)
+    vertices["positions"] = (np.einsum('nij,nj->ni', blended[:, :3, :3], positions) + blended[:, :3, 3]).tolist()
+
+    if vertices["normals"]:
+        normals = np.einsum('nij,nj->ni', blended[:, :3, :3], np.array(vertices["normals"], dtype=float).reshape(-1, 3))
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        vertices["normals"] = (normals / np.where(lengths > 0.0, lengths, 1.0)).tolist()
+
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None, sampler=None, bind_offsets=None):
+    if bind_offsets and bones and model_data["node_table"] and model_data["single_bind"] is None:
+        apply_bind_offsets(model_data, bones, bind_offsets)
+
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
     

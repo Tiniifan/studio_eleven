@@ -16,7 +16,7 @@ def matrix_vector_multiply(matrix, vector):
             result[i] += matrix[i][j] * vector[j]
     return result
 
-def matrix_to_bytes(matrix, head, tail, local_matrix):
+def matrix_to_bytes(matrix, head, tail, local_matrix, bind_head=None):
     out = bytes()
     
     # Location
@@ -46,7 +46,7 @@ def matrix_to_bytes(matrix, head, tail, local_matrix):
             local_matrix_rotation_ordered[i][j] = local_matrix_rotation[j][i]                    
 
     # Location rotation * head
-    rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, head)
+    rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, head if bind_head is None else bind_head)
     for i in range(3):
         out += bytearray(struct.pack("f", float(rotated_head[i]*-1)))
 
@@ -105,8 +105,13 @@ def open(data):
         head = struct.unpack('<fff', stream.read(12))
         tail = tuple(tmh + h for tmh, h in zip(tail_min_head, head))
 
+        # The game reads floats 15..26 as the inverse bind matrix of the skinning: 3 columns, then the translation
+        inverse_bind = local_rotation_matrix.transposed().to_4x4()
+        inverse_bind.translation = Vector(rotation_time_head)
+
         bone['crc32'] = bone_id
         bone['parent_crc32'] = parent_index
+        bone['inverse_bind'] = inverse_bind
         bone['location'] = location
         bone['quaternion_rotation'] = quaternion_rotation
         bone['scale'] = scale
@@ -143,6 +148,8 @@ def write(armature, pose_bone):
     else:
         out += int(4).to_bytes(4, 'little')
     
-    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
+    # The inverse bind is the rest pose the vertices are in, not the current pose
+    bone = pose_bone.bone
+    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, bone.matrix_local, bone.head_local)
     
     return out

@@ -61,9 +61,14 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     new_bone = armature.data.edit_bones[-1]
     new_bone.name = bone_name
     
+    # Blender deletes a bone with no length, the game has nodes of scale 0 that an animation scales up
+    if (Vector(tail) - Vector(head)).length < 0.001:
+        tail = Vector(head) + Vector((0, 1, 0))
+    scale = tuple(component if abs(component) >= 0.001 else 0.001 for component in scale)
+
     new_bone.head = head
     new_bone.tail = tail
-    
+
     # Create a matrix based on the parent matrix if the parent exists
     if parent_name:
         # Get parent bone
@@ -77,9 +82,6 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
             # Create a rotation matrix from the quaternion
             rotation_matrix = relative_rotation.to_matrix().to_4x4()
             
-            # Check and adjust scale if necessary
-            if scale == (0, 0, 0):
-                scale = (0.00001, 0.00001, 0.00001)
 
             # Create a scaling matrix
             scale_matrix = Matrix.Scale(scale[0], 4, (1, 0, 0))
@@ -319,6 +321,9 @@ def build_archive(context, content, session):
     res_data = content.res_data
     armature = None
     libs = {}
+    inverse_binds = {}
+    rest_scales = {}
+    bind_offsets = {}
 
     # Make amature
     if len(content.bones_data) > 0 and res_data is not None:
@@ -363,8 +368,25 @@ def build_archive(context, content, session):
             else:
                 create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
 
+            inverse_binds[bone_name] = bones_data[i]['inverse_bind']
+            rest_scales[bone_name] = bone_scale
+
         # Set object mode
         bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Without a scale track a node keeps the scale of its rest pose
+        for bone_name, rest_scale in rest_scales.items():
+            pose_bone = armature.pose.bones.get(bone_name)
+            if pose_bone is not None:
+                pose_bone.scale = rest_scale
+
+        # A skinned mesh is bound to the inverse bind matrices of the file, which are not always the rest pose the bones are built from
+        for bone_name, inverse_bind in inverse_binds.items():
+            bone = armature.data.bones.get(bone_name)
+            if bone is not None:
+                offset = bone.matrix_local @ inverse_bind
+                if any(abs(offset[row][column] - (row == column)) > 0.01 for row in range(4) for column in range(4)):
+                    bind_offsets[bone_name] = offset
 
         # Apply 90-degree rotation around X axis
         armature.rotation_euler = (radians(90), 0, 0)
@@ -489,7 +511,8 @@ def build_archive(context, content, session):
 
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state,
-                      mtr_material=mtr_materials.get(mesh_data['material_name']), sampler=samplers.get(mesh_data['material_name']))
+                      mtr_material=mtr_materials.get(mesh_data['material_name']), sampler=samplers.get(mesh_data['material_name']),
+                      bind_offsets=bind_offsets)
 
         if armature is not None and content.sil_data:
             import_outlines(armature, content.sil_data, res_data.get(res.RESType.SHADING, {}))
