@@ -3,7 +3,7 @@ from io import BytesIO
 from enum import Enum
 from zlib import crc32
 from ...compression import *
-from ...animation import *
+from .tracks import *
 from . import animation_support
 
 def ReadString(byte_io):

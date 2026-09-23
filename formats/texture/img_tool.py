@@ -3,7 +3,6 @@ import numpy as np
 from io import BytesIO
 
 from io import BytesIO
-from ...compression import etc1
 from .pixel_formats.color import Color
 from .img_swizzle import *
 
@@ -149,10 +148,8 @@ def decode_image(tile, image_data, image_format, width, height, bit_depth):
     ms[empty] = 0
     ms = ms.reshape(-1)
     
-    if image_format.name == "ETC1A4":
-        ms = np.frombuffer(etc1.ETC1(True, width, height).decompress(ms), dtype=np.uint8)
-    elif image_format.name == "ETC1":
-        ms = np.frombuffer(etc1.ETC1(False, width, height).decompress(ms), dtype=np.uint8)
+    if image_format.name in ("ETC1", "ETC1A4"):
+        ms = np.frombuffer(image_format.decompress(ms, width, height), dtype=np.uint8)
     
     pixel_count = width * height
     

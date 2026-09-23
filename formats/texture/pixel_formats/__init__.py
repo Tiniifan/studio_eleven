@@ -1,5 +1,4 @@
 from .color import *
-from .rgb import *
 from .rgba4 import *
 from .rgba8 import *
 from .rbgr888 import *

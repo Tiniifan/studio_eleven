@@ -2,7 +2,7 @@ import zlib
 import struct
 import io
 
-from ...utils import *
+from ...vendor.trianglestrip.tristrip import stripify, triangulate
 from ...compression import lz10, compressor
 
 ##########################################

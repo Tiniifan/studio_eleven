@@ -9,7 +9,7 @@ import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 
-from ..animation import *
+from ..formats.animation.tracks import *
 from ..formats import  animation_manager, animation_support, res
 
 ##########################################
