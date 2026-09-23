@@ -4,7 +4,7 @@ from ...formats import atr, res
 from .. import game_material, project, render_defaults
 from . import combiner, resources, state
 
-STATUS = "the texture order follows what operators/fileio_xmpr.py builds at import"
+STATUS = "the texture units follow the texture slots of the material (Material > Level 5 > Textures)"
 
 MAX_TEXTURES = 4
 
@@ -89,8 +89,23 @@ def mip_texture(image):
     return _mip_textures[key]
 
 
+def texture_slots(material):
+    """The texture slots with an image, in the order of the exported texture list; None when the material has no slots yet."""
+    textures = getattr(material, "level5_textures", None) if material is not None else None
+
+    if textures is None or not textures.initialized:
+        return None
+
+    return [slot for slot in textures.slots if slot.image is not None][:MAX_TEXTURES]
+
+
 def material_images(material):
-    """The image nodes in the order the importer created them, which is the order of the texture list."""
+    """The image of each texture unit, None for a disabled slot (the game leaves its unit empty)."""
+    slots = texture_slots(material)
+
+    if slots is not None:
+        return [slot.image if slot.texture_mode != 'DISABLED' else None for slot in slots]
+
     if material is None or not material.use_nodes or material.node_tree is None:
         return []
 
@@ -154,12 +169,18 @@ def fade_of(material, fade_input):
     return node.inputs[fade_input[1]].default_value if node is not None else 1.0
 
 
-def sampler_of(material):
-    """(wrap S, wrap T, magnification | minification << 1, mipmap) of the Level5 image settings of a material."""
-    properties = getattr(material, "level5_image", None) if material is not None else None
-    sampler = res.properties_to_sampler(properties) if properties is not None else res.DEFAULT_SAMPLER
-
+def sampler_tuple(sampler):
     return (sampler.wrap_s, sampler.wrap_t, sampler.mag_filter | (sampler.min_filter << 1), sampler.mip_filter)
+
+
+def samplers_of(material):
+    """(wrap S, wrap T, magnification | minification << 1, mipmap) of each texture unit, from the texture slots."""
+    slots = texture_slots(material)
+
+    if slots is None:
+        return [sampler_tuple(res.DEFAULT_SAMPLER)] * MAX_TEXTURES
+
+    return [sampler_tuple(res.properties_to_sampler(slot)) for slot in slots]
 
 
 def material_state(material, file_version):
@@ -173,10 +194,10 @@ def material_state(material, file_version):
 class MaterialRender:
     """Everything one draw of one material needs, built once and cached until Blender reports a change."""
 
-    def __init__(self, engine_id, render_default, program, resolved_state, images, lighting, fade_input=None, sampler=None):
+    def __init__(self, engine_id, render_default, program, resolved_state, images, lighting, fade_input=None, samplers=None):
         self.engine_id = engine_id
         self.fade_input = fade_input
-        self.sampler = sampler or (2, 2, 3, 0)
+        self.samplers = samplers or []
         self.lighting = lighting
         self.render_default = render_default
         self.program = program
@@ -186,8 +207,11 @@ class MaterialRender:
         self._palette = None
         self._palette_read = False
 
+    def sampler(self, unit):
+        return self.samplers[unit] if unit < len(self.samplers) else sampler_tuple(res.DEFAULT_SAMPLER)
+
     def uses_mip(self, unit):
-        return bool(self.sampler[3]) and can_mip(self.images[unit])
+        return bool(self.sampler(unit)[3]) and can_mip(self.images[unit])
 
     def texture(self, unit):
         """GPU texture of a texture unit, it needs the GPU so it is created on the first draw."""
@@ -198,7 +222,7 @@ class MaterialRender:
 
     def sampler_uniform(self, unit):
         """The values of unf_frg_smp_N: the last one is the size of the image when the texture holds its mip chain."""
-        wrap_s, wrap_t, filters, _ = self.sampler
+        wrap_s, wrap_t, filters, _ = self.sampler(unit)
         size = self.images[unit].size
 
         return (wrap_s, wrap_t, filters, (size[0] | (size[1] << 16)) if self.uses_mip(unit) else 0)
@@ -210,7 +234,7 @@ class MaterialRender:
             self._palette_read = True
             program = self.program
             masked = program is not None and (program.palette_channels or (program.base is not None and program.base.palette_channels))
-            self._palette = palette_of(self.images[0]) if masked and self.images else None
+            self._palette = palette_of(self.images[0]) if masked and self.images and self.images[0] is not None else None
 
         return self._palette
 
@@ -218,7 +242,7 @@ class MaterialRender:
     def texture_units(self):
         if self.program is None:
             return ()
-        return tuple(unit for unit in sorted(self.program.texture_units) if unit < len(self.images))
+        return tuple(unit for unit in sorted(self.program.texture_units) if unit < len(self.images) and self.images[unit] is not None)
 
     @property
     def fragment_lighting(self):
@@ -280,10 +304,10 @@ def build(engine_id, mesh, material, file_version):
         render_default = render_default_of(engine_id, mesh)
         bound = MaterialRender(engine_id, render_default, program_of(engine_id, render_default),
                                material_state(material, file_version), material_images(material),
-                               game_material.material_of(material, engine_id), fade_input_of(material), sampler_of(material))
+                               game_material.material_of(material, engine_id), fade_input_of(material), samplers_of(material))
         _bound[key] = bound
 
     # Only a few properties, read on every draw so a change of the sampler shows without rebuilding the material
-    bound.sampler = sampler_of(material)
+    bound.samplers = samplers_of(material)
 
     return bound

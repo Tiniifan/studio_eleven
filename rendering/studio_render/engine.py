@@ -488,7 +488,7 @@ class StudioRenderEngine(bpy.types.RenderEngine):
             # a character merges its textures first
             base = bound.program.base if bound.program is not None else None
             if base is not None:
-                units = tuple(unit for unit in sorted(base.texture_units) if unit < len(bound.images))
+                units = tuple(unit for unit in sorted(base.texture_units) if unit < len(bound.images) and bound.images[unit] is not None)
             else:
                 units = (0,) if 0 in bound.texture_units else ()
             textured = bool(units)

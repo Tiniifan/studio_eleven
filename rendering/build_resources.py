@@ -69,7 +69,7 @@ def load_addon():
         package.__path__ = [ADDON_ROOT]
         sys.modules[PACKAGE] = package
 
-    names = ("compression.compressor", "formats.xpck", "formats.atr", "formats.cmb", "formats.lut", "rendering.glsl_format")
+    names = ("compression.compressor", "formats.archive.xpck", "formats.material.atr", "formats.material.cmb", "formats.material.lut", "rendering.glsl_format")
     return [importlib.import_module(f"{PACKAGE}.{name}") for name in names]
 
 

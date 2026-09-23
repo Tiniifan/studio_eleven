@@ -16,6 +16,7 @@ from mathutils import Matrix, Quaternion, Vector
 from ..formats import xmpr, atr, res
 from ..rendering import project as rendering_project
 from ..utils.mesh_faces_utils import MeshFaceUtils
+from .material_textures import apply_material_textures, suspend_updates
 
 ##########################################
 # CONST
@@ -28,18 +29,6 @@ MESH_TYPE_INT_TO_ENUM = {
 }
 
 MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
-
-TINT_NODE_PREFIX = "Level5 Tint"
-TINT_LAYER = "Tint"
-SAMPLER_NODE_PREFIX = "Level5 Sampler"
-SAMPLER_UV_NODE = f"{SAMPLER_NODE_PREFIX} Texture Coordinate"
-
-WRAP_OPERATIONS = {
-    'REPEAT': 'FRACT',
-    'MIRROR': 'PINGPONG',
-    'EXTEND': 'ADD',
-    'CLIP': 'ADD',
-}
 
 ##########################################
 # XMPR Function
@@ -229,220 +218,6 @@ def apply_atr_state(material, atr_state):
 
     material.show_transparent_back = not resolved["depth_write"]
 
-def get_sampler_node(tree, name, bl_idname, location):
-    node = tree.nodes.get(name)
-
-    if node is not None and node.bl_idname != bl_idname:
-        tree.nodes.remove(node)
-        node = None
-
-    if node is None:
-        node = tree.nodes.new(bl_idname)
-        node.name = name
-        node.label = name
-        node.location = location
-
-    return node
-
-def link_sampler_sockets(tree, output, target):
-    if len(target.links) == 1 and target.links[0].from_socket == output:
-        return
-
-    for link in list(target.links):
-        tree.links.remove(link)
-
-    tree.links.new(output, target)
-
-def get_uv_source(tree, texture_node, separate):
-    # An UV source wired by hand is kept, otherwise the UV output of one Texture Coordinate node feeds every texture
-    for link in separate.inputs[0].links:
-        return link.from_socket
-
-    for link in texture_node.inputs['Vector'].links:
-        if not link.from_node.name.startswith(SAMPLER_NODE_PREFIX):
-            return link.from_socket
-
-    uv_node = get_sampler_node(tree, SAMPLER_UV_NODE, 'ShaderNodeTexCoord', (texture_node.location.x - 900, texture_node.location.y))
-
-    return uv_node.outputs['UV']
-
-def get_image_extension(wrap_x, wrap_y):
-    # The Image Texture node has one extension for both axes, the wrapping itself is done on the coordinates
-    if 'CLIP' in (wrap_x, wrap_y):
-        return 'CLIP'
-
-    if wrap_x == wrap_y == 'REPEAT':
-        return 'REPEAT'
-
-    return 'EXTEND'
-
-def apply_texture_sampler(tree, texture_node, properties):
-    origin = texture_node.location
-    prefix = f"{SAMPLER_NODE_PREFIX} %s {texture_node.name}"
-
-    separate = get_sampler_node(tree, prefix % "Separate", 'ShaderNodeSeparateXYZ', (origin.x - 700, origin.y))
-    combine = get_sampler_node(tree, prefix % "Combine", 'ShaderNodeCombineXYZ', (origin.x - 200, origin.y))
-
-    link_sampler_sockets(tree, get_uv_source(tree, texture_node, separate), separate.inputs[0])
-
-    for index, (axis, mode) in enumerate((("X", properties.wrap_x), ("Y", properties.wrap_y))):
-        math = get_sampler_node(tree, prefix % f"Wrap {axis}", 'ShaderNodeMath', (origin.x - 450, origin.y - 150 * index))
-        math.operation = WRAP_OPERATIONS[mode]
-        math.use_clamp = mode == 'EXTEND'
-
-        if mode == 'MIRROR':
-            math.inputs[1].default_value = 1.0
-        elif mode in ('EXTEND', 'CLIP'):
-            math.inputs[1].default_value = 0.0
-
-        link_sampler_sockets(tree, separate.outputs[index], math.inputs[0])
-        link_sampler_sockets(tree, math.outputs[0], combine.inputs[index])
-
-    link_sampler_sockets(tree, separate.outputs[2], combine.inputs[2])
-    link_sampler_sockets(tree, combine.outputs[0], texture_node.inputs['Vector'])
-
-    # One interpolation for both filters: the node cannot tell magnification from minification, the close view is what shows
-    texture_node.interpolation = 'Closest' if properties.magnification == 'NEAREST' else 'Linear'
-    texture_node.extension = get_image_extension(properties.wrap_x, properties.wrap_y)
-
-    # An image nothing reads is wired to the base color of the shader
-    if not any(output.is_linked for output in texture_node.outputs):
-        bsdf = tree.nodes.get("Principled BSDF")
-
-        if bsdf is not None and not bsdf.inputs["Base Color"].is_linked:
-            tree.links.new(texture_node.outputs["Color"], bsdf.inputs["Base Color"])
-
-def get_material_meshes(material):
-    return [mesh for mesh in bpy.data.meshes if any(slot == material for slot in mesh.materials)]
-
-def get_tint_dependencies(mesh):
-    """What the combiner of the render default of a mesh takes from the texture and from the vertex color (Tint)."""
-    from ..rendering.studio_render import combiner, resources
-
-    if mesh.vertex_colors.get(TINT_LAYER) is None:
-        return None
-
-    engine_id = rendering_project.get_scene_engine_id(bpy.context.scene)
-    render_default = rendering_project.get_mesh_render_default(mesh, engine_id)
-    stages = resources.load_combiner(engine_id, render_default.data["combiner"]) if render_default is not None else None
-
-    if not stages:
-        return None
-
-    return combiner.input_dependencies(combiner.build_program(stages))
-
-def apply_material_tint(material):
-    """The combiner of the game multiplies by the vertex color (Tint), the shader graph of the material has to do the same."""
-    tree = material.node_tree
-    bsdf = tree.nodes.get("Principled BSDF") if tree else None
-    textures = [node for node in tree.nodes if node.type == 'TEX_IMAGE' and node.image is not None] if tree else []
-
-    if bsdf is None or not textures:
-        return
-
-    meshes = get_material_meshes(material)
-    dependencies = get_tint_dependencies(meshes[0]) if meshes else None
-    uses_tint = dependencies is not None and any(primary for _, primary in dependencies.values())
-
-    texture = textures[-1]
-    color_name = f"{TINT_NODE_PREFIX} Color"
-    alpha_name = f"{TINT_NODE_PREFIX} Alpha"
-    layer_name = f"{TINT_NODE_PREFIX} Attribute"
-    multiplier = tree.nodes.get("Alpha Multiplier")
-    has_alpha = multiplier is not None and multiplier.outputs[0].is_linked
-
-    if not uses_tint:
-        for name in (color_name, alpha_name, layer_name):
-            if name in tree.nodes:
-                tree.nodes.remove(tree.nodes[name])
-
-        # What the importer wired before the tint
-        if not bsdf.inputs["Base Color"].is_linked:
-            tree.links.new(texture.outputs["Color"], bsdf.inputs["Base Color"])
-        if has_alpha and not multiplier.inputs[0].is_linked:
-            tree.links.new(texture.outputs["Alpha"], multiplier.inputs[0])
-
-        return
-
-    rgb, alpha = dependencies["rgb"], dependencies["alpha"]
-    origin = texture.location
-
-    layer = get_sampler_node(tree, layer_name, 'ShaderNodeVertexColor', (origin.x, origin.y - 350))
-    layer.layer_name = TINT_LAYER
-
-    color = get_sampler_node(tree, color_name, 'ShaderNodeMixRGB', (origin.x + 250, origin.y - 250))
-    color.blend_type = 'MULTIPLY'
-    color.inputs[0].default_value = 1.0
-    color.inputs[1].default_value = (1.0, 1.0, 1.0, 1.0)
-    color.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
-
-    if rgb[0]:
-        link_sampler_sockets(tree, texture.outputs["Color"], color.inputs[1])
-    else:
-        for link in list(color.inputs[1].links):
-            tree.links.remove(link)
-
-    link_sampler_sockets(tree, layer.outputs["Color"], color.inputs[2])
-    link_sampler_sockets(tree, color.outputs[0], bsdf.inputs["Base Color"])
-
-    if has_alpha:
-        product = get_sampler_node(tree, alpha_name, 'ShaderNodeMath', (origin.x + 250, origin.y - 450))
-        product.operation = 'MULTIPLY'
-        product.inputs[0].default_value = 1.0
-        product.inputs[1].default_value = 1.0
-
-        if alpha[0]:
-            link_sampler_sockets(tree, texture.outputs["Alpha"], product.inputs[0])
-        else:
-            for link in list(product.inputs[0].links):
-                tree.links.remove(link)
-
-        if alpha[1]:
-            link_sampler_sockets(tree, layer.outputs["Alpha"], product.inputs[1])
-        else:
-            for link in list(product.inputs[1].links):
-                tree.links.remove(link)
-
-        link_sampler_sockets(tree, product.outputs[0], multiplier.inputs[0])
-
-def apply_material_sampler(material):
-    if material is None or not hasattr(material, "level5_image"):
-        return
-
-    if not material.use_nodes:
-        material.use_nodes = True
-
-    tree = material.node_tree
-
-    if tree is None:
-        return
-
-    for node in list(tree.nodes):
-        if node.type == 'TEX_IMAGE' and node.image is not None:
-            apply_texture_sampler(tree, node, material.level5_image)
-
-    apply_material_tint(material)
-
-def migrate_image_samplers():
-    # The sampler was stored on the Image (Image.level5_texture) before it moved to the Material
-    for image in bpy.data.images:
-        old = image.get("level5_texture")
-
-        if old is None:
-            continue
-
-        values = {field: old.get(field, getattr(res.DEFAULT_SAMPLER, field)) for field in res.SamplerState._fields}
-        sampler = res.SamplerState(**values)
-
-        for material in bpy.data.materials:
-            if material.node_tree is None or "level5_image" in material.keys():
-                continue
-
-            if any(node.type == 'TEX_IMAGE' and node.image == image for node in material.node_tree.nodes):
-                res.sampler_to_properties(sampler, material.level5_image)
-
-        del image["level5_texture"]
-
 def apply_bind_offsets(model_data, bones, bind_offsets):
     """The vertices of a skinned mesh are in the bind pose of the game, Blender skins from the rest pose of the bones: move them there.
 
@@ -472,7 +247,7 @@ def apply_bind_offsets(model_data, bones, bind_offsets):
         lengths = np.linalg.norm(normals, axis=1, keepdims=True)
         vertices["normals"] = (normals / np.where(lengths > 0.0, lengths, 1.0)).tolist()
 
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None, sampler=None, bind_offsets=None):
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, mtr_material=None, bind_offsets=None):
     if bind_offsets and bones and model_data["node_table"] and model_data["single_bind"] is None:
         apply_bind_offsets(model_data, bones, bind_offsets)
 
@@ -635,14 +410,9 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             bsdf.inputs["Emission"].default_value = (0, 0, 0, 1.0)
             links.new(bsdf.outputs["BSDF"], material_output.inputs["Surface"])
 
-        # Create texture node
-        texture_node = None
-        for texture in lib:
-            texture_node = material.node_tree.nodes.new('ShaderNodeTexImage')
-            texture_node.image = texture
+        images = [image for image, _, _, _ in lib]
 
-        # Link only the last texture to principled bsdf then to material
-        if texture_node:
+        if images:
             # Get or create the Mix Shader node
             mix_shader = nodes.get("Mix Shader")
             if not mix_shader:
@@ -665,17 +435,14 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
                 alpha_multiplier.location = (-300, 200)
                 alpha_multiplier.inputs[1].default_value = 1.0            
 
-            if texture.alpha_mode != "NONE":
+            if any(image.alpha_mode != "NONE" for image in images):
                 links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
-                links.new(texture_node.outputs["Alpha"], alpha_multiplier.inputs[0])           
                 material.show_transparent_back = True
             else:
                 links.new(mix_shader.outputs[0], material_output.inputs[0])
                 links.new(bsdf.outputs[0], mix_shader.inputs[1])
                 links.new(transparent_bsdf.outputs[0], mix_shader.inputs[2])           
                 material.show_transparent_back = False
-                
-            material.node_tree.links.new(texture_node.outputs[0], bsdf.inputs[0])
         
         # Set default material properties
         material.blend_method = 'BLEND'
@@ -695,11 +462,22 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         if mtr_material is not None:
             material.level5_mtr.data = json.dumps(mtr_material.to_dict())
 
-        res.sampler_to_properties(sampler or res.DEFAULT_SAMPLER, material.level5_image)
+        # The texture nodes are built from the texture slots of the material
+        with suspend_updates():
+            textures = material.level5_textures
+            textures.initialized = True
+
+            for image, sampler, pixel_format, texture_mode in lib:
+                slot = textures.slots.add()
+                slot.image = image
+                slot.pixel_format = pixel_format
+                slot.texture_mode = texture_mode
+                slot.show_expanded = False
+                res.sampler_to_properties(sampler, slot)
 
         # Add material
         mesh_obj.data.materials.append(material)
-        apply_material_sampler(material)
+        apply_material_textures(material)
     
     return mesh_obj
 

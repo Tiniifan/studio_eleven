@@ -6,7 +6,7 @@ MULT_ADD (0x6401) is a0*a1+a2 and ADD_MULT (0x6402) is clamp(a0+a1)*a2: the ship
 numbers 8 and 9, the constants are matched by how the shipped combiners use them (formats/cmb.py).
 """
 
-from ...formats.cmb import ALPHA_OPERANDS, COMBINE_FUNCTIONS, RGB_OPERANDS, SOURCES
+from ...formats.material.cmb import ALPHA_OPERANDS, COMBINE_FUNCTIONS, RGB_OPERANDS, SOURCES
 
 STATUS = "confirmed against gls/FRG000.frag"
 
