@@ -18,6 +18,7 @@ from .fileio_animation_manager import *
 from .fileio_xcma import *
 from .xpck_settings import *
 from ..formats.texture import pixel_formats
+from .material_textures import PIXEL_FORMAT_ITEMS, to_pixel_format
 from ..utils.properties import *
 from ..templates import *
 from ..controls import CameraElevenObject
@@ -168,6 +169,7 @@ class ArchiveContent:
         self.bones_data = []
         self.meshes_data = []
         self.textures_data = []
+        self.textures_format = []
         self.camera_data = {}
         self.camera_hashes = []
         self.animations_data = []
@@ -233,6 +235,7 @@ def read_archive(data, archive_name, session):
             content.bones_data.append(mbn.open(archive[file_name]))
         elif file_name.endswith('.xi'):
             content.textures_data.append(imgc.open(archive[file_name]))
+            content.textures_format.append(imgc.read_format(archive[file_name]))
         elif file_name.endswith('.cmr2'):
             camera = xcma.read(archive[file_name])
             content.camera_data[camera['hash']] = camera
@@ -354,13 +357,11 @@ def build_archive(context, content, session):
                     if has_alpha == False:
                         image.alpha_mode = 'NONE'
 
-                    if hasattr(image, "level5_texture"):
-                        res.sampler_to_properties(res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler'], image.level5_texture)
-
                     # Assign pixel data to the image
                     image.pixels.foreach_set(texture_data)
 
-                    images[texture_crc32] = image
+                    sampler = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler']
+                    images[texture_crc32] = (image, sampler, to_pixel_format(content.textures_format[i]))
 
         # Make materials
         if res.RESType.MATERIAL_DATA in res_data:
@@ -382,7 +383,9 @@ def build_archive(context, content, session):
                         texture_key = material_texture_crc32
 
                     if texture_key in images:
-                        material_textures.append(images[texture_key])
+                        texture_modes = material_value.get('texture_modes', [])
+                        texture_mode = texture_modes[i] if i < len(texture_modes) else 1
+                        material_textures.append(images[texture_key] + (res.TEXTURE_MODE_VALUE_TO_NAME.get(texture_mode, 'TEXTURE_2D'),))
 
                 libs[material_name] = material_textures
 
@@ -954,33 +957,62 @@ def fileio_write_xpck(operator, context, filepath, template, mode, **kwargs):
 
 class TexturePropertyGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
-    format: bpy.props.EnumProperty(
-        items=[
-            ('RGBA8', "RGBA8", "Make RGBA8 image"),
-            ('RGBA4', "RGBA4", "Make RGBA4 image"),
-            ('RBGR888', "RBGR888", "Make RBGR888 image"),
-            ('RGB565', "RGB565", "Make RGB565 image"),
-            #('L4', "L4", "Make L4 image"),
-            #('ETC1', "ETC1", "Make ETC1 image"),
-            #('ETC1A4', "ETC1A4", "Make ETC1A4 image"),
-        ],
-        default='RGBA8'
-    )
-    wrap_s: bpy.props.EnumProperty(name="Wrap X", items=res.WRAP_ITEMS, default='REPEAT')
-    wrap_t: bpy.props.EnumProperty(name="Wrap Y", items=res.WRAP_ITEMS, default='REPEAT')
-    mag_filter: bpy.props.EnumProperty(name="Magnification", items=res.FILTER_ITEMS, default='LINEAR')
-    min_filter: bpy.props.EnumProperty(name="Minification", items=res.FILTER_ITEMS, default='LINEAR')
-    mip_filter: bpy.props.EnumProperty(name="Mipmap", items=res.FILTER_ITEMS, default='NEAREST')
+    format: bpy.props.EnumProperty(name="Pixel Format", items=PIXEL_FORMAT_ITEMS, default='RGBA8')
+    wrap_x: bpy.props.EnumProperty(name="Wrap X", items=res.WRAP_ITEMS, default='REPEAT')
+    wrap_y: bpy.props.EnumProperty(name="Wrap Y", items=res.WRAP_ITEMS, default='REPEAT')
+    magnification: bpy.props.EnumProperty(name="Magnification", items=res.FILTER_ITEMS, default='LINEAR')
+    minification: bpy.props.EnumProperty(name="Minification", items=res.FILTER_ITEMS, default='LINEAR')
+    mipmap: bpy.props.EnumProperty(name="Mipmap", items=res.MIPMAP_ITEMS, default='DISABLED')
+    texture_mode: bpy.props.EnumProperty(name="Texture Mode", items=res.TEXTURE_MODE_ITEMS, default='TEXTURE_2D')
     mesh_name: bpy.props.StringProperty()
+    material_name: bpy.props.StringProperty()
 
-def fill_texture_sampler(item):
-    image = bpy.data.images.get(item.name)
+def add_texture_item(collection, image_name, mesh_name, material_name, slot=None):
+    item = collection.add()
+    item.name = image_name
+    item.mesh_name = mesh_name
+    item.material_name = material_name
 
-    if image is None or not hasattr(image, "level5_texture"):
-        return
+    # The textures that aren't in a texture slot are exported with the default settings
+    if slot is not None:
+        item.format = slot.pixel_format
+        item.texture_mode = slot.texture_mode
 
-    for name, _, _ in res.SAMPLER_FIELDS:
-        setattr(item, name, getattr(image.level5_texture, name))
+        for _, name, _, _ in res.SAMPLER_FIELDS:
+            setattr(item, name, getattr(slot, name))
+
+    return item
+
+def add_mesh_textures(collection, mesh):
+    for material_slot in mesh.material_slots:
+        material = material_slot.material
+        if material is None:
+            continue
+
+        if hasattr(material, 'level5_textures') and material.level5_textures.initialized:
+            # The textures of the Level 5 panel, in their order
+            for slot in material.level5_textures.slots:
+                if slot.image is not None:
+                    add_texture_item(collection, slot.image.name, mesh.name, material.name, slot)
+        elif material.use_nodes:
+            # If material uses nodes, iterate over the material nodes
+            for node in material.node_tree.nodes:
+                if node.type == 'TEX_IMAGE' and node.image:
+                    add_texture_item(collection, node.image.name, mesh.name, material.name)
+        else:
+            # If material doesn't use nodes, try to access the texture from the diffuse shader
+            if hasattr(material, 'texture_slots'):
+                if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
+                    texture = material.texture_slots[0].texture
+                    add_texture_item(collection, texture.name, mesh.name, material.name)
+            elif hasattr(material, 'brres'):
+                # Enter in berry bush situation
+                for texture_berry_bush in material.brres.textures:
+                    for image in texture_berry_bush.imgs:
+                        add_texture_item(collection, texture_berry_bush.name, mesh.name, material.name)
+
+def same_texture_settings(first, other):
+    return first.format == other.format and all(getattr(first, name) == getattr(other, name) for _, name, _, _ in res.SAMPLER_FIELDS)
 
 class TexprojPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Texproj name")
@@ -1333,25 +1365,22 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 meshes_props = self.get_exported_meshes_names(context)
 
             groupbox = layout.box()
+            groupbox.label(text="Edited in Material > Level 5 > Textures", icon='INFO')
             box = groupbox.box()
+            first_items = {}
 
             for texture_prop in self.texture_properties:
                 if texture_prop.mesh_name in meshes_props:
                     if texture_prop.name not in same_texture:
                         row = box.row(align=True)
-                        row.label(text=texture_prop.name)
-                        row.prop(texture_prop, "format", text="")
+                        row.label(text=texture_prop.name, icon='TEXTURE')
+                        row.label(text=texture_prop.bl_rna.properties['format'].enum_items[texture_prop.format].name)
 
-                        row = box.row(align=True)
-                        row.prop(texture_prop, "wrap_s", text="")
-                        row.prop(texture_prop, "wrap_t", text="")
-
-                        row = box.row(align=True)
-                        row.prop(texture_prop, "mag_filter", text="")
-                        row.prop(texture_prop, "min_filter", text="")
-                        row.prop(texture_prop, "mip_filter", text="")
-
+                        first_items[texture_prop.name] = texture_prop
                         same_texture.append(texture_prop.name)
+                    elif not same_texture_settings(first_items[texture_prop.name], texture_prop):
+                        box.label(text=f"{texture_prop.name} has other settings in {texture_prop.material_name}, "
+                                       f"the ones of {first_items[texture_prop.name].material_name} are exported", icon='ERROR')
 
     def draw_settings_armature(self, context, layout):
         """Armature selector of the scene mode, return the armature to configure."""
@@ -1564,39 +1593,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         item.name = uv_layer.name
 
             # Get textures from materials
-            for material_slot in mesh.material_slots:
-                material = material_slot.material
-                if material is None:
-                    continue
-
-                if material.use_nodes:
-                    # If material uses nodes, iterate over the material nodes
-                    for node in material.node_tree.nodes:
-                        if node.type == 'TEX_IMAGE' and node.image:
-                            texture_name = node.image.name
-                            item = self.texture_properties.add()
-                            item.name = texture_name
-                            item.mesh_name = mesh.name
-                            fill_texture_sampler(item)
-                else:
-                    # If material doesn't use nodes, try to access the texture from the diffuse shader
-                    if hasattr(material, 'texture_slots'):
-                        if material.texture_slots and material.texture_slots[0] and material.texture_slots[0].texture:
-                            texture = material.texture_slots[0].texture
-                            texture_name = texture.name
-                            item = self.texture_properties.add()
-                            item.name = texture_name
-                            item.mesh_name = mesh.name
-                            fill_texture_sampler(item)
-                    elif hasattr(material, 'brres'):
-                        # Enter in berry bush situation
-                        for texture_berry_bush in material.brres.textures:
-                            texture_name = texture_berry_bush.name
-                            for image in texture_berry_bush.imgs:
-                                item = self.texture_properties.add()
-                                item.name = texture_name
-                                item.mesh_name = mesh.name
-                                fill_texture_sampler(item)
+            add_mesh_textures(self.texture_properties, mesh)
 
         # Refresh the bones, texprojs, materials and outline meshes saved on the armatures
         for obj in bpy.data.objects:
@@ -1631,6 +1628,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         meshes = []
         textures = {}
         texprojs = []
+        linked_materials = set()
 
         # Get the meshes associated with the selected armature
         armature_meshes = [child for child in armature.children if child.type == 'MESH']
@@ -1656,14 +1654,19 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         if texture.mesh_name == mesh_prop.name
                     ]
 
-                    for texture in linked_textures:
-                        if texture.name not in textures:
-                            textures[texture.name] = {}
-                            textures[texture.name]['format'] = texture.format
-                            textures[texture.name]['sampler'] = res.properties_to_sampler(texture)
-                            textures[texture.name]['linked_material'] = []
+                    # The meshes sharing a material link its textures once, a texture can fill several slots of it
+                    if mesh_prop.material_name not in linked_materials:
+                        linked_materials.add(mesh_prop.material_name)
 
-                        textures[texture.name]['linked_material'].append(mesh_prop.material_name)
+                        for slot_index, texture in enumerate(linked_textures):
+                            if texture.name not in textures:
+                                textures[texture.name] = {}
+                                textures[texture.name]['format'] = texture.format
+                                textures[texture.name]['sampler'] = res.properties_to_sampler(texture)
+                                textures[texture.name]['linked_material'] = []
+
+                            texture_mode = res.TEXTURE_MODE_NAME_TO_VALUE[texture.texture_mode]
+                            textures[texture.name]['linked_material'].append((mesh_prop.material_name, slot_index, texture_mode))
 
                     meshes.append(mesh_prop)
 

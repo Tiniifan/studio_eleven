@@ -76,8 +76,8 @@ CLAMP, BORDER, REPEAT, MIRROR = 0, 1, 2, 3
 NEAREST, LINEAR = 0, 1
 
 WRAP_MODES = [
-    ("CLAMP", CLAMP),
-    ("BORDER", BORDER),
+    ("EXTEND", CLAMP),
+    ("CLIP", BORDER),
     ("REPEAT", REPEAT),
     ("MIRROR", MIRROR),
 ]
@@ -85,6 +85,11 @@ WRAP_MODES = [
 FILTER_MODES = [
     ("NEAREST", NEAREST),
     ("LINEAR", LINEAR),
+]
+
+MIPMAP_MODES = [
+    ("DISABLED", 0),
+    ("ENABLED", 1),
 ]
 
 
@@ -96,22 +101,24 @@ def _tables(entries):
 
 WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME = _tables(WRAP_MODES)
 FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME = _tables(FILTER_MODES)
+MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME = _tables(MIPMAP_MODES)
 
 SamplerState = namedtuple("SamplerState", "wrap_s wrap_t mag_filter min_filter mip_filter")
 
-# What today's export hardcoded, an untouched texture keeps writing 03 0A
-DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=NEAREST)
+# What an untouched texture writes: 03 0A (linear, no mipmap, repeat on both axes)
+DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=0)
 
+# (SamplerState field, Blender property, name -> value, value -> name)
 SAMPLER_FIELDS = (
-    ("wrap_s", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("wrap_t", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("mag_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("min_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("mip_filter", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("wrap_s", "wrap_x", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("wrap_t", "wrap_y", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
+    ("mag_filter", "magnification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("min_filter", "minification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
+    ("mip_filter", "mipmap", MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME),
 )
 
 
-# Both games read these two bytes the same way, whatever the container version is
+# wrapS = wrap & 3, wrapT = wrap >> 2; filter bit 0 magnification, bit 1 minification, bit 2 mipmap (sub_5485DC of IEGO)
 def decode_sampler(filter_byte, wrap_byte):
     return SamplerState(
         wrap_s=wrap_byte & 3,
@@ -132,21 +139,48 @@ def encode_sampler(state):
 ##########################################
 
 WRAP_ITEMS = [
-    ('CLAMP', "Clamp", "Outside the texture, the pixels of its edge are stretched out"),
-    ('BORDER', "Border", "Outside the texture, nothing is drawn"),
     ('REPEAT', "Repeat", "The texture is tiled over and over"),
+    ('EXTEND', "Extend", "Outside the texture, the pixels of its edge are stretched out"),
+    ('CLIP', "Clip", "Outside the texture, the border of the texture is drawn, which is transparent black"),
     ('MIRROR', "Mirror", "The texture is tiled, every other copy being flipped"),
 ]
 
 FILTER_ITEMS = [
-    ('NEAREST', "Nearest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
+    ('NEAREST', "Closest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
     ('LINEAR', "Linear", "Mix the pixels of the texture together, which makes it smooth"),
+]
+
+# The mode of a texture slot picks the texture type of its unit (unk_584E58 of IEGO -> bits 28-30 of GPUREG_TEXUNIT0_PARAM), everything but 2D only exists on unit 0
+TEXTURE_MODES = [
+    ("DISABLED", 0),
+    ("TEXTURE_2D", 1),
+    ("CUBE_MAP", 2),
+    ("SHADOW_2D", 3),
+    ("SHADOW_CUBE", 4),
+    ("PROJECTION", 5),
+]
+
+TEXTURE_MODE_NAME_TO_VALUE, TEXTURE_MODE_VALUE_TO_NAME = _tables(TEXTURE_MODES)
+UNIT_0_TEXTURE_MODES = {"CUBE_MAP", "SHADOW_2D", "SHADOW_CUBE", "PROJECTION"}
+
+TEXTURE_MODE_ITEMS = [
+    ('TEXTURE_2D', "2D Texture", "A usual texture, what every shipped material uses"),
+    ('CUBE_MAP', "Cube Map", "The texture is read as a cube map. Only the first texture slot can use it"),
+    ('SHADOW_2D', "Shadow 2D", "The texture is read as a shadow map. Only the first texture slot can use it"),
+    ('SHADOW_CUBE', "Shadow Cube", "The texture is read as a cube shadow map. Only the first texture slot can use it"),
+    ('PROJECTION', "Projection", "The texture is projected, its coordinates are divided like a slide projector. Only the first texture slot can use it"),
+    ('DISABLED', "Disabled", "The game ignores the texture, as if the slot was empty"),
+]
+
+MIPMAP_ITEMS = [
+    ('ENABLED', "Enabled", "The game switches to smaller copies of the texture with the distance"),
+    ('DISABLED', "Disabled", "The game always samples the full size texture"),
 ]
 
 
 def sampler_to_properties(state, properties):
-    for name, _, value_to_name in SAMPLER_FIELDS:
-        value = getattr(state, name)
+    for field, name, _, value_to_name in SAMPLER_FIELDS:
+        value = getattr(state, field)
 
         if value in value_to_name:
             setattr(properties, name, value_to_name[value])
@@ -155,9 +189,9 @@ def sampler_to_properties(state, properties):
 def properties_to_sampler(properties):
     values = {}
 
-    for name, name_to_value, _ in SAMPLER_FIELDS:
+    for field, name, name_to_value, _ in SAMPLER_FIELDS:
         value = getattr(properties, name, None)
-        values[name] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, name))
+        values[field] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, field))
 
     return SamplerState(**values)
 
@@ -254,17 +288,19 @@ def open_res(data):
                 elif RESType(headerTable.Type) == RESType.MATERIAL_DATA:
                     pos = 16
                     linked_textures = []
+                    texture_modes = []
                     max_texture = (headerTable.Length - 16) // 52
                     for k in range(max_texture):
-                        texture_hash = unpack_from("<I", section, pos)[0]
+                        texture_hash, texture_mode = unpack_from("<IB", section, pos)
                         pos += 4
-                        
+
                         if texture_hash != 0:
                             linked_textures.append(texture_hash)
-                        
+                            texture_modes.append(texture_mode)
+
                         pos += 48
-                    
-                    items[RESType(headerTable.Type)][obj_hash] = {"name": obj_name, "textures": linked_textures}
+
+                    items[RESType(headerTable.Type)][obj_hash] = {"name": obj_name, "textures": linked_textures, "texture_modes": texture_modes}
     
     read_section_table(data, header.MaterialTableOffset, header.MaterialTableCount)
     read_section_table(data, header.NodeOffset, header.NodeCount)
@@ -351,17 +387,19 @@ def open_xres(data):
             elif Type == RESType.MATERIAL_DATA:
                 pos = 16
                 linked_textures = []
+                texture_modes = []
                 max_texture = (type_length[Type] - 16) // 52
                 for k in range(max_texture):
-                    texture_hash = unpack_from("<I", section, pos)[0]
+                    texture_hash, texture_mode = unpack_from("<IB", section, pos)
                     pos += 4
                     
                     if texture_hash != 0:
                         linked_textures.append(texture_hash)
+                        texture_modes.append(texture_mode)
                     
                     pos += 48
                 
-                items[Type][obj_hash] = {"name": obj_name, "textures": linked_textures}
+                items[Type][obj_hash] = {"name": obj_name, "textures": linked_textures, "texture_modes": texture_modes}
             
             else:
                 items[Type][obj_hash] = obj_name
@@ -427,16 +465,15 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         # Add material data (texture used by the material)
         materials_info = {}
         
+        # linked_material holds (material name, slot index, texture mode): a texture can fill several slots of one material
         for texture_name, texture_data in textures.items():
-            for material_name in texture_data['linked_material']:
-                if material_name not in materials_info:
-                    materials_info[material_name] = []
-                
-                if texture_name not in materials_info[material_name]:
-                    materials_info[material_name].append(texture_name)
+            for material_name, slot_index, texture_mode in texture_data['linked_material']:
+                materials_info.setdefault(material_name, {})[slot_index] = (texture_name, texture_mode)
 
         materials_data = []
-        for material_name, material_info in materials_info.items():
+        for material_name, material_slots in materials_info.items():
+            material_info = [material_slots[slot_index] for slot_index in sorted(material_slots)]
+
             material_name_encoded = material_name.encode("shift-jis")
             material_name_crc32 = crc32(material_name_encoded).to_bytes(4, 'little')
             
@@ -447,8 +484,9 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
             
             for i in range(4):
                 if i < len(material_info):
-                    texture_name = material_info[i].encode("shift-jis")
-                    material_data += crc32(texture_name).to_bytes(4, 'little') + bytes.fromhex("010000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
+                    texture_name, texture_mode = material_info[i]
+                    material_data += crc32(texture_name.encode("shift-jis")).to_bytes(4, 'little') + int(texture_mode).to_bytes(4, 'little')
+                    material_data += bytes.fromhex("0000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                 else:
                     material_data += bytes.fromhex("00000000000000000000803F0000803F00000000000000000000803F00000000000000000000803F00000000000000000000803F")
                     

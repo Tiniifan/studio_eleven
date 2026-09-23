@@ -386,155 +386,124 @@ class Level5_Material_Panel(bpy.types.Panel):
         return context.material is not None
 
     def draw(self, context):
-        layout = self.layout
-        material = context.material
+        if not hasattr(context.material, "level5_atr"):
+            self.layout.label(text="No Level 5 properties found.")
 
-        if not hasattr(material, "level5_atr"):
-            layout.label(text="No Level 5 properties found.")
-            return
-
-        properties = material.level5_atr
-
-        box = layout.box()
-        box.label(text="Material Render:")
-        box.prop(properties, "panel_mode", expand=True)
-
-        if properties.panel_mode == 'SIMPLE':
-            box.prop(properties, "render_mode")
-            box.prop(properties, "double_sided")
-
-            if properties.render_mode == 'CUTOUT':
-                box.prop(properties, "alpha_cutoff")
-
-            return
-
-        group = box.box()
-        group.label(text="Culling & Depth:")
-        group.prop(properties, "cull")
-        group.prop(properties, "depth_test")
-        group.prop(properties, "depth_write")
-        group.prop(properties, "depth_func")
-
-        group = box.box()
-        group.label(text="Alpha Test:")
-        group.prop(properties, "alpha_test")
-        group.prop(properties, "alpha_func")
-        group.prop(properties, "alpha_ref")
-
-        group = box.box()
-        group.label(text="Blending:")
-        group.prop(properties, "blend")
-        group.prop(properties, "blend_rgb_equation")
-        group.prop(properties, "blend_rgb_source")
-        group.prop(properties, "blend_rgb_destination")
-        group.prop(properties, "blend_alpha_equation")
-        group.prop(properties, "blend_alpha_source")
-        group.prop(properties, "blend_alpha_destination")
-
-        group = box.box()
-        group.label(text="Color Mask:")
-        group.prop(properties, "color_mask_override", text="Write Color Mask")
-
-        if properties.color_mask_override:
-            row = group.row(align=True)
-            for index, channel in enumerate("RGBA"):
-                row.prop(properties, "color_mask", index=index, text=channel, toggle=True)
-
-        group = box.box()
-        group.label(text="Advanced:")
-        group.label(text="These additional options only apply to games using the V2 render format.", icon='INFO')
-        group.prop(properties, "depth_bias_enable")
-        group.prop(properties, "depth_bias")
-        group.prop(properties, "stencil_test")
-        group.prop(properties, "stencil_func")
-        group.prop(properties, "stencil_ref")
-        group.prop(properties, "stencil_compare_mask")
-        group.prop(properties, "stencil_write_mask")
-        group.prop(properties, "stencil_fail_op")
-        group.prop(properties, "stencil_zfail_op")
-        group.prop(properties, "stencil_zpass_op")
-
-def update_sampler_preview(self, context):
-    refresh_sampler_preview(self.id_data)
-
-class Level5TextureProperties(bpy.types.PropertyGroup):
-    wrap_s: EnumProperty(
-        name="Wrap X",
-        description="What is drawn left and right of the texture, once the UVs go past its edge",
-        items=res.WRAP_ITEMS,
-        default='REPEAT',
-        update=update_sampler_preview
-    )
-
-    wrap_t: EnumProperty(
-        name="Wrap Y",
-        description="What is drawn above and below the texture, once the UVs go past its edge",
-        items=res.WRAP_ITEMS,
-        default='REPEAT',
-        update=update_sampler_preview
-    )
-
-    mag_filter: EnumProperty(
-        name="Magnification",
-        description="How the texture is sampled when it is drawn bigger than it really is, up close",
-        items=res.FILTER_ITEMS,
-        default='LINEAR',
-        update=update_sampler_preview
-    )
-
-    min_filter: EnumProperty(
-        name="Minification",
-        description="How the texture is sampled when it is drawn smaller than it really is, far away",
-        items=res.FILTER_ITEMS,
-        default='LINEAR',
-        update=update_sampler_preview
-    )
-
-    mip_filter: EnumProperty(
-        name="Mipmap",
-        description="How the smaller copies of the texture the game switches to with the distance are mixed. "
-                    "Linear fades from one to the next, Nearest jumps straight to it",
-        items=res.FILTER_ITEMS,
-        default='NEAREST',
-        update=update_sampler_preview
-    )
-
-class Level5_Texture_Panel(bpy.types.Panel):
-    bl_label = "Level 5"
-    bl_idname = "NODE_PT_level5_texture_panel"
-    bl_space_type = 'NODE_EDITOR'
-    bl_region_type = 'UI'
-    bl_category = "Item"
+class Level5_Material_Render_Panel(bpy.types.Panel):
+    bl_label = "Material Render"
+    bl_idname = "MATERIAL_PT_level5_material_render_panel"
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "material"
+    bl_parent_id = "MATERIAL_PT_level5_render_state_panel"
+    bl_options = {'DEFAULT_CLOSED'}
 
     @classmethod
     def poll(cls, context):
-        if context.space_data is None or context.space_data.tree_type != 'ShaderNodeTree':
-            return False
-
-        node = context.active_node
-
-        return node is not None and node.type == 'TEX_IMAGE' and node.image is not None
+        return context.material is not None and hasattr(context.material, "level5_atr")
 
     def draw(self, context):
         layout = self.layout
-        image = context.active_node.image
+        properties = context.material.level5_atr
 
-        if not hasattr(image, "level5_texture"):
-            layout.label(text="No Level 5 properties found.")
-            return
+        layout.prop(properties, "panel_mode", expand=True)
 
-        properties = image.level5_texture
+        if properties.panel_mode == 'SIMPLE':
+            layout.prop(properties, "render_mode")
+            layout.prop(properties, "double_sided")
 
-        box = layout.box()
-        box.label(text="Wrap:")
-        box.prop(properties, "wrap_s")
-        box.prop(properties, "wrap_t")
+            if properties.render_mode == 'CUTOUT':
+                layout.prop(properties, "alpha_cutoff")
 
-        box = layout.box()
-        box.label(text="Filter:")
-        box.prop(properties, "mag_filter")
-        box.prop(properties, "min_filter")
-        box.prop(properties, "mip_filter")
+class Level5RenderStateSubPanel:
+    """The groups of the advanced mode, each one folds on its own inside Material Render."""
+    bl_space_type = 'PROPERTIES'
+    bl_region_type = 'WINDOW'
+    bl_context = "material"
+    bl_parent_id = "MATERIAL_PT_level5_material_render_panel"
+
+    @classmethod
+    def poll(cls, context):
+        material = context.material
+        return material is not None and hasattr(material, "level5_atr") and material.level5_atr.panel_mode == 'ADVANCED'
+
+class Level5_Culling_Depth_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
+    bl_label = "Culling & Depth"
+    bl_idname = "MATERIAL_PT_level5_culling_depth_panel"
+
+    def draw(self, context):
+        properties = context.material.level5_atr
+        self.layout.prop(properties, "cull")
+        self.layout.prop(properties, "depth_test")
+        self.layout.prop(properties, "depth_write")
+        self.layout.prop(properties, "depth_func")
+
+class Level5_Alpha_Test_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
+    bl_label = "Alpha Test"
+    bl_idname = "MATERIAL_PT_level5_alpha_test_panel"
+
+    def draw(self, context):
+        properties = context.material.level5_atr
+        self.layout.prop(properties, "alpha_test")
+        self.layout.prop(properties, "alpha_func")
+        self.layout.prop(properties, "alpha_ref")
+
+class Level5_Blending_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
+    bl_label = "Blending"
+    bl_idname = "MATERIAL_PT_level5_blending_panel"
+
+    def draw(self, context):
+        properties = context.material.level5_atr
+        self.layout.prop(properties, "blend")
+        self.layout.prop(properties, "blend_rgb_equation")
+        self.layout.prop(properties, "blend_rgb_source")
+        self.layout.prop(properties, "blend_rgb_destination")
+        self.layout.prop(properties, "blend_alpha_equation")
+        self.layout.prop(properties, "blend_alpha_source")
+        self.layout.prop(properties, "blend_alpha_destination")
+
+class Level5_Color_Mask_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
+    bl_label = "Color Mask"
+    bl_idname = "MATERIAL_PT_level5_color_mask_panel"
+
+    def draw(self, context):
+        properties = context.material.level5_atr
+        self.layout.prop(properties, "color_mask_override", text="Write Color Mask")
+
+        if properties.color_mask_override:
+            row = self.layout.row(align=True)
+            for index, channel in enumerate("RGBA"):
+                row.prop(properties, "color_mask", index=index, text=channel, toggle=True)
+
+class Level5_Advanced_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
+    bl_label = "Advanced"
+    bl_idname = "MATERIAL_PT_level5_advanced_panel"
+
+    def draw(self, context):
+        layout = self.layout
+        properties = context.material.level5_atr
+        layout.label(text="These additional options only apply to games using the V2 render format.", icon='INFO')
+        layout.prop(properties, "depth_bias_enable")
+        layout.prop(properties, "depth_bias")
+        layout.prop(properties, "stencil_test")
+        layout.prop(properties, "stencil_func")
+        layout.prop(properties, "stencil_ref")
+        layout.prop(properties, "stencil_compare_mask")
+        layout.prop(properties, "stencil_write_mask")
+        layout.prop(properties, "stencil_fail_op")
+        layout.prop(properties, "stencil_zfail_op")
+        layout.prop(properties, "stencil_zpass_op")
+
+# Parents first, the sub panels are drawn in this order
+MATERIAL_PANELS = (
+    Level5_Material_Panel,
+    Level5_Material_Render_Panel,
+    Level5_Culling_Depth_Panel,
+    Level5_Alpha_Test_Panel,
+    Level5_Blending_Panel,
+    Level5_Color_Mask_Panel,
+    Level5_Advanced_Panel,
+)
 
 class Level5_Menu_Export(bpy.types.Menu):
     bl_label = "Studio Eleven (.mtn, .mtm, .imm, .prm, .xc, .cmr2)"
@@ -600,13 +569,12 @@ def register():
 
     # Level 5 Material Panel
     bpy.utils.register_class(Level5MaterialProperties)
-    bpy.utils.register_class(Level5_Material_Panel)
+    for panel in MATERIAL_PANELS:
+        bpy.utils.register_class(panel)
     bpy.types.Material.level5_atr = bpy.props.PointerProperty(type=Level5MaterialProperties)
 
-    # Level 5 Texture Panel
-    bpy.utils.register_class(Level5TextureProperties)
-    bpy.utils.register_class(Level5_Texture_Panel)
-    bpy.types.Image.level5_texture = bpy.props.PointerProperty(type=Level5TextureProperties)
+    # Level 5 Textures Panel (a sub panel of the Material Panel)
+    register_material_textures()
 
     # Auto Collision Generator
     bpy.utils.register_class(OBJECT_OT_CreateFloorCollision)
@@ -646,15 +614,14 @@ def unregister():
     bpy.utils.unregister_class(Level5MeshProperties)
     del bpy.types.Mesh.level5_properties
 
+    # Level 5 Textures Panel (before its parent panel)
+    unregister_material_textures()
+
     # Level 5 Material Panel
-    bpy.utils.unregister_class(Level5_Material_Panel)
+    for panel in reversed(MATERIAL_PANELS):
+        bpy.utils.unregister_class(panel)
     bpy.utils.unregister_class(Level5MaterialProperties)
     del bpy.types.Material.level5_atr
-
-    # Level 5 Texture Panel
-    bpy.utils.unregister_class(Level5_Texture_Panel)
-    bpy.utils.unregister_class(Level5TextureProperties)
-    del bpy.types.Image.level5_texture
 
     # Auto Collision Generator
     bpy.utils.unregister_class(OBJECT_OT_CreateFloorCollision)

@@ -122,3 +122,9 @@ def open(file_content):
         return img_tool.decode_image(tile_data, image_data, header.ImageFormats[header.ImageFormat], header.Width, header.Height, header.BitDepth)
     else:
         return None
+
+def read_format(file_content):
+    header = IMGCSupport.Header(struct.unpack_from('I6xbxbbhhh8xi20xiii8x', file_content))
+    image_format = header.ImageFormats.get(header.ImageFormat)
+
+    return image_format.name if image_format is not None else None
