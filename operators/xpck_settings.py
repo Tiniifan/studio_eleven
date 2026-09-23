@@ -2,14 +2,16 @@ import bpy
 from bpy.props import StringProperty, BoolProperty, FloatProperty, IntProperty, EnumProperty, CollectionProperty, PointerProperty
 
 ##########################################
-# XPCK export settings stored on objects
-#
-# The xpck export menu edits these properties directly, so what is filled
-# by the import (animation names, split animations, cameras) or changed by
-# the user stays saved on the object and in the .blend file.
+# CONST
 ##########################################
 
-ANIMATION_TYPES = ('armature', 'uv', 'material')
+ANIMATION_TYPES = ['armature', 'uv', 'material']
+
+##########################################
+# Register class
+##########################################
+
+# The export menu edits these properties, what the import fills or the user changes stays saved in the .blend
 
 class Level5CheckItem(bpy.types.PropertyGroup):
     name: StringProperty()
@@ -76,7 +78,6 @@ class Level5Outline(bpy.types.PropertyGroup):
     meshes: CollectionProperty(type=Level5OutlineMesh)
 
 class Level5ArchiveSettings(bpy.types.PropertyGroup):
-    """Settings of the archive made from an armature."""
     archive_name: StringProperty(
         name="Archive Name",
         default="",
@@ -118,7 +119,6 @@ class Level5ArchiveSettings(bpy.types.PropertyGroup):
         return getattr(self, animation_type + "_animation")
 
 class Level5CameraSettings(bpy.types.PropertyGroup):
-    """Settings of a CameraEleven object."""
     export: BoolProperty(
         name="Export",
         default=True,
@@ -137,18 +137,35 @@ class Level5CameraSettings(bpy.types.PropertyGroup):
     )
 
 ##########################################
-# Helpers
+# XPCK Settings Function
 ##########################################
 
 def get_armature_meshes(armature):
-    return [child for child in armature.children if child.type == 'MESH']
+    meshes = []
+
+    for child in armature.children:
+        if child.type == 'MESH':
+            meshes.append(child)
+
+    return meshes
+
+def get_names(collection):
+    names = []
+
+    for item in collection:
+        names.append(item.name)
+
+    return names
 
 def sync_check_items(collection, names):
-    """Keep the collection equal to names, preserving the enabled state of existing items."""
-    if [item.name for item in collection] == names:
+    """Keep the collection equal to names, the existing items keep their enabled state."""
+    if get_names(collection) == names:
         return
 
-    states = {item.name: item.enabled for item in collection}
+    states = {}
+    for item in collection:
+        states[item.name] = item.enabled
+
     collection.clear()
 
     for name in names:
@@ -157,11 +174,11 @@ def sync_check_items(collection, names):
         item.enabled = states.get(name, True)
 
 def sync_archive_settings(armature):
-    """Refresh the bones, texprojs, materials and outline meshes lists of an armature."""
+    """Refresh the bones, texprojs, materials and outline meshes of an armature."""
     settings = armature.level5_archive
     meshes = get_armature_meshes(armature)
 
-    sync_check_items(settings.bones, [bone.name for bone in armature.data.bones])
+    sync_check_items(settings.bones, get_names(armature.data.bones))
 
     texprojs = []
     materials = []
@@ -177,15 +194,17 @@ def sync_archive_settings(armature):
     sync_check_items(settings.texprojs, texprojs)
     sync_check_items(settings.materials, materials)
 
-    mesh_names = [mesh.name for mesh in meshes]
     for outline in settings.outlines:
-        sync_outline_meshes(outline, mesh_names)
+        sync_outline_meshes(outline, get_names(meshes))
 
 def sync_outline_meshes(outline, mesh_names):
-    if [mesh.name for mesh in outline.meshes] == mesh_names:
+    if get_names(outline.meshes) == mesh_names:
         return
 
-    states = {mesh.name: mesh.assigned for mesh in outline.meshes}
+    states = {}
+    for mesh in outline.meshes:
+        states[mesh.name] = mesh.assigned
+
     outline.meshes.clear()
 
     for mesh_name in mesh_names:
@@ -195,17 +214,14 @@ def sync_outline_meshes(outline, mesh_names):
         item["assigned"] = states.get(mesh_name, False)
 
 def set_animation_settings(animation_settings, name, splits):
-    """Fill the animation settings from an imported animation.
-
-    splits: list of dicts with name, speed, frame_start, frame_end.
-    """
+    """Fill the animation settings from an imported animation (splits: name, speed, frame_start, frame_end)."""
     animation_settings.include = True
     animation_settings.name = name
     animation_settings.splits.clear()
 
-    for index, split in enumerate(splits):
+    for i, split in enumerate(splits):
         item = animation_settings.splits.add()
-        item.private_index = index
+        item.private_index = i
         item.name = split['name']
         item.speed = split.get('speed', 1.0)
         item.frame_start = split['frame_start']
@@ -216,10 +232,6 @@ def find_unused_index(used_indexes):
     while index in used_indexes:
         index += 1
     return index
-
-##########################################
-# Operators
-##########################################
 
 class ExportXC_AddAnimationItem(bpy.types.Operator):
     bl_idname = "export_xc.add_animation_item"
@@ -237,8 +249,12 @@ class ExportXC_AddAnimationItem(bpy.types.Operator):
         collection = obj.level5_archive.get_animation(self.animation_type).splits
         new_item = collection.add()
 
+        used_indexes = []
+        for item in collection:
+            used_indexes.append(item.private_index)
+
         # Find the first unused private_index
-        new_item.private_index = find_unused_index([item.private_index for item in collection])
+        new_item.private_index = find_unused_index(used_indexes)
 
         new_item.name = "splitted_animation_" + str(new_item.private_index)
         new_item.speed = 1
@@ -278,14 +294,18 @@ class ExportXC_AddOutlineItem(bpy.types.Operator):
         collection = armature.level5_archive.outlines
         new_item = collection.add()
 
+        used_indexes = []
+        for item in collection:
+            used_indexes.append(item.private_index)
+
         # Find the first unused private_index
-        new_item.private_index = find_unused_index([item.private_index for item in collection])
+        new_item.private_index = find_unused_index(used_indexes)
 
         new_item.name = "outline_" + str(new_item.private_index)
         new_item.thickness = 0.0025
         new_item.visibility = 0.5
 
-        sync_outline_meshes(new_item, [mesh.name for mesh in get_armature_meshes(armature)])
+        sync_outline_meshes(new_item, get_names(get_armature_meshes(armature)))
 
         return {'FINISHED'}
 
@@ -304,6 +324,10 @@ class ExportXC_RemoveOutlineItem(bpy.types.Operator):
 
         armature.level5_archive.outlines.remove(self.index)
         return {'FINISHED'}
+
+##########################################
+# Register
+##########################################
 
 classes = (
     Level5CheckItem,

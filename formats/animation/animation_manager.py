@@ -128,15 +128,21 @@ class AnimationManager:
             return 0
     
     def Save(self):
-        # XMTN V2 stores the bone count at 0x24, which shifts the name and the compressed data by 4 bytes
+        # XMTN V2 stores the bone count at 0x24, the name and the compressed data are 4 bytes further
         has_bone_count = self.Format == "XMTN" and self.Version != "V1"
-        
+
+        name_offset = 0x24
+        data_offset = 0x54
+        if has_bone_count:
+            name_offset = 0x28
+            data_offset = 0x58
+
         with BytesIO() as writer:
             header = animation_support.Header(
                 str(self.Format).encode(),
                 0x00,
-                0x28 if has_bone_count else 0x24,
-                0x58 if has_bone_count else 0x54,
+                name_offset,
+                data_offset,
                 0,
                 0,
                 0,
@@ -329,7 +335,10 @@ class AnimationManager:
                     
                     if len(track.Nodes) > 0:
                         for node in track.Nodes:
-                            nameInt = int(node.Name, 16) if isinstance(node.Name, str) else node.Name
+                            nameInt = node.Name
+                            if isinstance(node.Name, str):
+                                nameInt = int(node.Name, 16)
+
                             dataVectorSize = animation_support.TrackDataCount[track.Name]
                             dataByteSize = animation_support.TrackDataSizeV1[track.Name]
                             nodeHeader = animation_support.Node(

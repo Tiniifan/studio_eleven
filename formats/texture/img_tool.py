@@ -2,7 +2,6 @@ import struct
 import numpy as np
 from io import BytesIO
 
-from io import BytesIO
 from .pixel_formats.color import Color
 from .img_swizzle import *
 
@@ -60,8 +59,12 @@ def image_to_tile(px, height, width):
                 out += int(tiles.index(tile)).to_bytes(2, 'little')          
     return out
 
-# IMGC pixel decoders: (data as uint8 array reshaped per pixel) -> (r, g, b, a) integer arrays
-def _decode_pixels(image_format, data, pixel_count):
+##########################################
+# IMGC Decode Function
+##########################################
+
+# Returns the r, g, b and a arrays of every pixel
+def decode_pixels(image_format, data, pixel_count):
     name = image_format.name
     size = image_format.size
     
@@ -83,7 +86,8 @@ def _decode_pixels(image_format, data, pixel_count):
         value = (px[:, 1] << 8) | px[:, 0]
         return ((value >> 12) & 0xF) * 16, ((value >> 8) & 0xF) * 16, ((value >> 4) & 0xF) * 16, (value & 0xF) * 16
     elif name == "RGBA5551":
-        b1, b2 = px[:, 0], px[:, 1]
+        b1 = px[:, 0]
+        b2 = px[:, 1]
         return (b1 >> 3) & 0x1F, (b1 & 0x07) | ((b2 >> 6) & 0x03), (b2 >> 1) & 0x1F, (b2 & 0x01) * 255
     elif name == "RBGR888":
         return px[:, 2], px[:, 1], px[:, 0], opaque
@@ -110,7 +114,7 @@ def _decode_pixels(image_format, data, pixel_count):
     raise NotImplementedError(f"Image format {name} not implemented")
 
 def imgc_swizzle_points(width, height, point_count):
-    """Vectorized IMGCSwizzle.get_point_sequence(): z-order inside 8x8 tiles."""
+    # Same as IMGCSwizzle.get_point_sequence() for every point at once: z-order inside 8x8 tiles
     stride_width = (width + 0x7) & ~0x7
     width_in_tiles = (stride_width + 7) // 8
     
@@ -123,12 +127,14 @@ def imgc_swizzle_points(width, height, point_count):
     return x, y
 
 def decode_image(tile, image_data, image_format, width, height, bit_depth):
-    """Decode an IMGC image into a flat float32 RGBA array (bottom row first, like Blender pixels)."""
+    # The pixels are returned as floats, bottom row first like Blender
     table_value = bytes(tile)
     table_value = table_value[:len(table_value) // 2 * 2]
     
-    entry_length = 2 if struct.unpack('<H', table_value[:2])[0] != 0x453 else 4
-    entries = np.frombuffer(table_value, dtype='<u2' if entry_length == 2 else '<u4', count=len(table_value) // entry_length).astype(np.int64)
+    if struct.unpack('<H', table_value[:2])[0] != 0x453:
+        entries = np.frombuffer(table_value, dtype='<u2', count=len(table_value) // 2).astype(np.int64)
+    else:
+        entries = np.frombuffer(table_value, dtype='<u4', count=len(table_value) // 4).astype(np.int64)
     
     block_size = 64 * bit_depth // 8
     tex_value = np.frombuffer(bytes(image_data), dtype=np.uint8)
@@ -160,7 +166,7 @@ def decode_image(tile, image_data, image_format, width, height, bit_depth):
         padded[:len(ms)] = ms
         ms = padded
     
-    r, g, b, a = _decode_pixels(image_format, ms, pixel_count)
+    r, g, b, a = decode_pixels(image_format, ms, pixel_count)
     
     x, y = imgc_swizzle_points(width, height, pixel_count)
     inverted_y = height - 1 - y

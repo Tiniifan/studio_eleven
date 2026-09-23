@@ -62,7 +62,7 @@ def find_armatures_with_bones(bone_name_hashes):
     return armatures
 
 def get_rest_matrix(pose_bone):
-    """Rest matrix of a bone relative to its first deforming parent (the pose used before any animation is applied)."""
+    """Rest matrix relative to the first deforming parent, the pose used before any animation is applied."""
     parent = pose_bone.parent
     while parent and not parent.bone.use_deform:
         parent = parent.parent
@@ -106,7 +106,6 @@ def calculate_transformed_scale(rest_matrix, scale):
     return transformed_scale
 
 def get_track_type(track_name):
-    """Return 'bone', 'uv' or 'material' for a track name, None for unsupported tracks."""
     if track_name.startswith("Bone") and track_name != "BoneBool":
         return 'bone'
     elif track_name.startswith("UV"):
@@ -117,34 +116,59 @@ def get_track_type(track_name):
     return None
 
 def get_animation_track_types(animData):
-    return {get_track_type(track.Name) for track in animData.Tracks if track.Nodes and get_track_type(track.Name)}
+    track_types = set()
+
+    for track in animData.Tracks:
+        track_type = get_track_type(track.Name)
+
+        if track.Nodes and track_type:
+            track_types.add(track_type)
+
+    return track_types
 
 def get_animation_node_hashes(animData):
-    return {node.Name for track in animData.Tracks for node in track.Nodes}
+    node_hashes = set()
+
+    for track in animData.Tracks:
+        for node in track.Nodes:
+            node_hashes.add(node.Name)
+
+    return node_hashes
 
 def get_object_hashes(obj):
-    """Hashes an animation can target on an object: bones, single bind bones, UV modifiers and materials."""
-    names = set()
+    """Hashes an animation can move on an object: bones, single bind bones, UV modifiers and materials."""
+    names = []
     meshes = []
 
     if obj.type == 'ARMATURE':
-        names.update(bone.name for bone in obj.data.bones)
-        meshes = [child for child in obj.children if child.type == 'MESH']
+        for bone in obj.data.bones:
+            names.append(bone.name)
+
+        for child in obj.children:
+            if child.type == 'MESH':
+                meshes.append(child)
     elif obj.type == 'MESH':
-        meshes = [obj]
+        meshes.append(obj)
 
     for mesh in meshes:
         if mesh.parent_type == 'BONE' and mesh.parent_bone:
-            names.add(mesh.parent_bone)
+            names.append(mesh.parent_bone)
 
-        names.update(modifier.name for modifier in mesh.modifiers if modifier.type == 'UV_WARP')
+        for modifier in mesh.modifiers:
+            if modifier.type == 'UV_WARP':
+                names.append(modifier.name)
 
         for material in mesh.data.materials:
             if material:
-                names.add(material.name)
-                names.add(get_real_name(material.name))
+                names.append(material.name)
+                names.append(get_real_name(material.name))
 
-    return {crc32_hash(name) for name in names}
+    hashes = set()
+
+    for name in names:
+        hashes.add(crc32_hash(name))
+
+    return hashes
 
 def count_matching_nodes(node_hashes, obj):
     return len(node_hashes & get_object_hashes(obj))
@@ -246,7 +270,7 @@ def process_uv_track(track, node, action, meshes):
                     fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
 
 def process_material_track(track, node, action_name, meshes, material_actions):
-    """Process a track related to material, each material gets its own action."""
+    """Process a track related to material."""
     for mesh in meshes:
         if not findCrc32(node.Name, mesh=mesh):
             continue
@@ -309,16 +333,15 @@ def process_material_track(track, node, action_name, meshes, material_actions):
                     fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
 
 def create_animation(animData, active_obj, action=None, track_types=None, material_actions=None):
-    """Create the Blender animation of an AnimationManager object on an armature or a mesh.
+    """Create the actions of an animation, the files of the same animation share them."""
+    armature = None
+    mesh = None
 
-    action: existing action to fill (the files of the same animation share one action).
-    track_types: subset of {'bone', 'uv', 'material'} to import, everything by default.
-    material_actions: {material name: action} shared by the files of the same animation.
-    Return the action used for bones and UVs.
-    """
     # Define armature or mesh based on the type of the active object
-    armature = active_obj if active_obj.type == 'ARMATURE' else None
-    mesh = active_obj if active_obj.type == 'MESH' else None
+    if active_obj.type == 'ARMATURE':
+        armature = active_obj
+    elif active_obj.type == 'MESH':
+        mesh = active_obj
 
     # Ensure the active object is either an armature or a mesh
     if not armature and not mesh:
@@ -339,8 +362,18 @@ def create_animation(animData, active_obj, action=None, track_types=None, materi
         active_obj.animation_data_create()
     active_obj.animation_data.action = action
 
-    meshes = [child for child in armature.children if child.type == 'MESH'] if armature else [mesh]
-    bone_names = {crc32_hash(bone.name): bone.name for bone in armature.pose.bones} if armature else {}
+    meshes = []
+    bone_names = {}
+
+    if armature:
+        for child in armature.children:
+            if child.type == 'MESH':
+                meshes.append(child)
+
+        for bone in armature.pose.bones:
+            bone_names[crc32_hash(bone.name)] = bone.name
+    else:
+        meshes.append(mesh)
 
     # Loop through each track in animdata
     for track in animData.Tracks:

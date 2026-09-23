@@ -1,6 +1,6 @@
 import io
 import os
-import copy
+import zlib
 import traceback
 
 import bpy
@@ -18,7 +18,8 @@ from .fileio_animation_manager import *
 from .fileio_xcma import *
 from .xpck_settings import *
 from ..formats.texture import pixel_formats
-from .material_textures import PIXEL_FORMAT_ITEMS, to_pixel_format
+from .material_render import state_from_properties, default_state
+from .material_textures import PIXEL_FORMAT_ITEMS, WRAP_ITEMS, FILTER_ITEMS, MIPMAP_ITEMS, TEXTURE_MODE_ITEMS, SAMPLER_PROPERTIES, to_pixel_format, properties_to_sampler
 from ..utils.properties import *
 from ..templates import *
 from ..controls import CameraElevenObject
@@ -148,9 +149,9 @@ def setup_nla_tracks(mesh=None, armature=None):
 ##########################################
 
 SPLIT_EXTENSIONS = {
-    'armature': ('.mtninf', '.mtninf2'),
-    'uv': ('.imminf', '.imminf2'),
-    'material': ('.mtminf', '.mtminf2'),
+    'armature': ['.mtninf', '.mtninf2'],
+    'uv': ['.imminf', '.imminf2'],
+    'material': ['.mtminf', '.mtminf2'],
 }
 
 # Track type of an animation (bone, uv, material) -> settings type (armature, uv, material)
@@ -160,106 +161,124 @@ TRACK_TYPE_TO_ANIMATION_TYPE = {
     'material': 'material',
 }
 
-class ArchiveContent:
-    """Files read from one archive (nested archives are read into children)."""
+def new_archive_content(name):
+    """Files read from one archive, the archives inside it are read in children."""
+    content = {
+        "name": name,
+        "children": [],
+        "bones_data": [],
+        "meshes_data": [],
+        "textures_data": [],
+        "textures_format": [],
+        "camera_data": {},
+        "camera_hashes": [],
+        "animations_data": [],
+        "animations_split_data": {},
+        "txp_data": [],
+        "atr_data": [],
+        "res_data": None,
+    }
 
-    def __init__(self, name):
-        self.name = name
-        self.children = []
-        self.bones_data = []
-        self.meshes_data = []
-        self.textures_data = []
-        self.textures_format = []
-        self.camera_data = {}
-        self.camera_hashes = []
-        self.animations_data = []
-        self.animations_split_data = {animation_type: [] for animation_type in SPLIT_EXTENSIONS}
-        self.txp_data = []
-        self.atr_data = []
-        self.res_data = None
+    for animation_type in SPLIT_EXTENSIONS:
+        content["animations_split_data"][animation_type] = []
 
-class AnimationGroup:
-    """Files of one animation (mtn2, imm2, mtm2 sharing the same name) inside an archive."""
+    return content
 
-    def __init__(self, name, archive_name, armature_name):
-        self.name = name
-        self.archive_name = archive_name
-        self.armature_name = armature_name
-        self.animations = []
-        self.splits = {animation_type: [] for animation_type in SPLIT_EXTENSIONS}
+def new_animation_group(name, archive_name, armature_name):
+    """The mtn2, imm2 and mtm2 files that have the same animation name."""
+    group = {
+        "name": name,
+        "archive_name": archive_name,
+        "armature_name": armature_name,
+        "animations": [],
+        "splits": {},
+    }
 
-    @property
-    def track_types(self):
-        track_types = set()
-        for animation in self.animations:
-            track_types.update(get_animation_track_types(animation))
-        return track_types
+    for animation_type in SPLIT_EXTENSIONS:
+        group["splits"][animation_type] = []
 
-    @property
-    def node_hashes(self):
-        node_hashes = set()
-        for animation in self.animations:
-            node_hashes.update(get_animation_node_hashes(animation))
-        return node_hashes
+    return group
 
-    @property
-    def frame_count(self):
-        return max([animation.FrameCount for animation in self.animations], default=0)
+def get_group_track_types(group):
+    track_types = set()
 
-class XpckImportSession:
-    def __init__(self, report=None):
-        self.report = report
-        self.animation_groups = []
-        self.created_armatures = []
-        self.cameras = []
-        self.max_frame = 0
+    for animation in group["animations"]:
+        track_types.update(get_animation_track_types(animation))
 
-    def warning(self, message):
-        traceback.print_exc()
-        if self.report:
-            self.report({'WARNING'}, message)
+    return track_types
+
+def get_group_node_hashes(group):
+    node_hashes = set()
+
+    for animation in group["animations"]:
+        node_hashes.update(get_animation_node_hashes(animation))
+
+    return node_hashes
+
+def get_group_frame_count(group):
+    frame_count = 0
+
+    for animation in group["animations"]:
+        frame_count = max(frame_count, animation.FrameCount)
+
+    return frame_count
+
+def new_import_session(report = None):
+    return {
+        "report": report,
+        "animation_groups": [],
+        "created_armatures": [],
+        "cameras": [],
+        "max_frame": 0,
+    }
+
+def session_warning(session, message):
+    traceback.print_exc()
+
+    if session["report"]:
+        session["report"]({'WARNING'}, message)
 
 def read_archive(data, archive_name, session):
-    content = ArchiveContent(archive_name)
+    content = new_archive_content(archive_name)
     archive = xpck.open_file(data)
 
     for file_name in archive:
         if file_name.endswith('.xc') or file_name.endswith('.xv'):
             try:
-                content.children.append(read_archive(archive[file_name], file_name, session))
+                content["children"].append(read_archive(archive[file_name], file_name, session))
             except Exception as e:
-                session.warning(f"{archive_name}/{file_name} can't be read: {e}")
+                session_warning(session, f"{archive_name}/{file_name} can't be read: {e}")
         elif file_name.endswith('.prm'):
-            content.meshes_data.append(xmpr.open_xmpr(io.BytesIO(archive[file_name])))
+            content["meshes_data"].append(xmpr.open_xmpr(io.BytesIO(archive[file_name])))
         elif file_name.endswith('.mbn'):
-            content.bones_data.append(mbn.open(archive[file_name]))
+            content["bones_data"].append(mbn.open(archive[file_name]))
         elif file_name.endswith('.xi'):
-            content.textures_data.append(imgc.open(archive[file_name]))
-            content.textures_format.append(imgc.read_format(archive[file_name]))
+            content["textures_data"].append(imgc.open(archive[file_name]))
+            content["textures_format"].append(imgc.read_format(archive[file_name]))
         elif file_name.endswith('.cmr2'):
             camera = xcma.read(archive[file_name])
-            content.camera_data[camera['hash']] = camera
+            content["camera_data"][camera['hash']] = camera
         elif file_name.endswith('.mtn2') or file_name.endswith('.imm2') or file_name.endswith('.mtm2'):
-            content.animations_data.append(animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name])))
+            content["animations_data"].append(animation_manager.AnimationManager(reader=io.BytesIO(archive[file_name])))
         elif file_name == 'RES.bin':
-            content.res_data = res.open_res(data=archive[file_name])
+            content["res_data"] = res.open_res(data=archive[file_name])
         elif file_name == 'CMR.bin':
-            content.camera_hashes = xcmt.open(data=archive[file_name])
+            content["camera_hashes"] = xcmt.open(data=archive[file_name])
         elif file_name.endswith('.txp'):
-            content.txp_data.append(txp.read_txp(io.BytesIO(archive[file_name])))
+            content["txp_data"].append(txp.read_txp(io.BytesIO(archive[file_name])))
         elif file_name.endswith('.atr'):
             try:
-                content.atr_data.append(atr.read_atr(archive[file_name]))
+                content["atr_data"].append(atr.read_atr(archive[file_name]))
             except Exception as e:
-                session.warning(f"{archive_name}/{file_name} can't be read: {e}")
-                content.atr_data.append(None)
+                session_warning(session, f"{archive_name}/{file_name} can't be read: {e}")
+                content["atr_data"].append(None)
         else:
             for animation_type, extensions in SPLIT_EXTENSIONS.items():
                 if file_name.endswith(extensions[1]):
-                    content.animations_split_data[animation_type].extend(minf.open_minf2(archive[file_name]))
+                    content["animations_split_data"][animation_type].extend(minf.open_minf2(archive[file_name]))
                 elif file_name.endswith(extensions[0]):
                     split_anim_crc32, split_anim_name, anim_crc32, frame_start, frame_end, speed = minf.open_minf1(archive[file_name])
-                    content.animations_split_data[animation_type].append({
+                    content["animations_split_data"][animation_type].append({
                         'split_anim_crc32': split_anim_crc32,
                         'split_anim_name': split_anim_name,
                         'anim_crc32': anim_crc32,
@@ -272,20 +291,20 @@ def read_archive(data, archive_name, session):
 
 def build_archive(context, content, session):
     scene = context.scene
-    archive_name = os.path.splitext(content.name)[0]
+    archive_name = os.path.splitext(content["name"])[0]
 
-    for child in content.children:
+    for child in content["children"]:
         try:
             build_archive(context, child, session)
         except Exception as e:
-            session.warning(f"{child.name} can't be imported: {e}")
+            session_warning(session, f"{child['name']} can't be imported: {e}")
 
-    res_data = content.res_data
+    res_data = content["res_data"]
     armature = None
     libs = {}
 
     # Make amature
-    if len(content.bones_data) > 0 and res_data is not None:
+    if len(content["bones_data"]) > 0 and res_data is not None:
         # Create a new amature
         bpy.ops.object.armature_add(enter_editmode=False, align='WORLD', location=(0, 0, 0))
         armature = bpy.context.active_object
@@ -299,8 +318,8 @@ def build_archive(context, content, session):
         # Set object mode
         bpy.ops.object.mode_set(mode='OBJECT')
 
-        for i in range(len(content.bones_data)):
-            bones_data = content.bones_data
+        for i in range(len(content["bones_data"])):
+            bones_data = content["bones_data"]
 
             # Get bone information
             bone_crc32 = bones_data[i]['crc32']
@@ -334,21 +353,21 @@ def build_archive(context, content, session):
         armature.rotation_euler = (radians(90), 0, 0)
 
         # Remember the archive to export it back
-        armature.level5_archive.archive_name = content.name
+        armature.level5_archive.archive_name = content["name"]
         armature.level5_archive.export_mode = 'ARMATURE'
 
-        session.created_armatures.append(armature.name)
+        session["created_armatures"].append(armature.name)
 
     # Make libs
     if res_data is not None:
         images = {}
 
         # Make images
-        if len(content.textures_data) > 0:
+        if len(content["textures_data"]) > 0:
             res_textures_key = list(res_data[res.RESType.TEXTURE_DATA])
-            for i in range(len(content.textures_data)):
-                if content.textures_data[i] != None:
-                    texture_data, width, height, has_alpha = content.textures_data[i]
+            for i in range(len(content["textures_data"])):
+                if content["textures_data"][i] != None:
+                    texture_data, width, height, has_alpha = content["textures_data"][i]
                     texture_crc32 = res_textures_key[i]
                     texture_name = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['name']
 
@@ -360,14 +379,18 @@ def build_archive(context, content, session):
                     # Assign pixel data to the image
                     image.pixels.foreach_set(texture_data)
 
-                    sampler = res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler']
-                    images[texture_crc32] = (image, sampler, to_pixel_format(content.textures_format[i]))
+                    images[texture_crc32] = {
+                        "image": image,
+                        "sampler": res_data[res.RESType.TEXTURE_DATA][texture_crc32]['sampler'],
+                        "pixel_format": to_pixel_format(content["textures_format"][i]),
+                    }
 
         # Make materials
         if res.RESType.MATERIAL_DATA in res_data:
             for material_crc32, material_value in res_data[res.RESType.MATERIAL_DATA].items():
                 material_name = material_value['name']
                 material_textures_crc32 = material_value['textures']
+                texture_modes = material_value.get('texture_modes', [])
 
                 material_textures = []
 
@@ -383,9 +406,13 @@ def build_archive(context, content, session):
                         texture_key = material_texture_crc32
 
                     if texture_key in images:
-                        texture_modes = material_value.get('texture_modes', [])
-                        texture_mode = texture_modes[i] if i < len(texture_modes) else 1
-                        material_textures.append(images[texture_key] + (res.TEXTURE_MODE_VALUE_TO_NAME.get(texture_mode, 'TEXTURE_2D'),))
+                        texture_mode = 1
+                        if i < len(texture_modes):
+                            texture_mode = texture_modes[i]
+
+                        texture = dict(images[texture_key])
+                        texture["texture_mode"] = res.TEXTURE_MODE_VALUE_TO_NAME.get(texture_mode, 'TEXTURE_2D')
+                        material_textures.append(texture)
 
                 libs[material_name] = material_textures
 
@@ -396,16 +423,16 @@ def build_archive(context, content, session):
         materials_data = res_data[res.RESType.MATERIAL_DATA]
         res_materials_key = list(materials_data)
 
-        for i in range(min(len(content.atr_data), len(res_materials_key))):
-            atr_states[materials_data[res_materials_key[i]]['name']] = content.atr_data[i]
+        for i in range(min(len(content["atr_data"]), len(res_materials_key))):
+            atr_states[materials_data[res_materials_key[i]]['name']] = content["atr_data"][i]
 
     # Make txps
     txps = []
     if res_data is not None:
-        for i in range(len(content.txp_data)):
-            texproj_crc32 = content.txp_data[i][0]
-            material_crc32 = content.txp_data[i][1]
-            uv_map_index = content.txp_data[i][2]
+        for i in range(len(content["txp_data"])):
+            texproj_crc32 = content["txp_data"][i][0]
+            material_crc32 = content["txp_data"][i][1]
+            uv_map_index = content["txp_data"][i][2]
 
             if texproj_crc32 in res_data[res.RESType.TEXPROJ]:
                 if material_crc32 in res_data[res.RESType.MATERIAL_DATA]:
@@ -414,10 +441,10 @@ def build_archive(context, content, session):
                     txps.append([textproj_name, material_name, uv_map_index])
 
     # Make meshes
-    if len(content.meshes_data) > 0 and res_data is not None:
-        for i in range(len(content.meshes_data)):
+    if len(content["meshes_data"]) > 0 and res_data is not None:
+        for i in range(len(content["meshes_data"])):
             # Get mesh
-            mesh_data = content.meshes_data[i]
+            mesh_data = content["meshes_data"][i]
 
             # Get lib
             lib = None
@@ -439,19 +466,23 @@ def build_archive(context, content, session):
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state)
 
-    # Group the animations by name, the imported animations are applied from the animation menu
+    # Group the animations by name, the animation menu applies them
     groups = {}
-    for animation_data in content.animations_data:
+    for animation_data in content["animations_data"]:
         name = animation_data.AnimationName
 
         if name not in groups:
-            group = AnimationGroup(name, content.name, armature.name if armature else None)
+            armature_name = None
+            if armature:
+                armature_name = armature.name
+
+            group = new_animation_group(name, content["name"], armature_name)
 
             animation_crc32 = zlib.crc32(name.encode("shift-jis"))
-            for animation_type, splits_data in content.animations_split_data.items():
+            for animation_type, splits_data in content["animations_split_data"].items():
                 for split_data in splits_data:
                     if split_data['anim_crc32'] == animation_crc32:
-                        group.splits[animation_type].append({
+                        group["splits"][animation_type].append({
                             'name': split_data['split_anim_name'],
                             'speed': split_data.get('speed', 1.0),
                             'frame_start': split_data['frame_start'],
@@ -459,34 +490,34 @@ def build_archive(context, content, session):
                         })
 
             groups[name] = group
-            session.animation_groups.append(group)
+            session["animation_groups"].append(group)
 
-        groups[name].animations.append(animation_data)
+        groups[name]["animations"].append(animation_data)
 
     # Make camera
-    if len(content.camera_data) > 0 and len(content.camera_hashes):
+    if len(content["camera_data"]) > 0 and len(content["camera_hashes"]):
         frame = 0
         index = 0
-        for camera_hash in content.camera_hashes:
-            if camera_hash in content.camera_data:
-                camera = content.camera_data[camera_hash]
+        for camera_hash in content["camera_hashes"]:
+            if camera_hash in content["camera_data"]:
+                camera = content["camera_data"][camera_hash]
                 camera_name = archive_name.split('_')[0] + "_" + str(index).rjust(3, '0')
                 level5_camera = create_camera(frame, camera_name, camera['values'])
-                set_camera_settings(level5_camera, camera, content.name)
+                set_camera_settings(level5_camera, camera, content["name"])
 
                 # Switch to this camera when the timeline reaches it
                 marker = scene.timeline_markers.new(level5_camera.camera_obj.name, frame=frame)
                 marker.camera = level5_camera.camera_obj
-                session.cameras.append(level5_camera.camera_obj.name)
+                session["cameras"].append(level5_camera.camera_obj.name)
 
                 frame += get_last_frame(camera['values'])
                 index += 1
 
-        session.max_frame = max(session.max_frame, frame)
+        session["max_frame"] = max(session["max_frame"], frame)
 
 def fileio_open_xpck(context, filepath, report=None):
-    """Import the meshes, armatures and cameras of an archive and return the session with its animations."""
-    session = XpckImportSession(report)
+    """Import the meshes, armatures and cameras of an archive, the animations are kept in the session."""
+    session = new_import_session(report)
 
     if context.object and context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -496,24 +527,21 @@ def fileio_open_xpck(context, filepath, report=None):
 
     scene = context.scene
 
-    if session.cameras:
-        scene.camera = bpy.data.objects.get(session.cameras[0])
+    if session["cameras"]:
+        scene.camera = bpy.data.objects.get(session["cameras"][0])
         scene.frame_set(0)
 
-    if session.max_frame > 0:
-        scene.frame_end = max(1, session.max_frame)
+    if session["max_frame"] > 0:
+        scene.frame_end = max(1, session["max_frame"])
 
     return session
 
 def find_best_armature(context, group, used_armatures=()):
-    """Armature which matches the most animated nodes (bones, single bind bones, texprojs, materials).
+    """Armature that has the most animated nodes, on a tie one that isn't used yet (characters with the same skeleton)."""
+    if group["armature_name"] and group["armature_name"] in bpy.data.objects:
+        return group["armature_name"]
 
-    On a tie, an armature which isn't in used_armatures is preferred (characters sharing the same skeleton).
-    """
-    if group.armature_name and group.armature_name in bpy.data.objects:
-        return group.armature_name
-
-    node_hashes = group.node_hashes
+    node_hashes = get_group_node_hashes(group)
     best_name = 'NONE'
     best_score = (0, False)
 
@@ -521,6 +549,7 @@ def find_best_armature(context, group, used_armatures=()):
         if obj.type == 'ARMATURE':
             count = count_matching_nodes(node_hashes, obj)
             score = (count, obj.name not in used_armatures)
+
             if count > 0 and score > best_score:
                 best_name = obj.name
                 best_score = score
@@ -528,17 +557,16 @@ def find_best_armature(context, group, used_armatures=()):
     return best_name
 
 def apply_animation_group(context, group, armature, track_types):
-    """Create the actions of an animation group on an armature and return (actions, assignments)."""
     action = None
     material_actions = {}
 
-    for animation in group.animations:
+    for animation in group["animations"]:
         action = create_animation(animation, armature, action=action, track_types=track_types, material_actions=material_actions)
 
     # Split animations
     if 'bone' in track_types:
-        for split_animation in group.splits['armature']:
-            new_animation = bpy.data.actions.new(name=group.name + '_' + split_animation['name'])
+        for split_animation in group["splits"]['armature']:
+            new_animation = bpy.data.actions.new(name=group["name"] + '_' + split_animation['name'])
 
             # Specify the start and end of the new animation
             start_frame = split_animation['frame_start']
@@ -554,32 +582,40 @@ def apply_animation_group(context, group, armature, track_types):
 
     # Remember which datablocks use the new actions
     assignments = [(armature, action)]
+
     for child in armature.children:
         if child.type == 'MESH' and child.animation_data and child.animation_data.action == action:
             assignments.append((child, action))
+
+    actions = [action]
+
     for material_name, material_action in material_actions.items():
         assignments.append((bpy.data.materials[material_name], material_action))
+        actions.append(material_action)
 
-    return [action] + list(material_actions.values()), assignments
+    return actions, assignments
 
 def apply_animation_imports(context, session, choices):
     """choices: list of (group, armature name, track types) chosen in the animation menu."""
     scene = context.scene
     first_assignments = {}
     actions_by_armature = {}
-    max_frame = session.max_frame
+    max_frame = session["max_frame"]
 
     for group, armature_name, track_types in choices:
         armature = bpy.data.objects.get(armature_name)
-        track_types = set(track_types) & group.track_types
+        track_types = set(track_types) & get_group_track_types(group)
 
         if armature is None or armature.type != 'ARMATURE' or not track_types:
             continue
 
         actions, assignments = apply_animation_group(context, group, armature, track_types)
-        max_frame = max(max_frame, group.frame_count)
+        max_frame = max(max_frame, get_group_frame_count(group))
 
-        actions_by_armature.setdefault(armature.name, []).extend(actions)
+        if armature.name not in actions_by_armature:
+            actions_by_armature[armature.name] = []
+
+        actions_by_armature[armature.name].extend(actions)
 
         # The first animation of an armature stays active and fills the export settings
         if armature.name in first_assignments:
@@ -590,21 +626,29 @@ def apply_animation_imports(context, session, choices):
         settings = armature.level5_archive
         for track_type, animation_type in TRACK_TYPE_TO_ANIMATION_TYPE.items():
             if track_type in track_types:
-                set_animation_settings(settings.get_animation(animation_type), group.name, group.splits[animation_type])
+                set_animation_settings(settings.get_animation(animation_type), group["name"], group["splits"][animation_type])
             else:
                 settings.get_animation(animation_type).include = False
 
-        if group.armature_name != armature.name:
+        if group["armature_name"] != armature.name:
             # Animation of another archive: export it back as an animation archive
-            settings.archive_name = group.archive_name
+            settings.archive_name = group["archive_name"]
             settings.export_mode = 'ANIMATION'
 
         sync_archive_settings(armature)
 
     # Several animations on the same armature: keep them all but play the first one
     for armature_name, actions in actions_by_armature.items():
-        first_actions = {action for id_data, action in first_assignments[armature_name]}
-        if any(action not in first_actions for action in actions):
+        first_actions = []
+        for id_data, action in first_assignments[armature_name]:
+            first_actions.append(action)
+
+        keep_actions = False
+        for action in actions:
+            if action not in first_actions:
+                keep_actions = True
+
+        if keep_actions:
             for action in actions:
                 action.use_fake_user = True
 
@@ -619,16 +663,20 @@ def apply_animation_imports(context, session, choices):
     scene.frame_set(scene.frame_current)
 
 # Animation groups of the last read archive, used by the animation menu
-_import_session = None
-_armature_enum_items = []
+import_session = None
+armature_enum_items = []
 
 def import_armature_items(self, context):
-    global _armature_enum_items
+    global armature_enum_items
 
-    _armature_enum_items = [('NONE', "None", "Don't import this animation")]
-    _armature_enum_items += [(obj.name, obj.name, "") for obj in context.scene.objects if obj.type == 'ARMATURE']
+    # Blender needs the items to stay alive, so they are kept in a global
+    armature_enum_items = [('NONE', "None", "Don't import this animation")]
 
-    return _armature_enum_items
+    for obj in context.scene.objects:
+        if obj.type == 'ARMATURE':
+            armature_enum_items.append((obj.name, obj.name, ""))
+
+    return armature_enum_items
 
 class ImportAnimationChoice(bpy.types.PropertyGroup):
     name: StringProperty()
@@ -643,9 +691,9 @@ class ImportAnimationChoice(bpy.types.PropertyGroup):
     armature: EnumProperty(name="Armature", description="Armature which receives the animation", items=import_armature_items)
 
 class ImportXC_ChooseAnimations(bpy.types.Operator):
-    """Choose the armature of each animation found in the archive"""
     bl_idname = "import_xc.choose_animations"
     bl_label = "Studio Eleven - Import Animations"
+    bl_description = "Choose the armature of each animation found in the archive"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     animations: CollectionProperty(type=ImportAnimationChoice)
@@ -653,18 +701,18 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
     def invoke(self, context, event):
         self.animations.clear()
 
-        if _import_session is None:
+        if import_session is None:
             return {'CANCELLED'}
 
         used_armatures = set()
 
-        for index, group in enumerate(_import_session.animation_groups):
-            track_types = group.track_types
+        for i, group in enumerate(import_session["animation_groups"]):
+            track_types = get_group_track_types(group)
 
             item = self.animations.add()
-            item.name = group.name
-            item.archive_name = group.archive_name
-            item.group_index = index
+            item.name = group["name"]
+            item.archive_name = group["archive_name"]
+            item.group_index = i
             item.has_bone = 'bone' in track_types
             item.has_uv = 'uv' in track_types
             item.has_material = 'material' in track_types
@@ -676,7 +724,7 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
     def draw(self, context):
         layout = self.layout
 
-        if not self.animations:
+        if len(self.animations) == 0:
             layout.label(text="No animation found")
 
         for item in self.animations:
@@ -686,7 +734,7 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
             row = box.row()
 
             checkboxes = row.row(align=True)
-            for track_type in ('bone', 'uv', 'material'):
+            for track_type in ['bone', 'uv', 'material']:
                 sub = checkboxes.row(align=True)
                 sub.enabled = getattr(item, "has_" + track_type)
                 sub.prop(item, "import_" + track_type)
@@ -694,7 +742,7 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
             row.prop(item, "armature", text="")
 
     def execute(self, context):
-        if _import_session is None:
+        if import_session is None:
             return {'CANCELLED'}
 
         if context.object and context.object.mode != 'OBJECT':
@@ -705,10 +753,14 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
             if item.armature == 'NONE':
                 continue
 
-            track_types = [track_type for track_type in ('bone', 'uv', 'material') if getattr(item, "has_" + track_type) and getattr(item, "import_" + track_type)]
-            choices.append((_import_session.animation_groups[item.group_index], item.armature, track_types))
+            track_types = []
+            for track_type in ['bone', 'uv', 'material']:
+                if getattr(item, "has_" + track_type) and getattr(item, "import_" + track_type):
+                    track_types.append(track_type)
 
-        apply_animation_imports(context, _import_session, choices)
+            choices.append((import_session["animation_groups"][item.group_index], item.armature, track_types))
+
+        apply_animation_imports(context, import_session, choices)
 
         return {'FINISHED'}
 
@@ -721,13 +773,15 @@ class XpckExportError(Exception):
 
 def make_atr(material_name, template):
     material = bpy.data.materials.get(material_name)
-    properties = getattr(material, "level5_atr", None) if material else None
-    state = atr.default_state() if properties is None else atr.state_from_properties(properties)
+
+    if material is not None and hasattr(material, "level5_atr"):
+        state = state_from_properties(material.level5_atr)
+    else:
+        state = default_state()
 
     return atr.write_atr(state, template[0].file_version)
 
 def make_xpck_files(operator, context, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
-    """Return the files ({name: bytes}) of an archive."""
     xmprs = []
     atrs = []
     mtrs = []
@@ -762,7 +816,10 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     imminfs = []
     mtminfs = []
 
-    anim_version = "V1" if template[0].file_version == 1 else "V2"
+    anim_version = "V2"
+    if template[0].file_version == 1:
+        anim_version = "V1"
+
     for animation_type, animation_data in animations.items():
         if animation_type == 'armature':
             mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version))
@@ -788,10 +845,14 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
         for outline in outlines:
             xcsls.append(xcsl.write(outline['name'], outline['meshes'], outline['thickness'], outline['visibility'], template[0].outline_mesh_data, template[0].cmb1, template[0].cmb2))
 
-    # Make cameras (Inazuma Eleven Go uses the first camera format)
+    # Make cameras
     xcmas = []
     cameras_sorted = []
-    camera_version = "V1" if template[0].file_version == 1 else "V2"
+
+    camera_version = "V2"
+    if template[0].file_version == 1:
+        camera_version = "V1"
+
     if cameras:
         # Sort camera by frame start
         cameras_sorted = sorted(cameras, key=lambda cam_object: get_first_frame(cam_object[2]))
@@ -958,12 +1019,12 @@ def fileio_write_xpck(operator, context, filepath, template, mode, **kwargs):
 class TexturePropertyGroup(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty()
     format: bpy.props.EnumProperty(name="Pixel Format", items=PIXEL_FORMAT_ITEMS, default='RGBA8')
-    wrap_x: bpy.props.EnumProperty(name="Wrap X", items=res.WRAP_ITEMS, default='REPEAT')
-    wrap_y: bpy.props.EnumProperty(name="Wrap Y", items=res.WRAP_ITEMS, default='REPEAT')
-    magnification: bpy.props.EnumProperty(name="Magnification", items=res.FILTER_ITEMS, default='LINEAR')
-    minification: bpy.props.EnumProperty(name="Minification", items=res.FILTER_ITEMS, default='LINEAR')
-    mipmap: bpy.props.EnumProperty(name="Mipmap", items=res.MIPMAP_ITEMS, default='DISABLED')
-    texture_mode: bpy.props.EnumProperty(name="Texture Mode", items=res.TEXTURE_MODE_ITEMS, default='TEXTURE_2D')
+    wrap_x: bpy.props.EnumProperty(name="Wrap X", items=WRAP_ITEMS, default='REPEAT')
+    wrap_y: bpy.props.EnumProperty(name="Wrap Y", items=WRAP_ITEMS, default='REPEAT')
+    magnification: bpy.props.EnumProperty(name="Magnification", items=FILTER_ITEMS, default='LINEAR')
+    minification: bpy.props.EnumProperty(name="Minification", items=FILTER_ITEMS, default='LINEAR')
+    mipmap: bpy.props.EnumProperty(name="Mipmap", items=MIPMAP_ITEMS, default='DISABLED')
+    texture_mode: bpy.props.EnumProperty(name="Texture Mode", items=TEXTURE_MODE_ITEMS, default='TEXTURE_2D')
     mesh_name: bpy.props.StringProperty()
     material_name: bpy.props.StringProperty()
 
@@ -978,7 +1039,8 @@ def add_texture_item(collection, image_name, mesh_name, material_name, slot=None
         item.format = slot.pixel_format
         item.texture_mode = slot.texture_mode
 
-        for _, name, _, _ in res.SAMPLER_FIELDS:
+        for key in SAMPLER_PROPERTIES:
+            name = SAMPLER_PROPERTIES[key][0]
             setattr(item, name, getattr(slot, name))
 
     return item
@@ -1012,7 +1074,16 @@ def add_mesh_textures(collection, mesh):
                         add_texture_item(collection, texture_berry_bush.name, mesh.name, material.name)
 
 def same_texture_settings(first, other):
-    return first.format == other.format and all(getattr(first, name) == getattr(other, name) for _, name, _, _ in res.SAMPLER_FIELDS)
+    if first.format != other.format:
+        return False
+
+    for key in SAMPLER_PROPERTIES:
+        name = SAMPLER_PROPERTIES[key][0]
+
+        if getattr(first, name) != getattr(other, name):
+            return False
+
+    return True
 
 class TexprojPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Texproj name")
@@ -1383,7 +1454,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                                        f"the ones of {first_items[texture_prop.name].material_name} are exported", icon='ERROR')
 
     def draw_settings_armature(self, context, layout):
-        """Armature selector of the scene mode, return the armature to configure."""
         if self.export_option == 'SCENE':
             layout.prop(self, "settings_armature_enum", text="Armature")
 
@@ -1470,16 +1540,25 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             box.prop(animation, "transform_rotation")
             box.prop(animation, "transform_scale")
             box.prop(animation, "transform_bool")
-            items, view_property, label = settings.bones, "view_bones", "Bones"
+
+            items = settings.bones
+            view_property = "view_bones"
+            label = "Bones"
         elif animation_type == 'uv':
             box.prop(animation, "transform_location")
             box.prop(animation, "transform_rotation")
             box.prop(animation, "transform_scale")
-            items, view_property, label = settings.texprojs, "view_texprojs", "Texprojs"
+
+            items = settings.texprojs
+            view_property = "view_texprojs"
+            label = "Texprojs"
         else:
             box.prop(animation, "transform_transparency")
             box.prop(animation, "transform_attribute")
-            items, view_property, label = settings.materials, "view_materials", "Materials"
+
+            items = settings.materials
+            view_property = "view_materials"
+            label = "Materials"
 
         animation_box.prop(settings, view_property, text="View " + label)
 
@@ -1535,11 +1614,15 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             mesh_box.label(text="Meshes:")
 
             # Meshes already assigned to another outline are hidden
-            assigned_elsewhere = {
-                mesh.name
-                for other_index, other_outline in enumerate(settings.outlines) if other_index != index
-                for mesh in other_outline.meshes if mesh.assigned
-            }
+            assigned_elsewhere = []
+
+            for other_index, other_outline in enumerate(settings.outlines):
+                if other_index == index:
+                    continue
+
+                for mesh in other_outline.meshes:
+                    if mesh.assigned:
+                        assigned_elsewhere.append(mesh.name)
 
             for mesh in outline_item.meshes:
                 if mesh.name not in assigned_elsewhere:
@@ -1662,10 +1745,10 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                             if texture.name not in textures:
                                 textures[texture.name] = {}
                                 textures[texture.name]['format'] = texture.format
-                                textures[texture.name]['sampler'] = res.properties_to_sampler(texture)
+                                textures[texture.name]['sampler'] = properties_to_sampler(texture)
                                 textures[texture.name]['linked_material'] = []
 
-                            texture_mode = res.TEXTURE_MODE_NAME_TO_VALUE[texture.texture_mode]
+                            texture_mode = res.TEXTURE_MODES[texture.texture_mode]
                             textures[texture.name]['linked_material'].append((mesh_prop.material_name, slot_index, texture_mode))
 
                     meshes.append(mesh_prop)
@@ -1673,7 +1756,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         return meshes, textures, texprojs
 
     def get_animations(self, armature):
-        """Animations to export from the settings saved on the armature."""
         settings = armature.level5_archive
         animations = {}
 
@@ -1739,11 +1821,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         outlines = []
 
         for outline_item in armature.level5_archive.outlines:
+            meshes = []
+            for mesh in outline_item.meshes:
+                if mesh.assigned:
+                    meshes.append(mesh.name)
+
             outlines.append({
                 "name": outline_item.name,
                 "thickness": outline_item.thickness,
                 "visibility": outline_item.visibility,
-                "meshes": [mesh.name for mesh in outline_item.meshes if mesh.assigned]
+                "meshes": meshes,
             })
 
         return outlines
@@ -1772,7 +1859,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         return cameras
 
     def get_properties(self):
-        return [[archive_prop.name, archive_prop.value] for archive_prop in self.archive_properties if archive_prop.checked]
+        properties = []
+
+        for archive_prop in self.archive_properties:
+            if archive_prop.checked:
+                properties.append([archive_prop.name, archive_prop.value])
+
+        return properties
 
     def make_mode_files(self, context, template):
         armature = None
@@ -1840,7 +1933,11 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             if archive_name in files:
                 raise XpckExportError(f"Several objects use the archive name {archive_name}")
 
-            meshes, textures, texprojs, outlines = [], {}, [], []
+            meshes = []
+            textures = {}
+            texprojs = []
+            outlines = []
+
             if settings.export_mode == 'ARMATURE':
                 meshes, textures, texprojs = self.get_armature_content(armature)
                 outlines = self.get_outlines(armature)
@@ -1866,7 +1963,11 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         for camera_eleven in get_scene_cameras(context):
             if camera_eleven.level5_camera.export:
                 archive_name = camera_eleven.level5_camera.archive_name or f"{base_name}_cam.xv"
-                camera_archives.setdefault(archive_name, []).append(camera_eleven)
+
+                if archive_name not in camera_archives:
+                    camera_archives[archive_name] = []
+
+                camera_archives[archive_name].append(camera_eleven)
 
         for archive_name, camera_objects in camera_archives.items():
             if archive_name in files:
@@ -1875,7 +1976,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             archive_files = make_xpck_files(self, context, template, 'CAMERA', cameras=self.get_cameras(camera_objects))
             files[archive_name] = xpck.pack_archive_bytes(archive_files)
 
-        if not files:
+        if len(files) == 0:
             raise XpckExportError("Nothing to export")
 
         return files
@@ -1907,12 +2008,12 @@ class ImportXC(bpy.types.Operator, ImportHelper):
     )
 
     def execute(self, context):
-        global _import_session
+        global import_session
 
-        _import_session = fileio_open_xpck(context, self.filepath, self.report)
+        import_session = fileio_open_xpck(context, self.filepath, self.report)
 
         # Let the user choose the armature of each animation
-        if _import_session.animation_groups:
+        if import_session["animation_groups"]:
             bpy.ops.import_xc.choose_animations('INVOKE_DEFAULT')
 
         return {'FINISHED'}

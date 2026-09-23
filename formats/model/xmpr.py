@@ -75,42 +75,45 @@ def classify_tint(tints):
 
     first = tuple(tints[0])
 
-    if any(tuple(tint) != first for tint in tints):
-        return (1.0, 1.0, 1.0, 1.0), True
+    for tint in tints:
+        if tuple(tint) != first:
+            return (1.0, 1.0, 1.0, 1.0), True
 
     return first, False
 
 def write_attributes(tint_streamed):
-    attributes = [[0, 0, 0, 0] for i in range(10)]
-    offset = 0
-
-    def add(slot, count, size):
-        nonlocal offset
-        attributes[slot] = [count, offset, size, 2]
-        offset += size
-
-    add(0, 3, 12)
-    if tint_streamed:
-        add(1, 4, 16)
-    else:
-        attributes[1] = [4, 0, 16, 1]
-    add(2, 3, 12)
-    add(4, 2, 8)
-    add(5, 2, 8)
-    add(7, 4, 16)
-    add(8, 4, 16)
-    add(9, 4, 16)
+    # Count and size of the attributes: position, tint, normal, uv0, uv1, weights, bone indices, color
+    layout = {
+        0: [3, 12],
+        1: [4, 16],
+        2: [3, 12],
+        4: [2, 8],
+        5: [2, 8],
+        7: [4, 16],
+        8: [4, 16],
+        9: [4, 16],
+    }
 
     out = bytes()
-    for attribute in attributes:
-        out += bytes(attribute)
+    stride = 0
 
-    return struct.pack("<I", len(out) << 3) + out, offset
+    for i in range(10):
+        if i not in layout:
+            out += bytes(4)
+        elif i == 1 and not tint_streamed:
+            # Type 1 is a fixed attribute, its value is in the fixed buffer
+            out += bytes([4, 0, 16, 1])
+        else:
+            out += bytes([layout[i][0], stride, layout[i][1], 2])
+            stride += layout[i][1]
+
+    # Stored without compression
+    return int(len(out) << 3).to_bytes(4, 'little') + out, stride
 
 def write_fixed_tint(tint):
     # A fixed attribute holds a single value for the whole mesh, always 4 floats
     if tuple(tint) == (1.0, 1.0, 1.0, 1.0):
-        return bytes([int(x,0) for x in ["0x81", "0x00", "0x00", "0x00", "0x08", "0x00", "0x00", "0x80", "0x3F", "0x90", "0x03", "0x00"] ])
+        return bytes.fromhex("81000000080000803F900300")
 
     return lz10.compress(struct.pack("<4f", *tint))
 
@@ -173,14 +176,18 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     att_buffer, stride = write_attributes(tint_streamed)
     fixed_buffer = write_fixed_tint(tint)
 
+    streamed_tints = None
+    if tint_streamed:
+        streamed_tints = tints
+
     # Get content data
-    data_geometrie = write_geometrie(indices, vertices, uvs, normals, colors, weights, tints if tint_streamed else None)
+    data_geometrie = write_geometrie(indices, vertices, uvs, normals, colors, weights, streamed_tints)
     data_triangle = write_triangle(indices)
 
     # XPVB-------------------------------------------
-    compress_geometrie = lz10.compress(data_geometrie) 
+    compress_geometrie = lz10.compress(data_geometrie)
     xpvb = bytes()
-    xpvb += bytes([int(x,0) for x in ["0x58", "0x50", "0x56", "0x42"] ])
+    xpvb += b"XPVB"
     xpvb += int(16).to_bytes(2, 'little')
     xpvb += int(16 + len(att_buffer)).to_bytes(2, 'little')
     xpvb += int(16 + len(att_buffer) + len(fixed_buffer)).to_bytes(2, 'little')

@@ -196,6 +196,6 @@ TrackDataSize = {
     "BoneBool": 1,
 }
 
-# Animation V1 (Inazuma Eleven Go) stores every value as float, including rotations
+# V1 stores every value as float, rotations too
 TrackDataTypeV1 = dict(TrackDataType, BoneRotation=2)
 TrackDataSizeV1 = dict(TrackDataSize, BoneRotation=4)

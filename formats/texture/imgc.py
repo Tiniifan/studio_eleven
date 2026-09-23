@@ -127,4 +127,7 @@ def read_format(file_content):
     header = IMGCSupport.Header(struct.unpack_from('I6xbxbbhhh8xi20xiii8x', file_content))
     image_format = header.ImageFormats.get(header.ImageFormat)
 
-    return image_format.name if image_format is not None else None
+    if image_format is None:
+        return None
+
+    return image_format.name

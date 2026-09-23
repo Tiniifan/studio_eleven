@@ -2,7 +2,6 @@ import io
 from zlib import crc32
 from struct import pack, unpack, unpack_from, Struct
 
-from collections import namedtuple
 from enum import Enum
 from ...compression import *
 
@@ -72,128 +71,59 @@ nodes_ordered = [
 # Sampler
 ##########################################
 
-CLAMP, BORDER, REPEAT, MIRROR = 0, 1, 2, 3
-NEAREST, LINEAR = 0, 1
+WRAP_MODES = {
+    "EXTEND": 0,
+    "CLIP": 1,
+    "REPEAT": 2,
+    "MIRROR": 3,
+}
 
-WRAP_MODES = [
-    ("EXTEND", CLAMP),
-    ("CLIP", BORDER),
-    ("REPEAT", REPEAT),
-    ("MIRROR", MIRROR),
-]
+FILTER_MODES = {
+    "NEAREST": 0,
+    "LINEAR": 1,
+}
 
-FILTER_MODES = [
-    ("NEAREST", NEAREST),
-    ("LINEAR", LINEAR),
-]
-
-MIPMAP_MODES = [
-    ("DISABLED", 0),
-    ("ENABLED", 1),
-]
-
-
-def _tables(entries):
-    name_to_value = {name: value for name, value in entries}
-    value_to_name = {value: name for name, value in entries}
-    return name_to_value, value_to_name
-
-
-WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME = _tables(WRAP_MODES)
-FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME = _tables(FILTER_MODES)
-MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME = _tables(MIPMAP_MODES)
-
-SamplerState = namedtuple("SamplerState", "wrap_s wrap_t mag_filter min_filter mip_filter")
+MIPMAP_MODES = {
+    "DISABLED": 0,
+    "ENABLED": 1,
+}
 
 # What an untouched texture writes: 03 0A (linear, no mipmap, repeat on both axes)
-DEFAULT_SAMPLER = SamplerState(wrap_s=REPEAT, wrap_t=REPEAT, mag_filter=LINEAR, min_filter=LINEAR, mip_filter=0)
+DEFAULT_SAMPLER = {
+    "wrap_s": 2,
+    "wrap_t": 2,
+    "mag_filter": 1,
+    "min_filter": 1,
+    "mip_filter": 0,
+}
 
-# (SamplerState field, Blender property, name -> value, value -> name)
-SAMPLER_FIELDS = (
-    ("wrap_s", "wrap_x", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("wrap_t", "wrap_y", WRAP_NAME_TO_VALUE, WRAP_VALUE_TO_NAME),
-    ("mag_filter", "magnification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("min_filter", "minification", FILTER_NAME_TO_VALUE, FILTER_VALUE_TO_NAME),
-    ("mip_filter", "mipmap", MIPMAP_NAME_TO_VALUE, MIPMAP_VALUE_TO_NAME),
-)
+# Texture type of the unit, everything but 2D only works on the first texture
+TEXTURE_MODES = {
+    "DISABLED": 0,
+    "TEXTURE_2D": 1,
+    "CUBE_MAP": 2,
+    "SHADOW_2D": 3,
+    "SHADOW_CUBE": 4,
+    "PROJECTION": 5,
+}
 
+TEXTURE_MODE_VALUE_TO_NAME = {v: k for k, v in TEXTURE_MODES.items()}
 
-# wrapS = wrap & 3, wrapT = wrap >> 2; filter bit 0 magnification, bit 1 minification, bit 2 mipmap (sub_5485DC of IEGO)
 def decode_sampler(filter_byte, wrap_byte):
-    return SamplerState(
-        wrap_s=wrap_byte & 3,
-        wrap_t=(wrap_byte >> 2) & 3,
-        mag_filter=filter_byte & 1,
-        min_filter=(filter_byte >> 1) & 1,
-        mip_filter=(filter_byte >> 2) & 1,
-    )
+    # Wrap byte: 2 bits for x then 2 bits for y, filter byte: magnification, minification then mipmap
+    return {
+        "wrap_s": wrap_byte & 3,
+        "wrap_t": (wrap_byte >> 2) & 3,
+        "mag_filter": filter_byte & 1,
+        "min_filter": (filter_byte >> 1) & 1,
+        "mip_filter": (filter_byte >> 2) & 1,
+    }
 
+def encode_sampler(sampler):
+    filter_byte = (sampler["mag_filter"] & 1) | ((sampler["min_filter"] & 1) << 1) | ((sampler["mip_filter"] & 1) << 2)
+    wrap_byte = (sampler["wrap_s"] & 3) | ((sampler["wrap_t"] & 3) << 2)
 
-def encode_sampler(state):
-    filter_byte = (state.mag_filter & 1) | ((state.min_filter & 1) << 1) | ((state.mip_filter & 1) << 2)
-    wrap_byte = (state.wrap_s & 3) | ((state.wrap_t & 3) << 2)
     return filter_byte, wrap_byte
-
-##########################################
-# Blender properties
-##########################################
-
-WRAP_ITEMS = [
-    ('REPEAT', "Repeat", "The texture is tiled over and over"),
-    ('EXTEND', "Extend", "Outside the texture, the pixels of its edge are stretched out"),
-    ('CLIP', "Clip", "Outside the texture, the border of the texture is drawn, which is transparent black"),
-    ('MIRROR', "Mirror", "The texture is tiled, every other copy being flipped"),
-]
-
-FILTER_ITEMS = [
-    ('NEAREST', "Closest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
-    ('LINEAR', "Linear", "Mix the pixels of the texture together, which makes it smooth"),
-]
-
-# The mode of a texture slot picks the texture type of its unit (unk_584E58 of IEGO -> bits 28-30 of GPUREG_TEXUNIT0_PARAM), everything but 2D only exists on unit 0
-TEXTURE_MODES = [
-    ("DISABLED", 0),
-    ("TEXTURE_2D", 1),
-    ("CUBE_MAP", 2),
-    ("SHADOW_2D", 3),
-    ("SHADOW_CUBE", 4),
-    ("PROJECTION", 5),
-]
-
-TEXTURE_MODE_NAME_TO_VALUE, TEXTURE_MODE_VALUE_TO_NAME = _tables(TEXTURE_MODES)
-UNIT_0_TEXTURE_MODES = {"CUBE_MAP", "SHADOW_2D", "SHADOW_CUBE", "PROJECTION"}
-
-TEXTURE_MODE_ITEMS = [
-    ('TEXTURE_2D', "2D Texture", "A usual texture, what every shipped material uses"),
-    ('CUBE_MAP', "Cube Map", "The texture is read as a cube map. Only the first texture slot can use it"),
-    ('SHADOW_2D', "Shadow 2D", "The texture is read as a shadow map. Only the first texture slot can use it"),
-    ('SHADOW_CUBE', "Shadow Cube", "The texture is read as a cube shadow map. Only the first texture slot can use it"),
-    ('PROJECTION', "Projection", "The texture is projected, its coordinates are divided like a slide projector. Only the first texture slot can use it"),
-    ('DISABLED', "Disabled", "The game ignores the texture, as if the slot was empty"),
-]
-
-MIPMAP_ITEMS = [
-    ('ENABLED', "Enabled", "The game switches to smaller copies of the texture with the distance"),
-    ('DISABLED', "Disabled", "The game always samples the full size texture"),
-]
-
-
-def sampler_to_properties(state, properties):
-    for field, name, _, value_to_name in SAMPLER_FIELDS:
-        value = getattr(state, field)
-
-        if value in value_to_name:
-            setattr(properties, name, value_to_name[value])
-
-
-def properties_to_sampler(properties):
-    values = {}
-
-    for field, name, name_to_value, _ in SAMPLER_FIELDS:
-        value = getattr(properties, name, None)
-        values[field] = name_to_value.get(value, getattr(DEFAULT_SAMPLER, field))
-
-    return SamplerState(**values)
 
 ##########################################
 # RES
@@ -468,11 +398,16 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         # linked_material holds (material name, slot index, texture mode): a texture can fill several slots of one material
         for texture_name, texture_data in textures.items():
             for material_name, slot_index, texture_mode in texture_data['linked_material']:
-                materials_info.setdefault(material_name, {})[slot_index] = (texture_name, texture_mode)
+                if material_name not in materials_info:
+                    materials_info[material_name] = {}
+
+                materials_info[material_name][slot_index] = (texture_name, texture_mode)
 
         materials_data = []
         for material_name, material_slots in materials_info.items():
-            material_info = [material_slots[slot_index] for slot_index in sorted(material_slots)]
+            material_info = []
+            for slot_index in sorted(material_slots):
+                material_info.append(material_slots[slot_index])
 
             material_name_encoded = material_name.encode("shift-jis")
             material_name_crc32 = crc32(material_name_encoded).to_bytes(4, 'little')

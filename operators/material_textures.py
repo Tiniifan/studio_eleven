@@ -15,8 +15,8 @@ TEXTURE_NODE_PREFIX = "Level5 Texture"
 MIX_COLOR_PREFIX = "Level5 Mix Color"
 MIX_ALPHA_PREFIX = "Level5 Mix Alpha"
 SAMPLER_NODE_PREFIX = "Level5 Sampler"
-SAMPLER_UV_NODE = f"{SAMPLER_NODE_PREFIX} Texture Coordinate"
-SAMPLER_PARTS = ("Separate", "Combine", "Wrap X", "Wrap Y")
+SAMPLER_UV_NODE = SAMPLER_NODE_PREFIX + " Texture Coordinate"
+SAMPLER_PARTS = ["Separate", "Combine", "Wrap X", "Wrap Y"]
 
 # The node group the previous versions put in front of an Image Texture node to wrap each axis
 LEGACY_WRAP_GROUP_PREFIX = "Level Five Wrap"
@@ -28,8 +28,36 @@ PIXEL_FORMAT_ITEMS = [
     ('RGB565', "RGB565", "16 bits per pixel, no alpha"),
 ]
 
-PIXEL_FORMATS = {identifier for identifier, _, _ in PIXEL_FORMAT_ITEMS}
-FORMATS_WITHOUT_ALPHA = {'RBGR888', 'RGB565'}
+FORMATS_WITHOUT_ALPHA = ['RBGR888', 'RGB565']
+
+WRAP_ITEMS = [
+    ('REPEAT', "Repeat", "The texture is tiled over and over"),
+    ('EXTEND', "Extend", "Outside the texture, the pixels of its edge are stretched out"),
+    ('CLIP', "Clip", "Outside the texture, the border of the texture is drawn, which is transparent black"),
+    ('MIRROR', "Mirror", "The texture is tiled, every other copy being flipped"),
+]
+
+FILTER_ITEMS = [
+    ('NEAREST', "Closest", "Take the nearest pixel of the texture, which keeps it sharp and blocky"),
+    ('LINEAR', "Linear", "Mix the pixels of the texture together, which makes it smooth"),
+]
+
+MIPMAP_ITEMS = [
+    ('ENABLED', "Enabled", "The game switches to smaller copies of the texture with the distance"),
+    ('DISABLED', "Disabled", "The game always samples the full size texture"),
+]
+
+TEXTURE_MODE_ITEMS = [
+    ('TEXTURE_2D', "2D Texture", "A usual texture, what every shipped material uses"),
+    ('CUBE_MAP', "Cube Map", "The texture is read as a cube map. Only the first texture slot can use it"),
+    ('SHADOW_2D', "Shadow 2D", "The texture is read as a shadow map. Only the first texture slot can use it"),
+    ('SHADOW_CUBE', "Shadow Cube", "The texture is read as a cube shadow map. Only the first texture slot can use it"),
+    ('PROJECTION', "Projection", "The texture is projected, its coordinates are divided like a slide projector. Only the first texture slot can use it"),
+    ('DISABLED', "Disabled", "The game ignores the texture, as if the slot was empty"),
+]
+
+# Only the first texture unit can use these modes
+UNIT_0_TEXTURE_MODES = ['CUBE_MAP', 'SHADOW_2D', 'SHADOW_CUBE', 'PROJECTION']
 
 WRAP_OPERATIONS = {
     'REPEAT': 'FRACT',
@@ -38,29 +66,70 @@ WRAP_OPERATIONS = {
     'CLIP': 'ADD',
 }
 
-_suspended = 0
+# Blender property of each sampler value and the modes it can take
+SAMPLER_PROPERTIES = {
+    "wrap_s": ["wrap_x", res.WRAP_MODES],
+    "wrap_t": ["wrap_y", res.WRAP_MODES],
+    "mag_filter": ["magnification", res.FILTER_MODES],
+    "min_filter": ["minification", res.FILTER_MODES],
+    "mip_filter": ["mipmap", res.MIPMAP_MODES],
+}
 
-class suspend_updates:
-    """Setting the slots from the code must not rebuild the shader graph on every property."""
+##########################################
+# Material Textures Function
+##########################################
 
-    def __enter__(self):
-        global _suspended
-        _suspended += 1
+# Setting the slots from the code must not rebuild the shader graph on every property
+suspended_updates = 0
 
-    def __exit__(self, *args):
-        global _suspended
-        _suspended -= 1
+def suspend_updates():
+    global suspended_updates
+
+    suspended_updates += 1
+
+def resume_updates():
+    global suspended_updates
+
+    suspended_updates -= 1
 
 def to_pixel_format(format_name):
-    # The formats the export cannot write fall back to the default one
-    return format_name if format_name in PIXEL_FORMATS else 'RGBA8'
+    for item in PIXEL_FORMAT_ITEMS:
+        if item[0] == format_name:
+            return format_name
+
+    # The formats the export can't write use the default one
+    return 'RGBA8'
+
+def sampler_to_properties(sampler, properties):
+    for key in SAMPLER_PROPERTIES:
+        name = SAMPLER_PROPERTIES[key][0]
+        modes = SAMPLER_PROPERTIES[key][1]
+
+        for mode in modes:
+            if modes[mode] == sampler[key]:
+                setattr(properties, name, mode)
+
+def properties_to_sampler(properties):
+    sampler = {}
+
+    for key in SAMPLER_PROPERTIES:
+        name = SAMPLER_PROPERTIES[key][0]
+        modes = SAMPLER_PROPERTIES[key][1]
+        value = getattr(properties, name, None)
+
+        if value in modes:
+            sampler[key] = modes[value]
+        else:
+            sampler[key] = res.DEFAULT_SAMPLER[key]
+
+    return sampler
 
 ##########################################
 # Properties
 ##########################################
 
 def update_slot(self, context):
-    if not _suspended:
+    if suspended_updates == 0:
         apply_material_textures(self.id_data)
 
 def update_slot_image(self, context):
@@ -97,14 +166,14 @@ class Level5TextureSlot(bpy.types.PropertyGroup):
     texture_mode: EnumProperty(
         name="Texture Mode",
         description="How the game reads the texture. Every shipped material uses 2D Texture",
-        items=res.TEXTURE_MODE_ITEMS,
+        items=TEXTURE_MODE_ITEMS,
         default='TEXTURE_2D'
     )
 
     wrap_x: EnumProperty(
         name="Wrap X",
         description="What is drawn left and right of the texture, once the UVs go past its edge",
-        items=res.WRAP_ITEMS,
+        items=WRAP_ITEMS,
         default='REPEAT',
         update=update_slot
     )
@@ -112,7 +181,7 @@ class Level5TextureSlot(bpy.types.PropertyGroup):
     wrap_y: EnumProperty(
         name="Wrap Y",
         description="What is drawn above and below the texture, once the UVs go past its edge",
-        items=res.WRAP_ITEMS,
+        items=WRAP_ITEMS,
         default='REPEAT',
         update=update_slot
     )
@@ -120,7 +189,7 @@ class Level5TextureSlot(bpy.types.PropertyGroup):
     magnification: EnumProperty(
         name="Magnification",
         description="How the texture is sampled when it is drawn bigger than it really is, up close",
-        items=res.FILTER_ITEMS,
+        items=FILTER_ITEMS,
         default='LINEAR',
         update=update_slot
     )
@@ -128,7 +197,7 @@ class Level5TextureSlot(bpy.types.PropertyGroup):
     minification: EnumProperty(
         name="Minification",
         description="How the texture is sampled when it is drawn smaller than it really is, far away",
-        items=res.FILTER_ITEMS,
+        items=FILTER_ITEMS,
         default='LINEAR',
         update=update_slot
     )
@@ -136,7 +205,7 @@ class Level5TextureSlot(bpy.types.PropertyGroup):
     mipmap: EnumProperty(
         name="Mipmap",
         description="Whether the game samples smaller copies of the texture with the distance. Eevee does not show it",
-        items=res.MIPMAP_ITEMS,
+        items=MIPMAP_ITEMS,
         default='DISABLED',
         update=update_slot
     )
@@ -151,7 +220,7 @@ class Level5TexturesProperties(bpy.types.PropertyGroup):
 # Shader graph
 ##########################################
 
-def get_node(tree, name, bl_idname, location, label=None):
+def get_node(tree, name, bl_idname, location, label = None):
     node = tree.nodes.get(name)
 
     if node is not None and node.bl_idname != bl_idname:
@@ -183,10 +252,14 @@ def unlink_from(tree, target, node_names):
 def find_bsdf(tree):
     bsdf = tree.nodes.get("Principled BSDF")
 
-    if bsdf is None or bsdf.type != 'BSDF_PRINCIPLED':
-        bsdf = next((node for node in tree.nodes if node.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is not None and bsdf.type == 'BSDF_PRINCIPLED':
+        return bsdf
 
-    return bsdf
+    for node in tree.nodes:
+        if node.type == 'BSDF_PRINCIPLED':
+            return node
+
+    return None
 
 def get_texture_node(material, slot):
     if material.node_tree is None or not slot.node_name:
@@ -194,7 +267,10 @@ def get_texture_node(material, slot):
 
     node = material.node_tree.nodes.get(slot.node_name)
 
-    return node if node is not None and node.type == 'TEX_IMAGE' else None
+    if node is None or node.type != 'TEX_IMAGE':
+        return None
+
+    return node
 
 def new_texture_node_name(tree):
     number = 1
@@ -204,54 +280,64 @@ def new_texture_node_name(tree):
 
     return f"{TEXTURE_NODE_PREFIX} {number}"
 
-def sampler_node_name(part, texture_name):
+def get_sampler_node_name(part, texture_name):
     return f"{SAMPLER_NODE_PREFIX} {part} {texture_name}"
-
-def is_sampler_node(node):
-    return node.name.startswith(SAMPLER_NODE_PREFIX)
 
 def get_custom_uv_source(tree, texture_node):
     # An UV source wired by hand is kept, whether the wrap needs nodes or not
-    separate = tree.nodes.get(sampler_node_name("Separate", texture_node.name))
-    sockets = [separate.inputs[0]] if separate is not None else []
+    sockets = []
+
+    separate = tree.nodes.get(get_sampler_node_name("Separate", texture_node.name))
+    if separate is not None:
+        sockets.append(separate.inputs[0])
+
     sockets.append(texture_node.inputs['Vector'])
 
     for socket in sockets:
         for old in socket.links:
-            if not is_sampler_node(old.from_node):
+            if not old.from_node.name.startswith(SAMPLER_NODE_PREFIX):
                 return old.from_socket
 
     return None
 
 def remove_sampler_nodes(tree, texture_name):
     for part in SAMPLER_PARTS:
-        node = tree.nodes.get(sampler_node_name(part, texture_name))
+        node = tree.nodes.get(get_sampler_node_name(part, texture_name))
 
         if node is not None:
             tree.nodes.remove(node)
 
     uv_node = tree.nodes.get(SAMPLER_UV_NODE)
 
-    if uv_node is not None and not any(output.is_linked for output in uv_node.outputs):
-        tree.nodes.remove(uv_node)
+    if uv_node is None:
+        return
+
+    for output in uv_node.outputs:
+        if output.is_linked:
+            return
+
+    tree.nodes.remove(uv_node)
 
 def has_extension(texture_node, extension):
-    # Mirror isn't in this node's extension enum on every Blender version this addon supports (e.g. not on 3.4)
+    # Mirror isn't in the extension enum of this node on every Blender version the addon supports (e.g. not on 3.4)
     return extension in texture_node.bl_rna.properties['extension'].enum_items.keys()
 
 def get_image_extension(wrap_x, wrap_y):
     # The Image Texture node has one extension for both axes, the wrapping itself is done on the coordinates
-    if 'CLIP' in (wrap_x, wrap_y):
+    if wrap_x == 'CLIP' or wrap_y == 'CLIP':
         return 'CLIP'
 
-    if wrap_x == wrap_y == 'REPEAT':
+    if wrap_x == 'REPEAT' and wrap_y == 'REPEAT':
         return 'REPEAT'
 
     return 'EXTEND'
 
 def apply_texture_sampler(tree, texture_node, slot):
-    # One interpolation for both filters: the node cannot tell magnification from minification, the close view is what shows
-    texture_node.interpolation = 'Closest' if slot.magnification == 'NEAREST' else 'Linear'
+    # The node can't tell magnification from minification, the close view is what shows
+    if slot.magnification == 'NEAREST':
+        texture_node.interpolation = 'Closest'
+    else:
+        texture_node.interpolation = 'Linear'
 
     uv_source = get_custom_uv_source(tree, texture_node)
 
@@ -266,10 +352,8 @@ def apply_texture_sampler(tree, texture_node, slot):
 
     origin = texture_node.location
 
-    separate = get_node(tree, sampler_node_name("Separate", texture_node.name), 'ShaderNodeSeparateXYZ',
-                        (origin.x - 700, origin.y), "Separate UV")
-    combine = get_node(tree, sampler_node_name("Combine", texture_node.name), 'ShaderNodeCombineXYZ',
-                       (origin.x - 200, origin.y), "Combine UV")
+    separate = get_node(tree, get_sampler_node_name("Separate", texture_node.name), 'ShaderNodeSeparateXYZ', (origin.x - 700, origin.y), "Separate UV")
+    combine = get_node(tree, get_sampler_node_name("Combine", texture_node.name), 'ShaderNodeCombineXYZ', (origin.x - 200, origin.y), "Combine UV")
 
     if uv_source is None:
         uv_node = get_node(tree, SAMPLER_UV_NODE, 'ShaderNodeTexCoord', (origin.x - 900, origin.y), "Texture Coordinate")
@@ -277,19 +361,23 @@ def apply_texture_sampler(tree, texture_node, slot):
 
     link(tree, uv_source, separate.inputs[0])
 
-    for index, (axis, mode) in enumerate((("X", slot.wrap_x), ("Y", slot.wrap_y))):
-        math = get_node(tree, sampler_node_name(f"Wrap {axis}", texture_node.name), 'ShaderNodeMath',
-                        (origin.x - 450, origin.y - 150 * index), f"Wrap {axis}")
+    axes = [["X", slot.wrap_x], ["Y", slot.wrap_y]]
+
+    for i in range(2):
+        axis = axes[i][0]
+        mode = axes[i][1]
+
+        math = get_node(tree, get_sampler_node_name("Wrap " + axis, texture_node.name), 'ShaderNodeMath', (origin.x - 450, origin.y - 150 * i), "Wrap " + axis)
         math.operation = WRAP_OPERATIONS[mode]
         math.use_clamp = mode == 'EXTEND'
 
         if mode == 'MIRROR':
             math.inputs[1].default_value = 1.0
-        elif mode in ('EXTEND', 'CLIP'):
+        elif mode == 'EXTEND' or mode == 'CLIP':
             math.inputs[1].default_value = 0.0
 
-        link(tree, separate.outputs[index], math.inputs[0])
-        link(tree, math.outputs[0], combine.inputs[index])
+        link(tree, separate.outputs[i], math.inputs[0])
+        link(tree, math.outputs[0], combine.inputs[i])
 
     link(tree, separate.outputs[2], combine.inputs[2])
     link(tree, combine.outputs[0], texture_node.inputs['Vector'])
@@ -297,24 +385,27 @@ def apply_texture_sampler(tree, texture_node, slot):
     texture_node.extension = get_image_extension(slot.wrap_x, slot.wrap_y)
 
 def mix_textures(tree, textures, prefix, bl_idname, output_name):
-    """Chain the outputs of the textures through one mix node per extra texture, return the last output."""
-    output = textures[0].outputs[output_name] if textures else None
+    output = None
+    if textures:
+        output = textures[0].outputs[output_name]
 
-    for index in range(1, MAX_TEXTURE_SLOTS):
-        name = f"{prefix} {index}"
+    for i in range(1, MAX_TEXTURE_SLOTS):
+        name = f"{prefix} {i}"
 
-        if index >= len(textures):
+        if i >= len(textures):
             if name in tree.nodes:
                 tree.nodes.remove(tree.nodes[name])
             continue
 
-        texture = textures[index]
+        texture = textures[i]
         mix = tree.nodes.get(name)
 
         # The blend mode is only set on creation, the one chosen in the shader editor is kept
         if mix is None or mix.bl_idname != bl_idname:
-            location = (texture.location.x + 300, texture.location.y - (0 if output_name == 'Color' else 180))
-            mix = get_node(tree, name, bl_idname, location, "Mix Color" if output_name == 'Color' else "Mix Alpha")
+            if output_name == 'Color':
+                mix = get_node(tree, name, bl_idname, (texture.location.x + 300, texture.location.y), "Mix Color")
+            else:
+                mix = get_node(tree, name, bl_idname, (texture.location.x + 300, texture.location.y - 180), "Mix Alpha")
 
             if bl_idname == 'ShaderNodeMixRGB':
                 mix.blend_type = 'MULTIPLY'
@@ -355,13 +446,17 @@ def wire_textures(tree, textures, node_names):
     else:
         target = bsdf.inputs['Alpha']
 
-    if alpha is not None and any(texture.image.alpha_mode != 'NONE' for texture in textures):
+    has_alpha = False
+    for texture in textures:
+        if texture.image.alpha_mode != 'NONE':
+            has_alpha = True
+
+    if alpha is not None and has_alpha:
         link(tree, alpha, target)
     else:
         unlink_from(tree, target, node_names)
 
 def apply_material_textures(material):
-    """Build the Image Texture, sampler and mix nodes of the shader graph from the texture slots."""
     if material is None or not hasattr(material, "level5_textures"):
         return
 
@@ -373,13 +468,19 @@ def apply_material_textures(material):
     if tree is None:
         return
 
+    origin = (0, 0)
+
     bsdf = find_bsdf(tree)
-    origin = bsdf.location if bsdf is not None else (0, 0)
+    if bsdf is not None:
+        origin = bsdf.location
+
     slots = material.level5_textures.slots
     textures = []
 
-    with suspend_updates():
-        for index, slot in enumerate(slots):
+    suspend_updates()
+
+    try:
+        for i, slot in enumerate(slots):
             node = get_texture_node(material, slot)
 
             if node is None:
@@ -388,11 +489,11 @@ def apply_material_textures(material):
 
                 node = tree.nodes.new('ShaderNodeTexImage')
                 node.name = new_texture_node_name(tree)
-                node.location = (origin[0] - 700, origin[1] + 250 - 320 * index)
+                node.location = (origin[0] - 700, origin[1] + 250 - 320 * i)
                 slot.node_name = node.name
 
             if node.name.startswith(TEXTURE_NODE_PREFIX):
-                node.label = f"Level 5 Texture {index + 1}"
+                node.label = f"Level 5 Texture {i + 1}"
 
             if node.image != slot.image:
                 node.image = slot.image
@@ -402,7 +503,10 @@ def apply_material_textures(material):
             if slot.image is not None:
                 textures.append(node)
 
-        node_names = {slot.node_name for slot in slots if slot.node_name}
+        node_names = []
+        for slot in slots:
+            if slot.node_name:
+                node_names.append(slot.node_name)
 
         # The nodes of the slots that were removed
         for node in list(tree.nodes):
@@ -411,6 +515,8 @@ def apply_material_textures(material):
                 tree.nodes.remove(node)
 
         wire_textures(tree, textures, node_names)
+    finally:
+        resume_updates()
 
 def remove_legacy_wrap_group(tree, texture_node):
     for old in list(texture_node.inputs['Vector'].links):
@@ -419,7 +525,10 @@ def remove_legacy_wrap_group(tree, texture_node):
         if group.type != 'GROUP' or group.node_tree is None or not group.node_tree.name.startswith(LEGACY_WRAP_GROUP_PREFIX):
             continue
 
-        sources = [source_link.from_socket for source_link in group.inputs[0].links]
+        sources = []
+        for source_link in group.inputs[0].links:
+            sources.append(source_link.from_socket)
+
         tree.nodes.remove(group)
 
         for source in sources:
@@ -438,8 +547,11 @@ def add_node_slot(material, node):
     old = node.image.get("level5_texture")
 
     if old is not None:
-        values = {field: old.get(field, getattr(res.DEFAULT_SAMPLER, field)) for field in res.SamplerState._fields}
-        res.sampler_to_properties(res.SamplerState(**values), slot)
+        sampler = {}
+        for key in res.DEFAULT_SAMPLER:
+            sampler[key] = old.get(key, res.DEFAULT_SAMPLER[key])
+
+        sampler_to_properties(sampler, slot)
 
     return slot
 
@@ -450,7 +562,9 @@ def adopt_material_textures(material):
     if properties.initialized or material.library is not None:
         return
 
-    with suspend_updates():
+    suspend_updates()
+
+    try:
         properties.initialized = True
 
         if material.node_tree is None:
@@ -463,6 +577,8 @@ def adopt_material_textures(material):
             if node.type == 'TEX_IMAGE' and node.image is not None:
                 remove_legacy_wrap_group(material.node_tree, node)
                 add_node_slot(material, node)
+    finally:
+        resume_updates()
 
 def adopt_all_materials():
     for material in bpy.data.materials:
@@ -491,8 +607,10 @@ def sync_material_from_nodes(material):
     rewire = False
     removed = []
 
-    with suspend_updates():
-        for index, slot in enumerate(properties.slots):
+    suspend_updates()
+
+    try:
+        for i, slot in enumerate(properties.slots):
             if not slot.node_name:
                 continue
 
@@ -500,16 +618,18 @@ def sync_material_from_nodes(material):
 
             # The node was deleted, so is its texture
             if node is None or node.type != 'TEX_IMAGE':
-                removed.append(index)
+                removed.append(i)
             elif node.image != slot.image:
                 rewire = True
                 slot.image = node.image
 
-        for index in reversed(removed):
-            properties.slots.remove(index)
+        for i in reversed(removed):
+            properties.slots.remove(i)
 
         # An Image Texture node added in the shader editor becomes a slot as soon as it has an image
-        node_names = {slot.node_name for slot in properties.slots}
+        node_names = []
+        for slot in properties.slots:
+            node_names.append(slot.node_name)
 
         for node in tree.nodes:
             if len(properties.slots) >= MAX_TEXTURE_SLOTS:
@@ -517,13 +637,15 @@ def sync_material_from_nodes(material):
 
             if node.type == 'TEX_IMAGE' and node.image is not None and node.name not in node_names:
                 add_node_slot(material, node)
+    finally:
+        resume_updates()
 
     if rewire or removed:
         apply_material_textures(material)
 
 @persistent
-def sync_textures_from_nodes(scene, depsgraph=None):
-    if _suspended:
+def sync_textures_from_nodes(scene, depsgraph = None):
+    if suspended_updates > 0:
         return
 
     if depsgraph is None:
@@ -549,11 +671,11 @@ def sync_textures_from_nodes(scene, depsgraph=None):
         sync_material_from_nodes(material)
 
 @persistent
-def adopt_textures_on_load(_dummy=None):
+def adopt_textures_on_load(dummy = None):
     adopt_all_materials()
 
 ##########################################
-# Operators
+# Register class
 ##########################################
 
 class MATERIAL_OT_level5_texture_add(bpy.types.Operator):
@@ -565,6 +687,7 @@ class MATERIAL_OT_level5_texture_add(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         material = getattr(context, "material", None)
+
         return material is not None and len(material.level5_textures.slots) < MAX_TEXTURE_SLOTS
 
     def execute(self, context):
@@ -594,7 +717,7 @@ class MATERIAL_OT_level5_texture_remove(bpy.types.Operator):
         material = context.material
         slots = material.level5_textures.slots
 
-        if not 0 <= self.index < len(slots):
+        if self.index < 0 or self.index >= len(slots):
             return {'CANCELLED'}
 
         node = get_texture_node(material, slots[self.index])
@@ -620,19 +743,19 @@ class MATERIAL_OT_level5_texture_move(bpy.types.Operator):
     def execute(self, context):
         material = context.material
         slots = material.level5_textures.slots
-        target = self.index - 1 if self.direction == 'UP' else self.index + 1
 
-        if not (0 <= self.index < len(slots) and 0 <= target < len(slots)):
+        if self.direction == 'UP':
+            target = self.index - 1
+        else:
+            target = self.index + 1
+
+        if self.index < 0 or self.index >= len(slots) or target < 0 or target >= len(slots):
             return {'CANCELLED'}
 
         slots.move(self.index, target)
         apply_material_textures(material)
 
         return {'FINISHED'}
-
-##########################################
-# Panel
-##########################################
 
 class MATERIAL_PT_level5_textures(bpy.types.Panel):
     bl_label = "Textures"
@@ -659,20 +782,23 @@ class MATERIAL_PT_level5_textures(bpy.types.Panel):
         else:
             row.label(text="Limit reached")
 
-        if not slots:
+        if len(slots) == 0:
             layout.label(text="No texture, the material is exported without any", icon='INFO')
             return
 
-        for index, slot in enumerate(slots):
-            self.draw_slot(layout, index, slot, len(slots))
+        for i, slot in enumerate(slots):
+            self.draw_slot(layout, i, slot, len(slots))
 
     def draw_slot(self, layout, index, slot, count):
         box = layout.box()
         header = box.row(align=True)
 
         if slot.image is not None:
-            header.prop(slot, "show_expanded", text="", emboss=False,
-                        icon='TRIA_DOWN' if slot.show_expanded else 'TRIA_RIGHT')
+            if slot.show_expanded:
+                header.prop(slot, "show_expanded", text="", emboss=False, icon='TRIA_DOWN')
+            else:
+                header.prop(slot, "show_expanded", text="", emboss=False, icon='TRIA_RIGHT')
+
             header.label(text=f"{index + 1}. {slot.image.name}", icon_value=layout.icon(slot.image))
         else:
             header.label(text=f"{index + 1}. Choose an image", icon='IMAGE_DATA')
@@ -717,7 +843,7 @@ class MATERIAL_PT_level5_textures(bpy.types.Panel):
 
         column.prop(slot, "texture_mode")
 
-        if index > 0 and slot.texture_mode in res.UNIT_0_TEXTURE_MODES:
+        if index > 0 and slot.texture_mode in UNIT_0_TEXTURE_MODES:
             column.label(text="Only the first texture can use this mode, the game ignores this one", icon='ERROR')
         elif slot.texture_mode == 'DISABLED':
             column.label(text="The game ignores this texture", icon='INFO')

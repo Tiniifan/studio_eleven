@@ -224,8 +224,8 @@ class ExportXCMA(bpy.types.Operator, ExportHelper):
         name="Version",
         description="Camera format version",
         items=[
-            ("V1", "V1", "Inazuma Eleven Go"),
-            ("V2", "V2", "Other games"),
+            ("V1", "V1", "Games using the V1 format"),
+            ("V2", "V2", "Games using the V2 format"),
         ],
         default="V2",
     )

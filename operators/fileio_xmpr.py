@@ -13,7 +13,8 @@ from mathutils import Matrix, Quaternion, Vector
 from ..formats import xmpr, atr, res
 from ..templates import *
 from ..utils.mesh_faces_utils import MeshFaceUtils
-from .material_textures import apply_material_textures, suspend_updates
+from .material_textures import apply_material_textures, suspend_updates, resume_updates, sampler_to_properties
+from .material_render import state_to_properties, detect_render_mode
 
 ##########################################
 # CONST
@@ -193,14 +194,17 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
     return face_indices, vertices_info, uv_info, normal_info, color_info, tint_info, weights
     
 def apply_atr_state(material, atr_state):
-    # The state is kept as is in level5_atr, the Blender properties are only a preview
+    # The state is kept as it is in level5_atr, the Blender material is only a preview
     if hasattr(material, "level5_atr"):
-        atr.state_to_properties(atr_state, material.level5_atr)
-        # Simple mode only if the imported settings match one of its ready made modes
-        matches_preset = atr.detect_render_mode(material.level5_atr) != 'CUSTOM'
-        material.level5_atr.panel_mode = 'SIMPLE' if matches_preset else 'EXPERT'
+        state_to_properties(atr_state, material.level5_atr)
 
-    resolved = atr_state.resolve()
+        # Simple mode only if the imported settings are one of its render modes
+        if detect_render_mode(material.level5_atr) != 'CUSTOM':
+            material.level5_atr.panel_mode = 'SIMPLE'
+        else:
+            material.level5_atr.panel_mode = 'EXPERT'
+
+    resolved = atr.resolve_state(atr_state)
 
     material.use_backface_culling = resolved["cull"]
 
@@ -287,7 +291,12 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
         color_layer.data.foreach_set("color", flat_colors)
 
     # A white tint is what the engine uses when a mesh has none, no need for a layer
-    if tint_data and any(tuple(tint) != (1.0, 1.0, 1.0, 1.0) for tint in tint_data):
+    has_tint = False
+    for tint in tint_data:
+        if tuple(tint) != (1.0, 1.0, 1.0, 1.0):
+            has_tint = True
+
+    if has_tint:
         tint_layer = mesh.vertex_colors.new(name="Tint")
         flat_tints = []
 
@@ -365,9 +374,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             bsdf.inputs["Emission"].default_value = (0, 0, 0, 1.0)
             links.new(bsdf.outputs["BSDF"], material_output.inputs["Surface"])
 
-        images = [image for image, _, _, _ in lib]
-
-        if images:
+        if len(lib) > 0:
             # Get or create the Mix Shader node
             mix_shader = nodes.get("Mix Shader")
             if not mix_shader:
@@ -390,7 +397,12 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
                 alpha_multiplier.location = (-300, 200)
                 alpha_multiplier.inputs[1].default_value = 1.0            
 
-            if any(image.alpha_mode != "NONE" for image in images):
+            has_alpha = False
+            for texture in lib:
+                if texture["image"].alpha_mode != "NONE":
+                    has_alpha = True
+
+            if has_alpha:
                 links.new(alpha_multiplier.outputs[0], bsdf.inputs["Alpha"])
                 material.show_transparent_back = True
             else:
@@ -414,17 +426,19 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             apply_atr_state(material, atr_state)
         
         # The texture nodes are built from the texture slots of the material
-        with suspend_updates():
-            textures = material.level5_textures
-            textures.initialized = True
+        suspend_updates()
 
-            for image, sampler, pixel_format, texture_mode in lib:
-                slot = textures.slots.add()
-                slot.image = image
-                slot.pixel_format = pixel_format
-                slot.texture_mode = texture_mode
-                slot.show_expanded = False
-                res.sampler_to_properties(sampler, slot)
+        material.level5_textures.initialized = True
+
+        for texture in lib:
+            slot = material.level5_textures.slots.add()
+            slot.image = texture["image"]
+            slot.pixel_format = texture["pixel_format"]
+            slot.texture_mode = texture["texture_mode"]
+            slot.show_expanded = False
+            sampler_to_properties(texture["sampler"], slot)
+
+        resume_updates()
 
         # Add material
         mesh_obj.data.materials.append(material)
