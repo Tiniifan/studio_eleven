@@ -17,8 +17,7 @@ from .fileio_xmpr import *
 from .fileio_animation_manager import *
 from .fileio_xcma import *
 from .xpck_settings import *
-from ..utils.img_format import *
-from ..utils.img_tool import *
+from ..formats.texture import pixel_formats
 from ..utils.properties import *
 from ..templates import *
 from ..controls import CameraElevenObject
@@ -745,12 +744,12 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     # Make images
     imgcs = []
     for texture_name, texture_data in textures.items():
-        get_image_format = globals().get(texture_data['format'])
+        get_image_format = getattr(pixel_formats, texture_data['format'], None)
 
         if get_image_format:
             imgcs.append(imgc.write(bpy.data.images.get(texture_name), get_image_format()))
         else:
-            raise XpckExportError(f"Class {texture_data['format']} not found in img_format.")
+            raise XpckExportError(f"Class {texture_data['format']} not found in pixel_formats.")
 
     # Make animations
     mtns = []

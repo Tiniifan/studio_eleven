@@ -2,8 +2,8 @@ from struct import pack, unpack, unpack_from, calcsize, Struct
 from io import BytesIO
 from enum import Enum
 from zlib import crc32
-from ..compression import *
-from ..animation import *
+from ...compression import *
+from ...animation import *
 from . import animation_support
 
 def ReadString(byte_io):

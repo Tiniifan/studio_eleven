@@ -1,7 +1,7 @@
 import io
 import struct
 import zlib
-from ..compression import *
+from ...compression import *
 from . import xcma
 
 def open(data):

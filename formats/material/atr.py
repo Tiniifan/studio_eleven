@@ -1,6 +1,6 @@
 from struct import pack, unpack, unpack_from, Struct
 
-from ..compression import *
+from ...compression import *
 
 ##########################################
 # Constants

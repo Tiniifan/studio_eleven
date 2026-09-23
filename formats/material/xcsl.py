@@ -2,7 +2,7 @@ import io
 import zlib
 import struct
 
-from ..compression import *
+from ...compression import *
 
 def align_to_4(offset):
     return (offset + 3) & ~3
