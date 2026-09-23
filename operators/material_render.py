@@ -602,7 +602,7 @@ class Level5RenderStateSubPanel:
     def poll(cls, context):
         material = context.material
 
-        return material is not None and hasattr(material, "level5_atr") and material.level5_atr.panel_mode == 'ADVANCED'
+        return material is not None and hasattr(material, "level5_atr") and material.level5_atr.panel_mode == 'EXPERT'
 
 class Level5_Culling_Depth_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
     bl_label = "Culling & Depth"
