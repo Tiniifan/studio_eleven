@@ -7,7 +7,7 @@ class RBGR888:
     has_alpha = False
 
     def encode(self, color):
-        return bytes([(color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF])
+        return bytes([color.b, color.g, color.r])
 
     def decode(self, data, index):
         if len(data) < 3:
