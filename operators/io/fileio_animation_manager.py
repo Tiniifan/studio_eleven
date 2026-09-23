@@ -9,8 +9,8 @@ import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
 
-from ..formats.animation.tracks import *
-from ..formats import  animation_manager, animation_support, res
+from ...formats.animation.tracks import *
+from ...formats import  animation_manager, animation_support, res
 
 ##########################################
 # XMTN Function
@@ -1174,3 +1174,21 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
             return {'CANCELLED'}
 
         return {'FINISHED'}
+
+##########################################
+# Register
+##########################################
+
+classes = (
+    BoneCheckbox,
+    ImportAnimation,
+    ExportAnimation,
+)
+
+def register_animation_manager():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+def unregister_animation_manager():
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)

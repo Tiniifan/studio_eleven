@@ -2,7 +2,7 @@ import bpy
 from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, IntProperty, PointerProperty, StringProperty
 
-from ..formats import res
+from ...formats import res
 
 ##########################################
 # CONST

@@ -2,7 +2,7 @@ import bpy
 from types import SimpleNamespace
 from bpy.props import BoolProperty, BoolVectorProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
 
-from ..formats import atr
+from ...formats import atr
 
 ##########################################
 # CONST

@@ -8,9 +8,9 @@ from mathutils import Vector
 from bpy.types import Operator
 from bpy.props import IntProperty, StringProperty
 
-from ..utils.mesh_faces_utils import MeshFaceUtils
-from ..templates import *
-from .xpck_settings import set_animation_settings
+from ...utils.mesh_faces_utils import MeshFaceUtils
+from ...templates import *
+from ..io.xpck_settings import set_animation_settings
 
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
     bl_idname = "object.convert_single_bind_to_vertex_group"
@@ -502,7 +502,7 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
         box.label(text="Templates")
         box.operator("object.manage_templates", text="Manage Templates")
   
-def register():
+def register_panel_tools():
     bpy.types.Scene.merge_with_berry_bush = bpy.props.BoolProperty(
         name="Merge with Berry Bush",
         description="Merge draw priority with Berry Bush",
@@ -537,7 +537,7 @@ def register():
     
     bpy.utils.register_class(VIEW3D_PT_my_custom_panel)  
     
-def unregister():
+def unregister_panel_tools():
     bpy.utils.unregister_class(ConvertSingleBindToVertexGroup)
     bpy.utils.unregister_class(ChangeAllDrawPriority)
     bpy.utils.unregister_class(AnimationItemsReader)
@@ -557,5 +557,3 @@ def unregister():
     del bpy.types.Scene.merge_with_berry_bush
     del bpy.types.Scene.get_berry_bush_draw_prioty
     del bpy.types.Scene.calculate_draw_prioty_from_camera
-
-register()

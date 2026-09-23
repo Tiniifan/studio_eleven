@@ -213,3 +213,24 @@ def auto_collision_menu_func(self, context):
     self.layout.operator_context = 'INVOKE_DEFAULT'
     self.layout.operator(OBJECT_OT_CreateFloorCollision.bl_idname, icon='MESH_PLANE')
     self.layout.operator(OBJECT_OT_CreateWallCollision.bl_idname, icon='MESH_CUBE')
+
+##########################################
+# Register
+##########################################
+
+classes = (
+    OBJECT_OT_CreateFloorCollision,
+    OBJECT_OT_CreateWallCollision,
+)
+
+def register_auto_collision():
+    for cls in classes:
+        bpy.utils.register_class(cls)
+
+    bpy.types.VIEW3D_MT_object_context_menu.append(auto_collision_menu_func)
+
+def unregister_auto_collision():
+    bpy.types.VIEW3D_MT_object_context_menu.remove(auto_collision_menu_func)
+
+    for cls in reversed(classes):
+        bpy.utils.unregister_class(cls)
