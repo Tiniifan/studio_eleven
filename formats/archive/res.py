@@ -609,7 +609,7 @@ def write_res(magic, items, string_table):
                 writer_res.write(writer_table.getvalue())
                 writer_res.write(writer_data.getvalue())
                 
-                return compress(writer_res.getvalue())
+                return compressor.compress(writer_res.getvalue())
 
 type_order = [
     RESType.MATERIAL_TYPE_UNK1,
@@ -692,4 +692,4 @@ def write_xres(magic, items, string_table):
     while len(data) % 4 != 0:
         data += b"\x00"
     
-    return compress(data)
+    return compressor.compress(data)

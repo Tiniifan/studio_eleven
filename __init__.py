@@ -40,6 +40,9 @@ bl_info = {
 }
 
 def register():
+    # Addon Preferences (Edit > Preferences > Add-ons)
+    register_addon_settings()
+
     # Import-Export
     register_settings()
     register_animation_manager()
@@ -86,6 +89,9 @@ def unregister():
     unregister_xmpr()
     unregister_animation_manager()
     unregister_settings()
+
+    # Addon Preferences
+    unregister_addon_settings()
 
 if __name__ == "__main__":
     register()

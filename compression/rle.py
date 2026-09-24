@@ -20,5 +20,46 @@ def decompress(input_bytes):
             length = flag + 1
             uncompressed_data = input_stream.read(length)
             output_stream.extend(uncompressed_data)
-                
+
     return bytes(output_stream)
+
+def compress(data):
+    out = bytearray()
+    out += int(len(data) << 3 | 0x4).to_bytes(4, 'little')
+
+    raw_start = 0
+    i = 0
+
+    while i < len(data):
+        run = 1
+
+        # A run holds 3 to 130 bytes
+        while i + run < len(data) and data[i + run] == data[i] and run < 130:
+            run += 1
+
+        if run < 3:
+            i += 1
+
+            # Raw blocks hold 1 to 128 bytes
+            if i - raw_start == 128:
+                out.append(127)
+                out += data[raw_start:i]
+                raw_start = i
+
+            continue
+
+        if i > raw_start:
+            out.append(i - raw_start - 1)
+            out += data[raw_start:i]
+
+        out.append(0x80 | (run - 3))
+        out.append(data[i])
+
+        i += run
+        raw_start = i
+
+    if len(data) > raw_start:
+        out.append(len(data) - raw_start - 1)
+        out += data[raw_start:]
+
+    return bytes(out)

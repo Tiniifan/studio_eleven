@@ -3,7 +3,7 @@ import struct
 import io
 
 from ...vendor.trianglestrip.tristrip import stripify, triangulate
-from ...compression import lz10, compressor
+from ...compression import compressor
 
 ##########################################
 # XMPR Write Function
@@ -115,7 +115,7 @@ def write_fixed_tint(tint):
     if tuple(tint) == (1.0, 1.0, 1.0, 1.0):
         return bytes.fromhex("81000000080000803F900300")
 
-    return lz10.compress(struct.pack("<4f", *tint))
+    return compressor.compress(struct.pack("<4f", *tint))
 
 def write_geometrie(indices, vertices, uvs, normals, colors, weights, tints = None):
     out = bytes()
@@ -185,7 +185,7 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     data_triangle = write_triangle(indices)
 
     # XPVB-------------------------------------------
-    compress_geometrie = lz10.compress(data_geometrie)
+    compress_geometrie = compressor.compress(data_geometrie)
     xpvb = bytes()
     xpvb += b"XPVB"
     xpvb += int(16).to_bytes(2, 'little')
@@ -198,7 +198,7 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     xpvb += compress_geometrie
 
     # XPVI-------------------------------------------
-    compress_triangle = lz10.compress(data_triangle) 
+    compress_triangle = compressor.compress(data_triangle) 
     xpvi = bytes()
     xpvi += bytes([int(x,0) for x in ["0x58", "0x50", "0x56", "0x49", "0x02", "0x00", "0x0c", "0x00"] ])
     xpvi += int(len(data_triangle)/2).to_bytes(4, 'little')

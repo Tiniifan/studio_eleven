@@ -37,4 +37,4 @@ def write(cameras):
         out += xcma.get_animation_hash(animation_name).to_bytes(4, 'little')
         out += int(0).to_bytes(4, 'little')
         
-    return lz10.compress(out)
+    return compressor.compress(out)

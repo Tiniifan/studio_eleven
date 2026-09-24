@@ -148,7 +148,7 @@ def pack_archive_bytes(files):
 
     # Encodes filenames in UTF-8 and compresses them with zlib
     name_table = b''.join([filename.encode("utf-8") + b'\x00' for filename in list(files.keys())])
-    compressed_name_table = lz10.compress(name_table)
+    compressed_name_table = compressor.compress(name_table)
     compressed_name_table = fill_to_multiple_of_16(compressed_name_table, 12 * len(file_names) + 20 + len(compressed_name_table))
 
     # Writes XPCK file header

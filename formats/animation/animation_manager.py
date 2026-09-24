@@ -398,7 +398,7 @@ class AnimationManager:
                             headerPos = writer.tell()
                             
             header.DecompSize = len(writer.getvalue()) * 2
-            writerDecomp.write(compress(writer.getvalue()))
+            writerDecomp.write(compressor.compress(writer.getvalue()))
     
     def SaveAnimationDataV2(self, writerDecomp, header):
         with BytesIO() as writer:
@@ -486,7 +486,7 @@ class AnimationManager:
                 trackDataOffset += 8
             
             header.DecompSize = len(writer.getvalue()) * 2
-            writerDecomp.write(compress(writer.getvalue()))
+            writerDecomp.write(compressor.compress(writer.getvalue()))
     
     def ReadFrameDataV1(self, reader, tableOffset, trackNum, trackIndex):
         # Read offset table

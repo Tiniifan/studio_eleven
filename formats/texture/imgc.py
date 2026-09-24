@@ -36,8 +36,8 @@ def write(img, img_format):
     width = img.size[0]
     px = get_pixels(img)
 
-    tile_compress = lz10.compress(image_to_tile(px, height, width))
-    image_data_compress = lz10.compress(encode_image(px, height, width, img_format))
+    tile_compress = compressor.compress(image_to_tile(px, height, width))
+    image_data_compress = compressor.compress(encode_image(px, height, width, img_format))
 
     # Calculate the bit depth and bytes per tile based on the actual format
     bit_depth = img_format.size * 8

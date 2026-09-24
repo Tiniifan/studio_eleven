@@ -168,7 +168,7 @@ def write_v1(animation_name, camera_speed, cam_values):
                 for value in track[key]:
                     motion += struct.pack("<f", value)
 
-        compressed_motion = bytearray(lz10.compress(bytes(motion)))
+        compressed_motion = bytearray(compressor.compress(bytes(motion)))
         write_alignment(compressed_motion)
 
         out += struct.pack("<i", 0x14)
@@ -315,7 +315,7 @@ def write_v2(animation_name, camera_speed, cam_values):
             else:
                 cam_data_stream += struct.pack(f'{len(cam_value[key])}f', *cam_value[key])
 
-        compressed_cam_data = lz10.compress(bytes(cam_data_stream))
+        compressed_cam_data = compressor.compress(bytes(cam_data_stream))
 
         file_bytes.write(struct.pack('4i', 0x10, 0x04, cam_data_start_offset, len(compressed_cam_data) + 0x10))
         file_bytes.write(compressed_cam_data)

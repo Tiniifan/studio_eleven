@@ -68,3 +68,142 @@ def decompress(data, bit_depth):
         decode_headerless(input_stream, output_stream, decompressed_size)
 
         return output_stream.getvalue()
+
+##########################################
+# Huffman Compress Function
+##########################################
+
+# Same tree building and node labelling as Kuriimu2 (https://github.com/FanTranslatorsInternational/Kuriimu2)
+
+def get_symbols(data, bit_depth):
+    if bit_depth == 8:
+        return data
+
+    symbols = bytearray(len(data) * 2)
+    symbols[0::2] = bytes(b & 0xF for b in data)
+    symbols[1::2] = bytes(b >> 4 for b in data)
+
+    return bytes(symbols)
+
+def build_tree(frequencies):
+    queue = []
+
+    for symbol in range(len(frequencies)):
+        if frequencies[symbol] > 0:
+            queue.append({"frequency": frequencies[symbol], "value": symbol, "children": None})
+
+    # The tree needs at least two leaves
+    while len(queue) < 2:
+        queue.append({"frequency": 1, "value": 0, "children": None})
+
+    while len(queue) > 1:
+        queue.sort(key=lambda node: node["frequency"])
+
+        left = queue.pop(0)
+        right = queue.pop(0)
+
+        queue.append({"frequency": left["frequency"] + right["frequency"], "value": 0, "children": [left, right]})
+
+    return queue[0]
+
+def label_tree(root):
+    labels = []
+    pending = [root]
+    root["code"] = 0
+
+    while len(pending) > 0:
+        best_index = 0
+
+        for i in range(len(pending)):
+            if pending[i]["code"] - i < pending[best_index]["code"] - best_index:
+                best_index = i
+
+        node = pending.pop(best_index)
+        node["code"] = len(labels) - node["code"]
+        labels.append(node)
+
+        if node["children"] is None:
+            continue
+
+        for child in reversed(node["children"]):
+            if child["children"] is not None:
+                child["code"] = len(labels)
+                pending.append(child)
+
+    return labels
+
+def get_codes(node, prefix, codes):
+    if node["children"] is None:
+        if prefix == "":
+            codes[node["value"]] = "0"
+        else:
+            codes[node["value"]] = prefix
+    else:
+        get_codes(node["children"][0], prefix + "0", codes)
+        get_codes(node["children"][1], prefix + "1", codes)
+
+    return codes
+
+def write_tree(labels):
+    out = bytearray()
+    out.append(len(labels))
+
+    nodes = [labels[0]]
+
+    for label in labels:
+        if label["children"] is not None:
+            nodes += label["children"]
+
+    for node in nodes:
+        if node["children"] is None:
+            out.append(node["value"])
+        else:
+            # A node can only point 63 pairs further
+            if node["code"] > 0x3F:
+                raise Exception("Huffman tree too deep")
+
+            code = node["code"]
+
+            if node["children"][0]["children"] is None:
+                code |= 0x80
+
+            if node["children"][1]["children"] is None:
+                code |= 0x40
+
+            out.append(code)
+
+    return bytes(out)
+
+def compress(data, bit_depth):
+    symbols = get_symbols(data, bit_depth)
+
+    frequencies = [0] * (1 << bit_depth)
+
+    for symbol in range(len(frequencies)):
+        frequencies[symbol] = symbols.count(symbol)
+
+    root = build_tree(frequencies)
+    labels = label_tree(root)
+    codes = get_codes(root, "", {})
+
+    out = bytes()
+
+    if bit_depth == 4:
+        out += struct.pack('<I', len(data) << 3 | 0x2)
+    else:
+        out += struct.pack('<I', len(data) << 3 | 0x3)
+
+    out += write_tree(labels)
+
+    # The bits are read from the highest bit of little endian ints
+    bits = "".join([codes[symbol] for symbol in symbols])
+    bits += "0" * (-len(bits) % 32)
+
+    words = bytearray(len(bits) // 8)
+
+    for i in range(0, len(bits), 32):
+        words[i // 8:i // 8 + 4] = int(bits[i:i + 32], 2).to_bytes(4, 'little')
+
+    out += bytes(words)
+
+    return out

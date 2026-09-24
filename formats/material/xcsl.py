@@ -56,7 +56,7 @@ def write(name, meshes, thickness, visibility, outline_mesh_data, cmb1, cmb2):
     for i in range(len(meshes)):
         outline_mesh_data_stream.write(zlib.crc32(meshes[i].encode("shift-jis")).to_bytes(4, 'little'))
         
-    outline_mesh_data_compress = compress(outline_mesh_data_stream.getvalue())
+    outline_mesh_data_compress = compressor.compress(outline_mesh_data_stream.getvalue())
     stream.write(outline_mesh_data_compress)
     
     # Align before writing CMB1
@@ -71,7 +71,7 @@ def write(name, meshes, thickness, visibility, outline_mesh_data, cmb1, cmb2):
     # Write CMB1 data
     cmb1_data_stream = io.BytesIO()
     cmb1_data_stream.write(bytes(cmb1))
-    cmb1_data_compress = compress(cmb1_data_stream.getvalue())
+    cmb1_data_compress = compressor.compress(cmb1_data_stream.getvalue())
     stream.write(cmb1_data_compress)
     header['cmb_length1'] = len(cmb1_data_compress) + 12
     
@@ -87,7 +87,7 @@ def write(name, meshes, thickness, visibility, outline_mesh_data, cmb1, cmb2):
     # Write CMB2 data
     cmb2_data_stream = io.BytesIO()
     cmb2_data_stream.write(bytes(cmb2))
-    cmb2_data_compress = compress(cmb2_data_stream.getvalue())
+    cmb2_data_compress = compressor.compress(cmb2_data_stream.getvalue())
     stream.write(cmb2_data_compress)
     header['cmb_length2'] = len(cmb2_data_compress) + 12
     
