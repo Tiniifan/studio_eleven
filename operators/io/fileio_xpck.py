@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty, IntProperty
 
 import bmesh
+import numpy as np
 
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
@@ -18,6 +19,8 @@ from .fileio_animation_manager import *
 from .fileio_xcma import *
 from .xpck_settings import *
 from ...formats.texture import pixel_formats
+from ...formats.texture.best_pixel_format import find_best_pixel_format
+from ...compression import compressor
 from ..panels.material_render import state_from_properties, default_state
 from ..panels.material_textures import PIXEL_FORMAT_ITEMS, WRAP_ITEMS, FILTER_ITEMS, MIPMAP_ITEMS, TEXTURE_MODE_ITEMS, SAMPLER_PROPERTIES, to_pixel_format, properties_to_sampler
 from ...utils.properties import *
@@ -771,6 +774,38 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
 class XpckExportError(Exception):
     pass
 
+def get_image_pixels(image):
+    """Give the pixels of an image as rgba bytes, the rows from the top, and its size."""
+    width = image.size[0]
+    height = image.size[1]
+    channels = image.channels
+
+    pixels = np.zeros(width * height * channels, dtype=np.float32)
+    image.pixels.foreach_get(pixels)
+    pixels = np.round(np.clip(pixels, 0.0, 1.0) * 255).astype(np.uint8).reshape(height, width, channels)
+
+    rgba = np.full((height, width, 4), 255, dtype=np.uint8)
+
+    if channels < 3:
+        # A gray image
+        for i in range(3):
+            rgba[:, :, i] = pixels[:, :, 0]
+
+        if channels == 2:
+            rgba[:, :, 3] = pixels[:, :, 1]
+    else:
+        rgba[:, :, :channels] = pixels[:, :, :4]
+
+    # Blender stores the rows from the bottom
+    return rgba[::-1], width, height
+
+def get_export_compressions():
+    # The compressions best_pixel_format can count on: all of them, or the one chosen in the addon preferences
+    if compressor.default_compression == compressor.BEST_COMPRESSION:
+        return compressor.LEVEL5_COMPRESSIONS
+
+    return [compressor.default_compression]
+
 def make_atr(material_name, template):
     material = bpy.data.materials.get(material_name)
 
@@ -801,12 +836,18 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     # Make images
     imgcs = []
     for texture_name, texture_data in textures.items():
-        get_image_format = getattr(pixel_formats, texture_data['format'], None)
+        rgba, width, height = get_image_pixels(bpy.data.images.get(texture_name))
+        format_name = texture_data['format']
+
+        if context.scene.level5_best_pixel_format:
+            format_name = find_best_pixel_format(rgba, width, height, get_export_compressions())
+
+        get_image_format = getattr(pixel_formats, format_name, None)
 
         if get_image_format:
-            imgcs.append(imgc.write(bpy.data.images.get(texture_name), get_image_format()))
+            imgcs.append(imgc.write(rgba, width, height, get_image_format()))
         else:
-            raise XpckExportError(f"Class {texture_data['format']} not found in pixel_formats.")
+            raise XpckExportError(f"Class {format_name} not found in pixel_formats.")
 
     # Make animations
     mtns = []
@@ -1436,7 +1477,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 meshes_props = self.get_exported_meshes_names(context)
 
             groupbox = layout.box()
-            groupbox.label(text="Edited in Material > Level 5 > Textures", icon='INFO')
+            groupbox.prop(context.scene, "level5_best_pixel_format")
+
+            if context.scene.level5_best_pixel_format:
+                groupbox.label(text="Studio Eleven computes the best pixel format of each texture during the export", icon='INFO')
+            else:
+                groupbox.label(text="Edited in Material > Level 5 > Textures", icon='INFO')
+
             box = groupbox.box()
             first_items = {}
 
@@ -1445,7 +1492,9 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                     if texture_prop.name not in same_texture:
                         row = box.row(align=True)
                         row.label(text=texture_prop.name, icon='TEXTURE')
-                        row.label(text=texture_prop.bl_rna.properties['format'].enum_items[texture_prop.format].name)
+
+                        if not context.scene.level5_best_pixel_format:
+                            row.label(text=texture_prop.bl_rna.properties['format'].enum_items[texture_prop.format].name)
 
                         first_items[texture_prop.name] = texture_prop
                         same_texture.append(texture_prop.name)
@@ -2038,6 +2087,15 @@ def register_xpck():
     for cls in classes:
         bpy.utils.register_class(cls)
 
+    # Saved in the .blend, the export menu shows it as the user left it
+    bpy.types.Scene.level5_best_pixel_format = BoolProperty(
+        name="Use the best pixel format",
+        description="Pick for every texture the pixel format that makes the lightest file and keeps the image, instead of the one of its texture slot",
+        default=True
+    )
+
 def unregister_xpck():
+    del bpy.types.Scene.level5_best_pixel_format
+
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

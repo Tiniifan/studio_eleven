@@ -2,62 +2,46 @@ import struct
 import numpy as np
 from io import BytesIO
 
-from .pixel_formats.color import Color
 from .img_swizzle import *
 
-zorder = [  0, 2, 8, 10, 32, 34, 40, 42,
-            1, 3, 9, 11, 33, 35, 41, 43,
-            4, 6, 12, 14, 36, 38, 44, 46,
-            5, 7, 13, 15, 37, 39, 45, 47,
-            16, 18, 24, 26, 48, 50, 56, 58,
-            17, 19, 25, 27, 49, 51, 57, 59,
-            20, 22, 28, 30, 52, 54, 60, 62,
-            21, 23, 29, 31, 53, 55, 61, 63 ]   
+##########################################
+# IMGC Encode Function
+##########################################
 
-def encode_image(px, height, width, img_format):
-    out = bytes()
-    tiles = []
-    
+def get_file_pixels(rgba, width, height):
+    # Give the pixels of an image (rows from the top, rgba bytes) in the order of the file.
+    # The image is padded with transparent black to whole 8x8 tiles
+    padded_width = (width + 7) & ~7
+    padded_height = (height + 7) & ~7
 
-    for h in range(0, height, 8):
-        for w in range(0, width, 8):
-            tile = []
+    padded = np.zeros((padded_height, padded_width, 4), dtype=np.uint8)
+    padded[:height, :width] = rgba
 
-            for bh in range(8):
-                for bw in range(8):
-                    tile.append(px[(w+bw) + (h+bh) * width])
+    x, y = imgc_swizzle_points(padded_width, padded_height, padded_width * padded_height)
 
-            if tile not in tiles:
-                tiles.append(tile)
-                
-                for bh in range(8):
-                    for bw in range(8):
-                        pos = bw + bh * 8
-                        for i in range(len(zorder)):
-                            if zorder[i] == pos:
-                                color = Color(tile[i])
-                                out += img_format.encode(color)
-                                break
-    return out
+    return padded[y, x]
 
-def image_to_tile(px, height, width):
-    out = bytes()
-    tiles = []
-    
-    for h in range(0, height, 8):
-        for w in range(0, width, 8):
-            tile = []
+def encode_tiles(pixels, img_format, data = None):
+    # Encode the pixels (or take them already encoded), then keep every different 8x8 tile once: give the tile table and the tile data.
+    if data is None:
+        data = img_format.encode(pixels)
 
-            for bh in range(8):
-                for bw in range(8):
-                    tile.append(px[(w+bw) + (h+bh) * width])
-            
-            if tile not in tiles:
-                tiles.append(tile)
-                out += int(len(tiles)-1).to_bytes(2, 'little')
-            else:
-                out += int(tiles.index(tile)).to_bytes(2, 'little')          
-    return out
+    data = np.frombuffer(data, dtype=np.uint8)
+
+    tile_size = 64 * img_format.bit_depth // 8
+    tiles = data.reshape(-1, tile_size)
+
+    # The tiles are numbered in the order they first appear
+    unique_tiles, first_indexes, inverse = np.unique(tiles, axis=0, return_index=True, return_inverse=True)
+    order = np.argsort(first_indexes)
+
+    ranks = np.zeros(len(order), dtype=np.int64)
+    ranks[order] = np.arange(len(order))
+
+    table = ranks[inverse.reshape(-1)].astype('<u2').tobytes()
+    tile_data = unique_tiles[order].tobytes()
+
+    return table, tile_data
 
 ##########################################
 # IMGC Decode Function
@@ -84,11 +68,13 @@ def decode_pixels(image_format, data, pixel_count):
         return px[:, 3], px[:, 2], px[:, 1], px[:, 0]
     elif name == "RGBA4":
         value = (px[:, 1] << 8) | px[:, 0]
-        return ((value >> 12) & 0xF) * 16, ((value >> 8) & 0xF) * 16, ((value >> 4) & 0xF) * 16, (value & 0xF) * 16
+        return ((value >> 12) & 0xF) * 17, ((value >> 8) & 0xF) * 17, ((value >> 4) & 0xF) * 17, (value & 0xF) * 17
     elif name == "RGBA5551":
-        b1 = px[:, 0]
-        b2 = px[:, 1]
-        return (b1 >> 3) & 0x1F, (b1 & 0x07) | ((b2 >> 6) & 0x03), (b2 >> 1) & 0x1F, (b2 & 0x01) * 255
+        value = (px[:, 1] << 8) | px[:, 0]
+        r = (value >> 11) & 0x1F
+        g = (value >> 6) & 0x1F
+        b = (value >> 1) & 0x1F
+        return (r << 3) | (r >> 2), (g << 3) | (g >> 2), (b << 3) | (b >> 2), (value & 0x01) * 255
     elif name == "RBGR888":
         return px[:, 2], px[:, 1], px[:, 0], opaque
     elif name == "RGB565":
@@ -98,7 +84,8 @@ def decode_pixels(image_format, data, pixel_count):
         b = value & 0x1F
         return (r << 3) | (r >> 2), (g << 2) | (g >> 4), (b << 3) | (b >> 2), opaque
     elif name == "LA8":
-        return px[:, 0], px[:, 0], px[:, 0], px[:, 1]
+        # The alpha is the low byte, stored first
+        return px[:, 1], px[:, 1], px[:, 1], px[:, 0]
     elif name == "L8":
         return px[:, 0], px[:, 0], px[:, 0], opaque
     elif name == "A8":

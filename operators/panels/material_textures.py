@@ -24,11 +24,20 @@ LEGACY_WRAP_GROUP_PREFIX = "Level Five Wrap"
 PIXEL_FORMAT_ITEMS = [
     ('RGBA8', "RGBA8", "32 bits per pixel with the alpha, the best quality"),
     ('RGBA4', "RGBA4", "16 bits per pixel, 16 levels for each channel and the alpha"),
+    ('RGBA5551', "RGBA5551", "16 bits per pixel, 32 levels for each channel, the alpha is on or off"),
     ('RBGR888', "RBGR888", "24 bits per pixel, no alpha"),
     ('RGB565', "RGB565", "16 bits per pixel, no alpha"),
+    ('ETC1', "ETC1", "4 bits per pixel, compressed by blocks of 4x4 pixels, no alpha. The format of most textures of the games"),
+    ('ETC1A4', "ETC1A4", "8 bits per pixel, ETC1 with 16 levels of alpha"),
+    ('LA8', "LA8", "16 bits per pixel, gray with the alpha"),
+    ('LA4', "LA4", "8 bits per pixel, 16 levels of gray and of alpha"),
+    ('L8', "L8", "8 bits per pixel, gray, no alpha"),
+    ('L4', "L4", "4 bits per pixel, 16 levels of gray, no alpha"),
+    ('A8', "A8", "8 bits per pixel, only the alpha, the color is white"),
+    ('A4', "A4", "4 bits per pixel, 16 levels of alpha, the color is white"),
 ]
 
-FORMATS_WITHOUT_ALPHA = ['RBGR888', 'RGB565']
+FORMATS_WITHOUT_ALPHA = ['RBGR888', 'RGB565', 'ETC1', 'L8', 'L4']
 
 WRAP_ITEMS = [
     ('REPEAT', "Repeat", "The texture is tiled over and over"),

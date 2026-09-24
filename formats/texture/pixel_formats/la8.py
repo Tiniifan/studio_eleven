@@ -1,16 +1,18 @@
-from struct import unpack
-from .color import Color
+import numpy as np
+
+from .color import get_luminance
 
 class LA8:
     name = "LA8"
     size = 2
-    has_alpha = True
+    bit_depth = 16
     type = 0x0A
-    
-    def encode(self, color):
-        return bytes([(((0x4CB2 * (color & 0xFF) + 0x9691 * ((color >> 8) & 0xFF) + 0x1D3E * ((color >> 8) & 0xFF)) >> 16) & 0xFF)])
-    
-    def decode(self, data, index):
-        l, a = unpack("2B", data)
-        r = g = b = l
-        return Color([r, g, b, a])
+    has_alpha = True
+
+    def encode(self, pixels):
+        # The alpha is the low byte, stored first
+        out = np.zeros((len(pixels), 2), dtype=np.uint8)
+        out[:, 0] = pixels[:, 3]
+        out[:, 1] = get_luminance(pixels)
+
+        return out.tobytes()

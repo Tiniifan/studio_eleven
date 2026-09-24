@@ -1,17 +1,12 @@
-from .color import Color
+import numpy as np
 
 class RBGR888:
     name = "RBGR888"
     size = 3
+    bit_depth = 24
     type = 3
     has_alpha = False
 
-    def encode(self, color):
-        return bytes([color.b, color.g, color.r])
-
-    def decode(self, data, index):
-        if len(data) < 3:
-            return Color([0, 0, 0])
-
-        rgb = (data[2] << 16) | (data[1] << 8) | data[0]
-        return Color([(rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255])
+    def encode(self, pixels):
+        # Stored b, g, r
+        return np.ascontiguousarray(pixels[:, 2::-1]).tobytes()

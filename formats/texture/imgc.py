@@ -4,66 +4,42 @@ import numpy as np
 from io import BytesIO
 
 from . import img_tool, pixel_formats
-from .img_tool import encode_image, image_to_tile
 from ...compression import *
 
 ##########################################
 # IMGC Write Function
 ##########################################
 
-def flip_vertically(pixels, height, width):
-    transposed_pixels = []
-    for y in range(height):
-        for x in range(width):
-            index = y * width + x
-            transposed_index = (height - y - 1) * width + x
-            transposed_pixels.append(pixels[transposed_index])
-    return transposed_pixels
-    
-def get_pixels(img):
-    px = []
-    
-    img_pixels = list(img.pixels)
-    for i in range(0, len(img_pixels), 4):
-        px.append([int(img_pixels[i]*255), int(img_pixels[i+1]*255), int(img_pixels[i+2]*255), int(img_pixels[i+3]*255)])
-     
-    return flip_vertically(px, img.size[1], img.size[0])
-
-def write(img, img_format):
+def write(rgba, width, height, img_format):
+    # rgba holds the rows of the image from the top, 4 bytes per pixel
     out = bytes()
-    
-    height = img.size[1]
-    width = img.size[0]
-    px = get_pixels(img)
 
-    tile_compress = compressor.compress(image_to_tile(px, height, width))
-    image_data_compress = compressor.compress(encode_image(px, height, width, img_format))
+    pixels = img_tool.get_file_pixels(rgba, width, height)
+    table, tile_data = img_tool.encode_tiles(pixels, img_format)
 
-    # Calculate the bit depth and bytes per tile based on the actual format
-    bit_depth = img_format.size * 8
-    bytes_per_tile = img_format.size * 64
+    table_compress = compressor.compress(table)
+    tile_data_compress = compressor.compress(tile_data)
+
+    # The tile data starts on 4 bytes
+    table_length = (len(table_compress) + 3) & ~3
 
     out += bytes.fromhex("494D4743303000003000")
     out += int(img_format.type).to_bytes(1, 'little')
-    
-    out += bytes.fromhex("0101")                        # padding + CombineFormat
-    out += int(bit_depth).to_bytes(1, 'little')         # BitDepth dynamique
-    out += int(bytes_per_tile).to_bytes(2, 'little')    # BytesPerTile dynamique
-    
+    out += bytes.fromhex("0101")
+    out += int(img_format.bit_depth).to_bytes(1, 'little')
+    out += int(64 * img_format.bit_depth // 8).to_bytes(2, 'little')
     out += width.to_bytes(2, 'little')
     out += height.to_bytes(2, 'little')
     out += bytes.fromhex("3000000030000100480000000300000000000000000000000000000000000000")
-    out += int(len(tile_compress)).to_bytes(4, 'little')
-    out += int(len(tile_compress)).to_bytes(4, 'little')
-    out += int(len(image_data_compress)).to_bytes(4, 'little')
+    out += int(len(table_compress)).to_bytes(4, 'little')
+    out += int(table_length).to_bytes(4, 'little')
+    out += int(len(tile_data_compress)).to_bytes(4, 'little')
     out += int(0).to_bytes(8, 'little')
-    out += tile_compress
-    out += image_data_compress
+    out += table_compress
+    out += bytes(table_length - len(table_compress))
+    out += tile_data_compress
+    out += bytes(-len(out) % 16)
 
-    missing_bytes = 16 - len(out) % 16
-    if missing_bytes > 0:
-        out += bytes.fromhex("".zfill(missing_bytes * 2))
-    
     return out
 
 ##########################################

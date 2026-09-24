@@ -1,34 +1,16 @@
-from .color import Color
+from .color import quantize, pack_shorts
 
 class RGBA4:
     name = "RGBA4"
     size = 2
+    bit_depth = 16
     type = 1
     has_alpha = True
-    
-    def encode(self, color):
-        r = color.r >> 4
-        g = color.g >> 4
-        b = color.b >> 4
-        a = color.a >> 4
 
-        rgba4 = (r << 12) | (g << 8) | (b << 4) | a
+    def encode(self, pixels):
+        r = quantize(pixels[:, 0], 4)
+        g = quantize(pixels[:, 1], 4)
+        b = quantize(pixels[:, 2], 4)
+        a = quantize(pixels[:, 3], 4)
 
-        data = bytearray([rgba4 & 0xFF, rgba4 >> 8])
-
-        return data
-
-    def decode(self, data, index):
-        rgba4 = (data[1] << 8) | data[0]
-
-        r = (rgba4 >> 12) & 0xF
-        g = (rgba4 >> 8) & 0xF
-        b = (rgba4 >> 4) & 0xF
-        a = rgba4 & 0xF
-
-        r *= 16
-        g *= 16
-        b *= 16
-        a *= 16
-
-        return Color([r, g, b, a])
+        return pack_shorts((r << 12) | (g << 8) | (b << 4) | a)

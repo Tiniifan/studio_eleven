@@ -441,22 +441,23 @@ def get_smallest(sizes, methods):
 
     return best_method
 
-def find_best_compression(data, methods = LEVEL5_COMPRESSIONS):
-    """Give the compression method of methods that makes data the smallest, without compressing it."""
+def get_best_compression(data, methods = LEVEL5_COMPRESSIONS, precise = False):
+    """Give the compression method of methods that makes data the smallest and that size, without compressing it."""
     if len(methods) == 0:
         raise Exception("No compression method to choose from")
 
+    array = np.frombuffer(bytes(data), dtype=np.uint8)
+
+    # Only one choice: its size is still wanted (best_pixel_format compares the sizes of several pixel formats)
     if len(methods) == 1:
-        return methods[0]
+        return methods[0], get_compressed_sizes(array, methods)[methods[0]]
 
     # Nothing to compress
-    if len(data) == 0:
+    if len(array) == 0:
         if NO_COMPRESSION in methods:
-            return NO_COMPRESSION
+            return NO_COMPRESSION, 4
 
-        return methods[0]
-
-    array = np.frombuffer(bytes(data), dtype=np.uint8)
+        return methods[0], 4
 
     # 1. The exact sizes (stored, Huffman, RLE), a few numpy passes each
     exact_methods = [method for method in methods if method not in (LZ10, ZLIB)]
@@ -465,14 +466,23 @@ def find_best_compression(data, methods = LEVEL5_COMPRESSIONS):
     if ZLIB in methods:
         sizes[ZLIB] = get_lz_size(array, ZLIB)
 
-    # 2. The LZ10 estimate, it stops early once it is smaller than every other size
+    # 2. The LZ10 estimate, it stops early once it is smaller than every other size. The size is then only an upper
+    # bound: precise asks for the whole estimate, to compare the sizes of several data (best_pixel_format)
     if LZ10 in methods:
         best_other = get_smallest(sizes, methods)
         stop_below = None
 
-        if best_other is not None:
+        if best_other is not None and not precise:
             stop_below = sizes[best_other]
 
         sizes[LZ10] = get_lz_size(array, LZ10, stop_below)
 
-    return get_smallest(sizes, methods)
+    best_method = get_smallest(sizes, methods)
+
+    return best_method, sizes[best_method]
+
+def find_best_compression(data, methods = LEVEL5_COMPRESSIONS):
+    """Give the compression method of methods that makes data the smallest, without compressing it."""
+    best_method, best_size = get_best_compression(data, methods)
+
+    return best_method
