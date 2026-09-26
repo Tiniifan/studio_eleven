@@ -407,23 +407,6 @@ class RemoveDuplicateFaceModel(bpy.types.Operator):
         self.report({'INFO'}, f"Removed {removed_count} duplicate faces from mesh '{obj.name}'. {remaining_face_count} faces remaining.")
         return {'FINISHED'}
 
-class AssignDefaultRenderDefault(bpy.types.Operator):
-    bl_idname = "object.assign_default_render_default"
-    bl_label = "Reset Render Defaults"
-    bl_description = "Give the selected meshes the render program a new mesh gets: the one of the template, or the default of the game engine with StudioRender"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    def execute(self, context):
-        meshes = {obj.data for obj in context.selected_objects if obj.type == 'MESH'}
-
-        for mesh in meshes:
-            mesh.level5_properties.render_default = ""
-            mesh.level5_properties.unresolved_render_program = ""
-            rendering_project.init_new_mesh(mesh, context.scene)
-
-        self.report({'INFO'}, f"{len(meshes)} mesh(es) reset")
-        return {'FINISHED'}
-
 class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -463,8 +446,6 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
         else:
             box.label(text="Template")
             box.prop(context.scene, "level5_template", text="")
-
-        box.operator("object.assign_default_render_default", text="Reset Render Defaults")
   
 def register_panel_tools():
     bpy.types.Scene.merge_with_berry_bush = bpy.props.BoolProperty(
@@ -493,8 +474,6 @@ def register_panel_tools():
     bpy.utils.register_class(DuplicateFaceModel)
     bpy.utils.register_class(RemoveDuplicateFaceModel)
     
-    bpy.utils.register_class(AssignDefaultRenderDefault)
-    
     bpy.utils.register_class(VIEW3D_PT_my_custom_panel)  
     
 def unregister_panel_tools():
@@ -505,8 +484,6 @@ def unregister_panel_tools():
     bpy.utils.unregister_class(CalculateDrawPriority)
     bpy.utils.unregister_class(DuplicateFaceModel)
     bpy.utils.unregister_class(RemoveDuplicateFaceModel)
-    
-    bpy.utils.unregister_class(AssignDefaultRenderDefault)
     
     bpy.utils.unregister_class(VIEW3D_PT_my_custom_panel)
     

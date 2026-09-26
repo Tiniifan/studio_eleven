@@ -25,20 +25,32 @@ SCENE_INSTALLED_PROPERTY = "level5_installed_engine"
 # StudioRender
 ##########################################
 
-def is_studio_render_enabled():
-    """StudioRender, the game engines and their install are only there once the preference unlocks them."""
+def get_addon_preferences():
     addon = bpy.context.preferences.addons.get(ADDON_ID)
 
     if addon is None:
-        return False
+        return None
 
-    preferences = addon.preferences
+    return addon.preferences
+
+def is_studio_render_enabled():
+    """StudioRender, the game engines and their install are only there once the preference unlocks them."""
+    preferences = get_addon_preferences()
+
+    if preferences is None:
+        return False
 
     return getattr(preferences, "studio_render_unlocked", False) and getattr(preferences, "studio_render_enabled", False)
 
 ##########################################
 # Project template
 ##########################################
+
+def get_default_template_id():
+    """Template of a new blend, chosen in the addon preferences."""
+    template_id = getattr(get_addon_preferences(), "default_template", DEFAULT_TEMPLATE_ID)
+
+    return get_template(template_id)["id"]
 
 def get_scene_template(scene=None):
     scene = scene or bpy.context.scene
@@ -75,6 +87,15 @@ def get_scene_engine_id(scene=None):
         return get_scene_template(scene)["engine"]
 
     return getattr(scene, SCENE_ENGINE_PROPERTY, DEFAULT_ENGINE_ID)
+
+def get_default_engine_id(scene):
+    """Game engine of a new blend with StudioRender, chosen in the addon preferences, the one of the template if it isn't installed."""
+    engine_id = getattr(get_addon_preferences(), "default_game_engine_id", DEFAULT_ENGINE_ID)
+
+    if not game_manager.is_usable(engine_id):
+        return get_scene_template(scene)["engine"]
+
+    return engine_id
 
 def get_scene_engine(scene=None):
     return get_engine(get_scene_engine_id(scene))
@@ -269,6 +290,15 @@ def update_scene_template(self, context):
     setattr(self, SCENE_ENGINE_PROPERTY, engine_id)
 
 def init_scene_engine(scene):
+    # A new blend (never saved, template never written) gets the template and the game engine of the preferences
+    if not bpy.data.filepath and SCENE_TEMPLATE_PROPERTY not in scene.keys():
+        setattr(scene, SCENE_TEMPLATE_PROPERTY, get_default_template_id())
+
+        if is_studio_render_enabled():
+            engine_id = get_default_engine_id(scene)
+            setattr(scene, SCENE_LAST_ENGINE_PROPERTY, engine_id)
+            setattr(scene, SCENE_ENGINE_PROPERTY, engine_id)
+
     # The property is absent from the scene until it has been written once
     if SCENE_ENGINE_PROPERTY not in scene.keys():
         engine_id = get_scene_template(scene)["engine"]

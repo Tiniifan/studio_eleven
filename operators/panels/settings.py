@@ -4,6 +4,8 @@ from bpy.props import BoolProperty, EnumProperty, StringProperty
 
 from ...compression import compressor
 from ...rendering import project as rendering_project, game_setup
+from ...rendering.engines import DEFAULT_ENGINE_ID
+from ...templates import TEMPLATE_ITEMS, DEFAULT_TEMPLATE_ID
 
 ##########################################
 # CONST
@@ -62,6 +64,17 @@ def update_studio_render(self, context):
     # Without StudioRender the scenes go back to the game engine of their template
     rendering_project.sync_scene_engines()
 
+def get_default_game_engine(self):
+    ids = [item[0] for item in rendering_project.installed_engine_items()]
+
+    if self.default_game_engine_id in ids:
+        return ids.index(self.default_game_engine_id)
+
+    return 0
+
+def set_default_game_engine(self, value):
+    self.default_game_engine_id = rendering_project.installed_engine_items()[value][0]
+
 ##########################################
 # Register class
 ##########################################
@@ -108,6 +121,27 @@ class StudioElevenSettings(bpy.types.AddonPreferences):
         update=update_default_compression
     )
 
+    default_template: EnumProperty(
+        name="Default Template",
+        description="Template of a new blend, the Studio Eleven panel can still change it for the blend",
+        items=TEMPLATE_ITEMS,
+        default=DEFAULT_TEMPLATE_ID
+    )
+
+    # The engine is kept by its id, the list of the installed engines changes
+    default_game_engine_id: StringProperty(
+        default=DEFAULT_ENGINE_ID,
+        options={'HIDDEN'}
+    )
+
+    default_game_engine: EnumProperty(
+        name="Default Game Engine",
+        description="Game engine of a new blend, the Studio Eleven panel can still change it for the blend",
+        items=rendering_project.installed_engine_items,
+        get=get_default_game_engine,
+        set=set_default_game_engine
+    )
+
     studio_render_password: StringProperty(
         name="Password",
         description="Password of the options in beta",
@@ -136,10 +170,17 @@ class StudioElevenSettings(bpy.types.AddonPreferences):
         layout.prop(self, "default_compression")
 
         if not self.studio_render_unlocked:
+            layout.prop(self, "default_template")
+
             row = layout.row(align=True)
             row.prop(self, "studio_render_password")
             row.operator("studio_eleven.unlock_studio_render")
             return
+
+        if self.studio_render_enabled:
+            layout.prop(self, "default_game_engine")
+        else:
+            layout.prop(self, "default_template")
 
         layout.prop(self, "studio_render_enabled")
 
