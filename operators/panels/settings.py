@@ -121,6 +121,16 @@ class StudioElevenSettings(bpy.types.AddonPreferences):
         update=update_default_compression
     )
 
+    animation_import_mode: EnumProperty(
+        name="Animation Import",
+        description="How the animations of an imported archive are given to the armatures",
+        items=[
+            ('LEGACY', "Legacy", "The armature of the archive, the selected armature, or the one the addon finds when none is selected"),
+            ('NEW', "New", "A menu asks the armature and the tracks of each animation"),
+        ],
+        default='LEGACY'
+    )
+
     default_template: EnumProperty(
         name="Default Template",
         description="Template of a new blend, the Studio Eleven panel can still change it for the blend",
@@ -168,6 +178,7 @@ class StudioElevenSettings(bpy.types.AddonPreferences):
         layout = self.layout
 
         layout.prop(self, "default_compression")
+        layout.prop(self, "animation_import_mode")
 
         if not self.studio_render_unlocked:
             layout.prop(self, "default_template")

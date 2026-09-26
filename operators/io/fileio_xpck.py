@@ -26,6 +26,7 @@ from ..panels.material_lighting import write_material_lighting
 from ..panels.material_textures import PIXEL_FORMAT_ITEMS, WRAP_ITEMS, FILTER_ITEMS, MIPMAP_ITEMS, TEXTURE_MODE_ITEMS, SAMPLER_PROPERTIES, to_pixel_format, properties_to_sampler
 from ...utils.properties import *
 from ...utils.import_files import get_import_filepaths
+from ..panels.settings import get_addon_settings
 from ...rendering import project as rendering_project
 from ...controls import CameraElevenObject
 
@@ -771,6 +772,33 @@ def apply_animation_imports(context, session, choices):
         scene.frame_end = max_frame
 
     scene.frame_set(scene.frame_current)
+
+def apply_legacy_animation_imports(context, session, selected_armature):
+    """Legacy import: every track on the armature of the archive, the selected armature, or the one the addon finds."""
+    choices = []
+    used_armatures = set()
+    missing = 0
+
+    for group in session["animation_groups"]:
+        armature_name = group["armature_name"]
+
+        if armature_name is None or armature_name not in bpy.data.objects:
+            if selected_armature is not None:
+                armature_name = selected_armature
+            else:
+                armature_name = find_best_armature(context, group, used_armatures)
+
+        if armature_name == 'NONE':
+            missing += 1
+            continue
+
+        used_armatures.add(armature_name)
+        choices.append((group, armature_name, ['bone', 'uv', 'material']))
+
+    apply_animation_imports(context, session, choices)
+
+    if missing > 0 and session["report"]:
+        session["report"]({'WARNING'}, f"{missing} animation(s) not imported: no armature matches them")
 
 # Animation groups of the last read archive, used by the animation menu
 import_session = None
@@ -2316,14 +2344,29 @@ class ImportXC(bpy.types.Operator, ImportHelper):
     def execute(self, context):
         global import_session
 
+        # The armature selected before the import, the archives make their own ones active
+        selected_armature = None
+        if context.active_object and context.active_object.type == 'ARMATURE':
+            selected_armature = context.active_object.name
+
         import_session = new_import_session(self.report)
 
         for filepath in get_import_filepaths(self):
             fileio_open_xpck(context, filepath, session=import_session)
 
-        # Let the user choose the armature of each animation
-        if import_session["animation_groups"]:
+        if not import_session["animation_groups"]:
+            return {'FINISHED'}
+
+        mode = 'LEGACY'
+        settings = get_addon_settings(context)
+        if settings is not None:
+            mode = settings.animation_import_mode
+
+        if mode == 'NEW':
+            # Let the user choose the armature of each animation
             bpy.ops.import_xc.choose_animations('INVOKE_DEFAULT')
+        else:
+            apply_legacy_animation_imports(context, import_session, selected_armature)
 
         return {'FINISHED'}
 
