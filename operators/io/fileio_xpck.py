@@ -25,6 +25,7 @@ from ..panels.material_render import state_from_properties, default_state
 from ..panels.material_lighting import write_material_lighting
 from ..panels.material_textures import PIXEL_FORMAT_ITEMS, WRAP_ITEMS, FILTER_ITEMS, MIPMAP_ITEMS, TEXTURE_MODE_ITEMS, SAMPLER_PROPERTIES, to_pixel_format, properties_to_sampler
 from ...utils.properties import *
+from ...utils.import_files import get_import_filepaths
 from ...rendering import project as rendering_project
 from ...controls import CameraElevenObject
 
@@ -612,9 +613,11 @@ def build_archive(context, content, session):
 
         session["max_frame"] = max(session["max_frame"], frame)
 
-def fileio_open_xpck(context, filepath, report=None):
+def fileio_open_xpck(context, filepath, report=None, session=None):
     """Import the meshes, armatures and cameras of an archive, the animations are kept in the session."""
-    session = new_import_session(report)
+    # The archives imported together share a session, the animation menu shows all their animations
+    if session is None:
+        session = new_import_session(report)
 
     if context.object and context.object.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -2307,11 +2310,16 @@ class ImportXC(bpy.types.Operator, ImportHelper):
         default="*.xc;*.xv;*.pck",
         options={'HIDDEN'}
     )
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
 
     def execute(self, context):
         global import_session
 
-        import_session = fileio_open_xpck(context, self.filepath, self.report)
+        import_session = new_import_session(self.report)
+
+        for filepath in get_import_filepaths(self):
+            fileio_open_xpck(context, filepath, session=import_session)
 
         # Let the user choose the armature of each animation
         if import_session["animation_groups"]:

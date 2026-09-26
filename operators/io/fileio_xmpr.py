@@ -4,7 +4,7 @@ import json
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
-from bpy.props import StringProperty, EnumProperty
+from bpy.props import StringProperty, EnumProperty, CollectionProperty
 
 import bmesh
 import numpy as np
@@ -15,6 +15,7 @@ from mathutils import Matrix, Quaternion, Vector
 from ...formats import xmpr, atr, res
 from ...rendering import project as rendering_project
 from ...utils.mesh_faces_utils import MeshFaceUtils
+from ...utils.import_files import get_import_filepaths
 from ..panels.material_textures import apply_material_textures, suspend_updates, resume_updates, sampler_to_properties
 from ..panels.material_render import state_to_properties, detect_render_mode
 
@@ -709,9 +710,14 @@ class ImportXMPR(bpy.types.Operator, ImportHelper):
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".prm"
     filter_glob: StringProperty(default="*.prm", options={'HIDDEN'})
-    
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
+
     def execute(self, context):
-            return fileio_open_xmpr(context, self.filepath)
+        for filepath in get_import_filepaths(self):
+            fileio_open_xmpr(context, filepath)
+
+        return {'FINISHED'}
 
 ##########################################
 # Register

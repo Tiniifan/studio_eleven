@@ -7,6 +7,7 @@ from bpy.props import StringProperty, EnumProperty, CollectionProperty
 
 from ...formats import xcma
 from ...controls import CameraElevenObject
+from ...utils.import_files import get_import_filepaths
 
 ##########################################
 # XPCK Function
@@ -256,9 +257,14 @@ class ImportXCMA(bpy.types.Operator, ImportHelper):
     bl_options = {'PRESET', 'UNDO'}
     filename_ext = ".cmr2"
     filter_glob: StringProperty(default="*.cmr2", options={'HIDDEN'})
-    
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
+
     def execute(self, context):
-            return fileio_open_xcma(context, self.filepath)
+        for filepath in get_import_filepaths(self):
+            fileio_open_xcma(context, filepath)
+
+        return {'FINISHED'}
 
 ##########################################
 # Register

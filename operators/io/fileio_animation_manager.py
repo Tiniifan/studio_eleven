@@ -13,6 +13,7 @@ from ...formats.animation.tracks import *
 from ...formats import  animation_manager, animation_support, animation_bake, res
 from ..panels.material_textures import add_material_animation_nodes, TRANSPARENCY_NODE, ATTRIBUTE_NODE
 from .fileio_xmpr import PARENT_NODE_PROPERTY
+from ...utils.import_files import get_import_filepaths
 
 ##########################################
 # CONST
@@ -558,7 +559,7 @@ def create_animation(animData, active_obj, action=None, track_types=None, materi
 
     return action
 
-def fileio_open_animation(operator, context, filepath):
+def fileio_open_animation(operator, context, filepath, keep_action=False):
     # Get file extension
     file_extension = os.path.splitext(filepath)[1].lower()
     
@@ -581,7 +582,11 @@ def fileio_open_animation(operator, context, filepath):
         animation = animation_manager.AnimationManager(reader=io.BytesIO(file.read()))
         
         # Create an animation from an AnimationManager object and a Blender object
-        create_animation(animation, active_obj)
+        action = create_animation(animation, active_obj)
+
+        # Several files are imported on the same object, only the last one stays assigned
+        if keep_action:
+            action.use_fake_user = True
     
     return {'FINISHED'}
 
@@ -1020,16 +1025,27 @@ class ImportAnimation(bpy.types.Operator, ImportHelper):
     
     filename_ext = ""
     filter_glob: StringProperty(default="*.mtn2;*.mtm2;*.imm2", options={'HIDDEN'})
-    
+    files: CollectionProperty(type=bpy.types.OperatorFileListElement, options={'HIDDEN', 'SKIP_SAVE'})
+    directory: StringProperty(subtype='DIR_PATH', options={'HIDDEN', 'SKIP_SAVE'})
+
     def execute(self, context):
         allowed_extensions = {".mtn2", ".mtm2", ".imm2"}
-        file_extension = os.path.splitext(self.filepath)[1]
-        
-        if file_extension not in allowed_extensions:
-            self.report({'ERROR'}, f"Unsupported file format: {file_extension}. Only .mtn2, .mtm2, and .imm2 are supported.")
-            return {'CANCELLED'}
-        
-        return fileio_open_animation(self, context, self.filepath)
+        filepaths = get_import_filepaths(self)
+
+        for filepath in filepaths:
+            file_extension = os.path.splitext(filepath)[1]
+
+            if file_extension not in allowed_extensions:
+                self.report({'ERROR'}, f"Unsupported file format: {file_extension}. Only .mtn2, .mtm2, and .imm2 are supported.")
+                return {'CANCELLED'}
+
+        for filepath in filepaths:
+            result = fileio_open_animation(self, context, filepath, len(filepaths) > 1)
+
+            if result != {'FINISHED'}:
+                return result
+
+        return {'FINISHED'}
 
 class BoneCheckbox(bpy.types.PropertyGroup):
     """A PropertyGroup for storing a checkbox for each bone."""
