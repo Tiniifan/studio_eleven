@@ -930,8 +930,8 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
 
         for frame, material_data in sorted(keyframes_data.items()):
             for material_name, material_transformations in material_data.items():
-                # A copy of an imported material (".001") keeps the hash of the original name
-                name_crc32 = zlib.crc32(get_real_name(material_name).encode())
+                # The mesh names the material with its full name (".001" included), the node has to use the same hash
+                name_crc32 = zlib.crc32(material_name.encode())
 
                 for transformation in material_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
