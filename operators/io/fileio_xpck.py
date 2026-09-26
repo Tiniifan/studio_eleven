@@ -920,19 +920,19 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
         try:
             for animation_type, animation_data in animation['types'].items():
                 if animation_type == 'armature':
-                    mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version, frame_count))
+                    mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version, frame_count, animation_data['bake'], animation_data['bake_tolerance']))
 
                     for split_animation in animation_data['split_animation']['split']:
                         mtninfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
                 elif animation_type == 'uv':
                     is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-                    imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven, anim_version, frame_count))
+                    imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven, anim_version, frame_count, animation_data['bake'], animation_data['bake_tolerance']))
 
                     for split_animation in animation_data['split_animation']['split']:
                         imminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
                 elif animation_type == 'material':
                     is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-                    mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven, anim_version, frame_count))
+                    mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven, anim_version, frame_count, animation_data['bake'], animation_data['bake_tolerance']))
 
                     for split_animation in animation_data['split_animation']['split']:
                         mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
@@ -1651,6 +1651,12 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         if animation_type != 'armature':
             animation_box.prop(animation, "mode", text="Mode")
 
+        bake_row = animation_box.row()
+        bake_row.prop(animation, "bake")
+
+        if animation.bake:
+            bake_row.prop(animation, "bake_tolerance", text="Tolerance")
+
         # Group for manual item addition/removal
         items_box = animation_box.box()
 
@@ -1947,6 +1953,8 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 animation_data['materials'] = [material.name for material in settings.materials if material.enabled]
 
             animation_data['name'] = archive_animation.name
+            animation_data['bake'] = animation.bake
+            animation_data['bake_tolerance'] = animation.bake_tolerance
             animation_data['format'] = getattr(self, "animation_format_" + animation_type)
             animation_data['transformations'] = transformations
             animation_data['split_animation'] = {

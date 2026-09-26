@@ -12,6 +12,7 @@ if "fileio_xmpr" in locals():
     importlib.reload(xmpr)
     
 if "fileio_animation_manager" in locals():
+    importlib.reload(animation_bake)
     importlib.reload(fileio_animation_manager) 
     importlib.reload(animation_manager)
 

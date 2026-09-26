@@ -119,14 +119,14 @@ class TableHeader:
 
 class Node:
     STRCT = Struct("<I BBBB II I I I II I II")
-    def __init__(self, BoneNameHash, NodeType, DataType, IsInMainTrack, Unk2,
+    def __init__(self, BoneNameHash, NodeType, DataType, Interpolation, Unk2,
             FrameStart, FrameEnd, DataCount, DifferentFrameCount,
             DataByteSize, DataVectorSize, DataVectorLength, DifferentFrameLength,
             FrameLength, DataLength):
         self.BoneNameHash = BoneNameHash
         self.NodeType = NodeType
         self.DataType = DataType
-        self.IsInMainTrack = IsInMainTrack
+        self.Interpolation = Interpolation
         self.Unk2 = Unk2
         self.FrameStart = FrameStart
         self.FrameEnd = FrameEnd
@@ -145,10 +145,33 @@ class Node:
         )
         return cls(*unpackedData)
     def Pack(self):
-        return pack(self.STRCT.format, self.BoneNameHash, self.NodeType, self.DataType, self.IsInMainTrack, self.Unk2,
+        return pack(self.STRCT.format, self.BoneNameHash, self.NodeType, self.DataType, self.Interpolation, self.Unk2,
             self.FrameStart, self.FrameEnd, self.DataCount, self.DifferentFrameCount,
             self.DataByteSize, self.DataVectorSize, self.DataVectorLength, self.DifferentFrameLength,
             self.FrameLength, self.DataLength)
+
+# 0 copies the key of the frame, any other value interpolates (V2 node mode, V1 group)
+INTERPOLATION_CONSTANT = 0
+INTERPOLATION_LINEAR = 1
+
+# V1 has 4 node groups, the group decides the interpolation: group 3 holds its keys
+TrackGroupV1 = {
+    "BoneLocation": 0,
+    "BoneRotation": 1,
+    "BoneScale": 2,
+    "BoneBool": 3,
+    "UVMove": 0,
+    "UVRotate": 1,
+    "UVScale": 2,
+    "MaterialTransparency": 0,
+    "MaterialAttribute": 1,
+}
+
+# Tracks V1 can hold, a node of them without interpolation goes in group 3
+TrackHoldGroupV1 = {
+    "UVMove": 3,
+    "BoneBool": 3,
+}
 
 TrackType = {
     0: "None",

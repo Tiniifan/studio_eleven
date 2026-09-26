@@ -44,6 +44,19 @@ class Level5AnimationSettings(bpy.types.PropertyGroup):
     transform_transparency: BoolProperty(name="Transparency", default=True, description="Include transparency in the export")
     transform_attribute: BoolProperty(name="Attribute", default=True, description="Include attribute in the export")
 
+    bake: BoolProperty(
+        name="Bake Curves",
+        default=True,
+        description="Sample every frame so the game interpolation follows the Blender curves, then remove the keys the game rebuilds"
+    )
+    bake_tolerance: FloatProperty(
+        name="Bake Tolerance",
+        default=0.0001,
+        min=0.0,
+        precision=5,
+        description="Largest difference allowed when a key is removed"
+    )
+
     mode: EnumProperty(
         name="Mode",
         description="Choose a mode for UV or Material animations",
@@ -271,6 +284,8 @@ def copy_animation_settings(source, target):
     target.include = source.include
     target.name = source.name
     target.mode = source.mode
+    target.bake = source.bake
+    target.bake_tolerance = source.bake_tolerance
 
     for property_name in ["transform_location", "transform_rotation", "transform_scale", "transform_bool", "transform_transparency", "transform_attribute"]:
         setattr(target, property_name, getattr(source, property_name))

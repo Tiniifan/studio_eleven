@@ -7,10 +7,10 @@ from mathutils import Vector, Euler, Matrix, Quaternion
 
 import bpy
 from bpy_extras.io_utils import ExportHelper, ImportHelper
-from bpy.props import StringProperty, EnumProperty, BoolProperty, CollectionProperty
+from bpy.props import StringProperty, EnumProperty, BoolProperty, FloatProperty, CollectionProperty
 
 from ...formats.animation.tracks import *
-from ...formats import  animation_manager, animation_support, res
+from ...formats import  animation_manager, animation_support, animation_bake, res
 
 ##########################################
 # XMTN Function
@@ -77,19 +77,8 @@ def calculate_transformed_location(rest_matrix, location):
     return rest_matrix.inverted() @ location
 
 def calculate_transformed_rotation(rest_matrix, rotation):
-    # Create a Quaternion directly from Euler angles
-    rotation_quaternion = Quaternion(rotation)
-
-    # Convert quaternion rotation to Matrix
-    rotation_matrix = rotation_quaternion.to_matrix().to_4x4()
-
-    # Multiply rest matrix by rotation matrix
-    transformed_matrix = rest_matrix.inverted() @ rotation_matrix
-
-    # Extract quaternion from the result
-    transformed_quaternion = transformed_matrix.to_quaternion()
-
-    return transformed_quaternion
+    # A quaternion product keeps the sign of the file, which decides the slerp path of opposite keys
+    return rest_matrix.inverted().to_quaternion() @ Quaternion(rotation)
 
 def calculate_transformed_scale(rest_matrix, scale):
     # Create scale matrices for each axis
@@ -104,6 +93,46 @@ def calculate_transformed_scale(rest_matrix, scale):
     transformed_scale = transformed_matrix.to_scale()
 
     return transformed_scale
+
+def get_keyframe_interpolation(node):
+    """Blender interpolation of the keys of a node: the game holds the key or interpolates."""
+    if node.Interpolation == animation_support.INTERPOLATION_CONSTANT:
+        return 'CONSTANT'
+
+    return 'LINEAR'
+
+def get_node_interpolation(fcurves):
+    """A node holds its keys when every key of its fcurves is constant."""
+    for fcurve in fcurves:
+        for keyframe in fcurve.keyframe_points:
+            if keyframe.interpolation != 'CONSTANT':
+                return animation_support.INTERPOLATION_LINEAR
+
+    return animation_support.INTERPOLATION_CONSTANT
+
+def get_frames(fcurve, bake, frame_count):
+    """Frames to sample for an fcurve: its keys, and every frame of the segments the game can't interpolate like Blender."""
+    frames = set()
+    keyframes = sorted(fcurve.keyframe_points, key=lambda keyframe: keyframe.co.x)
+
+    for keyframe in keyframes:
+        frames.add(int(round(keyframe.co.x)))
+
+    if bake and keyframes:
+        # The game interpolates the linear and constant segments like Blender, only the other curves are sampled
+        for i in range(len(keyframes) - 1):
+            if keyframes[i].interpolation not in ('LINEAR', 'CONSTANT'):
+                frames.update(range(int(round(keyframes[i].co.x)), int(round(keyframes[i + 1].co.x)) + 1))
+
+        # Before its first key a node would extrapolate in the game
+        frames.add(0)
+
+    sampled_frames = []
+    for frame in sorted(frames):
+        if not bake or 0 <= frame <= frame_count:
+            sampled_frames.append(frame)
+
+    return sampled_frames
 
 def get_track_type(track_name):
     if track_name.startswith("Bone") and track_name != "BoneBool":
@@ -173,7 +202,7 @@ def get_object_hashes(obj):
 def count_matching_nodes(node_hashes, obj):
     return len(node_hashes & get_object_hashes(obj))
 
-def process_bone_track(track, node, armature, action, bone_names):
+def process_bone_track(track, node, armature, action, bone_names, interpolation):
     """Process a track related to bones."""
     bone_name = bone_names.get(node.Name)
     if not bone_name:
@@ -207,7 +236,13 @@ def process_bone_track(track, node, armature, action, bone_names):
         if track.Name == "BoneLocation":
             transformations.append((frame.Key, calculate_transformed_location(rest_matrix, Vector([value.X, value.Y, value.Z]))))
         elif track.Name == "BoneRotation":
-            transformations.append((frame.Key, calculate_transformed_rotation(rest_matrix, Vector([value.W, value.X, value.Y, value.Z]))))
+            rotation = calculate_transformed_rotation(rest_matrix, Vector([value.W, value.X, value.Y, value.Z]))
+
+            # Blender interpolates each quaternion component, stay on the shortest path like the game slerp
+            if transformations and transformations[-1][1].dot(rotation) < -animation_bake.OPPOSITE_ROTATION_EPSILON:
+                rotation.negate()
+
+            transformations.append((frame.Key, rotation))
         elif track.Name == "BoneScale":
             transformations.append((frame.Key, calculate_transformed_scale(rest_matrix, Vector([value.X, value.Y, value.Z]))))
 
@@ -219,9 +254,10 @@ def process_bone_track(track, node, armature, action, bone_names):
             fcurve = action.fcurves.new(data_path=data_path, index=index)
 
         for frame_num, transformation in transformations:
-            fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
+            keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=transformation[index])
+            keyframe.interpolation = interpolation
 
-def process_uv_track(track, node, action, meshes):
+def process_uv_track(track, node, action, meshes, interpolation):
     """Process a track related to UVs using FCurves."""
     for mesh in meshes:
         node_name = findCrc32(node.Name, modifier=mesh.modifiers)
@@ -262,14 +298,16 @@ def process_uv_track(track, node, action, meshes):
                 frame_num = frame.Key
                 value = frame.Value
 
-                if track.Name == "UVMove":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
-                elif track.Name == "UVScale":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=(value.X if index == 0 else value.Y))
-                elif track.Name == "UVRotate":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
+                if track.Name == "UVRotate":
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
+                elif index == 0:
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=value.X)
+                else:
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=value.Y)
 
-def process_material_track(track, node, action_name, meshes, material_actions):
+                keyframe.interpolation = interpolation
+
+def process_material_track(track, node, action_name, meshes, material_actions, interpolation):
     """Process a track related to material."""
     for mesh in meshes:
         if not findCrc32(node.Name, mesh=mesh):
@@ -321,7 +359,7 @@ def process_material_track(track, node, action_name, meshes, material_actions):
                 material_value = frame.Value
 
                 if track.Name == "MaterialAttribute":
-                    fcurve.keyframe_points.insert(
+                    keyframe = fcurve.keyframe_points.insert(
                         frame=frame_num,
                         value=(
                             material_value.hue if index == 0
@@ -329,8 +367,10 @@ def process_material_track(track, node, action_name, meshes, material_actions):
                             else material_value.value
                         )
                     )
-                elif track.Name == "MaterialTransparency":
-                    fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
+                else:
+                    keyframe = fcurve.keyframe_points.insert(frame=frame_num, value=material_value.transparency)
+
+                keyframe.interpolation = interpolation
 
 def create_animation(animData, active_obj, action=None, track_types=None, material_actions=None):
     """Create the actions of an animation, the files of the same animation share them."""
@@ -383,14 +423,16 @@ def create_animation(animData, active_obj, action=None, track_types=None, materi
 
         # Node refers to a bone or a txtproj
         for node in track.Nodes:
+            interpolation = get_keyframe_interpolation(node)
+
             # Check track type
             if track_type == 'bone':
                 if armature:
-                    process_bone_track(track, node, armature, action, bone_names)
+                    process_bone_track(track, node, armature, action, bone_names, interpolation)
             elif track_type == 'uv':
-                process_uv_track(track, node, action, meshes)
+                process_uv_track(track, node, action, meshes, interpolation)
             elif track_type == 'material':
-                process_material_track(track, node, animData.AnimationName, meshes, material_actions)
+                process_material_track(track, node, animData.AnimationName, meshes, material_actions, interpolation)
 
     return action
 
@@ -421,7 +463,7 @@ def fileio_open_animation(operator, context, filepath):
     
     return {'FINISHED'}
 
-def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None, uv_material_mode=None):
+def fileio_write_animation(context, armature_name=None, object_name=None, animation_type=None, animation_name=None, selected_items=None, transformations=None, extension=None, uv_material_mode=None, bake=True, bake_tolerance=animation_bake.DEFAULT_TOLERANCE):
     if animation_type == "ARMATURE":
         if not armature_name:
             raise ValueError("No armature specified for ARMATURE animation.")
@@ -430,7 +472,7 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
         if not armature or armature.type != 'ARMATURE':
             raise ValueError("Specified armature does not exist or is invalid.")
 
-        return fileio_write_xmtn(context, armature, animation_name, transformations, selected_items)
+        return fileio_write_xmtn(context, armature, animation_name, transformations, selected_items, bake=bake, bake_tolerance=bake_tolerance)
     elif animation_type == "UV":
         if not object_name:
             raise ValueError("No object specified for UV animation.")
@@ -441,7 +483,7 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
 
         is_studio_eleven = uv_material_mode == "STUDIO_ELEVEN"
         
-        return fileio_write_imm(context, obj, animation_name, transformations, selected_items, is_studio_eleven)
+        return fileio_write_imm(context, obj, animation_name, transformations, selected_items, is_studio_eleven, bake=bake, bake_tolerance=bake_tolerance)
     elif animation_type == "MATERIAL":
         if not object_name:
             raise ValueError("No object specified for Material animation.")
@@ -452,11 +494,11 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
             
         is_studio_eleven = uv_material_mode == "STUDIO_ELEVEN"    
 
-        return fileio_write_mtm(context, obj, animation_name, transformations, selected_items, is_studio_eleven)
+        return fileio_write_mtm(context, obj, animation_name, transformations, selected_items, is_studio_eleven, bake=bake, bake_tolerance=bake_tolerance)
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
 
-def fileio_write_xmtn(context, armature, animation_name, transformations, bones, version="V2", frame_count=None):
+def fileio_write_xmtn(context, armature, animation_name, transformations, bones, version="V2", frame_count=None, bake=True, bake_tolerance=animation_bake.DEFAULT_TOLERANCE):
     scene = context.scene
 
     if frame_count is None:
@@ -475,6 +517,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
     if armature.animation_data and armature.animation_data.action:
         action = armature.animation_data.action
         keyframes_data = {}
+        node_fcurves = {}
 
         for fcurve in action.fcurves:
             data_path = fcurve.data_path
@@ -485,10 +528,12 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                 if not transformation_type:
                     continue
 
-                sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
-                for keyframe in sorted_keyframes:
-                    frame = int(keyframe.co.x)
-                    keyframes_data.setdefault(frame, {}).setdefault(bone_name, []).append(transformation_type)
+                node_fcurves.setdefault((bone_name, transformation_type), []).append(fcurve)
+
+                for frame in get_frames(fcurve, bake, frame_count):
+                    frame_transformations = keyframes_data.setdefault(frame, {}).setdefault(bone_name, [])
+                    if transformation_type not in frame_transformations:
+                        frame_transformations.append(transformation_type)
 
         for frame, bones_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
@@ -507,7 +552,8 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                 name_crc32 = zlib.crc32(bone_name.encode())
                 for transformation in bone_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
-                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                        interpolation = get_node_interpolation(node_fcurves[(bone_name, transformation)])
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, interpolation, []))
 
                     if transformation == 'location':
                         location = pose_matrix.to_translation()
@@ -525,6 +571,9 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                             frame, BoneLocation(*map(float, scale))
                         )
 
+    for track in tracks.values():
+        animation_bake.finalize_track(track, bake, bake_tolerance)
+
     animation = animation_manager.AnimationManager(
         Format='XMTN', Version=version, AnimationName=animation_name,
         FrameCount=frame_count, Tracks=list(tracks.values())
@@ -532,7 +581,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
     
     return animation.Save()
     
-def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None):
+def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None, bake=True, bake_tolerance=animation_bake.DEFAULT_TOLERANCE):
     scene = context.scene
 
     if frame_count is None:
@@ -568,7 +617,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
             for modifier in focused_object.modifiers:
                 if modifier.type == 'UV_WARP':
                     if modifier.name in objects:
-                        if obj.animation_data and obj.animation_data.action:
+                        if focused_object.animation_data and focused_object.animation_data.action:
                             modifiers_enabled.append(modifier)
         else:
             meshes_enabled.append(focused_object)
@@ -578,6 +627,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
         print(f"Modifiers activés : {[mod.name for mod in modifiers_enabled]}")
         
         keyframes_data = {}  # Structure pour stocker les données des keyframes
+        node_fcurves = {}
         
         # Parcours des modifiers activés
         for modifier in modifiers_enabled:
@@ -594,10 +644,12 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                         if not transformation_type:
                             continue
 
-                        sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
-                        for keyframe in sorted_keyframes:
-                            frame = int(keyframe.co.x)
-                            keyframes_data.setdefault(frame, {}).setdefault(modifier_name, []).append(transformation_type)
+                        node_fcurves.setdefault((modifier_name, transformation_type), []).append(fcurve)
+
+                        for frame in get_frames(fcurve, bake, frame_count):
+                            frame_transformations = keyframes_data.setdefault(frame, {}).setdefault(modifier_name, [])
+                            if transformation_type not in frame_transformations:
+                                frame_transformations.append(transformation_type)
 
         for frame, modifiers_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
@@ -610,7 +662,8 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                 name_crc32 = zlib.crc32(modifier_name.encode())
                 for transformation in modifier_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
-                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                        interpolation = get_node_interpolation(node_fcurves[(modifier_name, transformation)])
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, interpolation, []))
 
                     if transformation == 'offset':
                         location = modifier.offset
@@ -647,7 +700,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
                     
                         for transformation in transformations:
                             if not tracks[transformation].NodeExists(name_crc32):
-                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, animation_support.INTERPOLATION_LINEAR, []))
                                 
                             if transformation == 'offset':
                                 location = [material_transformation.translation[0], - material_transformation.translation[1]]
@@ -669,6 +722,9 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
     else:
         raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
 
+    for track in tracks.values():
+        animation_bake.finalize_track(track, bake, bake_tolerance)
+
     animation = animation_manager.AnimationManager(
         Format='XIMA', Version=version, AnimationName=animation_name,
         FrameCount=frame_count, Tracks=list(tracks.values())
@@ -676,7 +732,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
 
     return animation.Save()
 
-def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None):
+def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None, bake=True, bake_tolerance=animation_bake.DEFAULT_TOLERANCE):
     scene = context.scene
 
     if frame_count is None:
@@ -707,10 +763,11 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                     meshes_enabled.append(obj)
     elif focused_object.type == 'MESH':
         if is_studio_eleven:
-            if len(focused_object.materials) > 0:
-                if focused_object.materials[0].name in objects:
-                    if focused_object.materials[0].animation_data and focused_object.materials[0].animation_data.action:
-                        materials_enabled.append(focused_object)
+            if len(focused_object.data.materials) > 0:
+                material = focused_object.data.materials[0]
+                if material and material.name in objects:
+                    if material.animation_data and material.animation_data.action:
+                        materials_enabled.append(material)
         else:
             meshes_enabled.append(focused_object)
     
@@ -719,6 +776,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
         print(f"materials activés : {[mat.name for mat in materials_enabled]}")
         
         keyframes_data = {}  # Structure pour stocker les données des keyframes
+        node_fcurves = {}
         
         # Parcours des modifiers activés
         for material in materials_enabled:
@@ -742,10 +800,12 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                     else:
                         continue
                         
-                    sorted_keyframes = sorted(fcurve.keyframe_points, key=lambda kf: kf.co.x)
-                    for keyframe in sorted_keyframes:
-                        frame = int(keyframe.co.x)
-                        keyframes_data.setdefault(frame, {}).setdefault(material.name, []).append(transformation_type)
+                    node_fcurves.setdefault((material.name, transformation_type), []).append(fcurve)
+
+                    for frame in get_frames(fcurve, bake, frame_count):
+                        frame_transformations = keyframes_data.setdefault(frame, {}).setdefault(material.name, [])
+                        if transformation_type not in frame_transformations:
+                            frame_transformations.append(transformation_type)
 
         for frame, material_data in sorted(keyframes_data.items()):
             scene.frame_set(frame)
@@ -761,7 +821,8 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                 
                 for transformation in material_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
-                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                        interpolation = get_node_interpolation(node_fcurves[(material_name, transformation)])
+                        tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, interpolation, []))
 
                     if transformation == 'transparency':
                         texture_node = nodes.get("Image Texture")
@@ -812,7 +873,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                     
                         for transformation in transformations:
                             if not tracks[transformation].NodeExists(name_crc32):
-                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, True, []))
+                                tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, animation_support.INTERPOLATION_LINEAR, []))
                                 
                             if transformation == 'transparency':
                                 tracks['transparency'].GetNodeByName(name_crc32).add_frame(
@@ -826,6 +887,9 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
         raise ValueError("Les listes 'materials_enabled' et 'meshes_enabled' sont toutes les deux vides. Aucune opération possible.")
     else:
         raise ValueError("Les deux types d'objets sont activés : Studio Eleven et Berry Bush")
+
+    for track in tracks.values():
+        animation_bake.finalize_track(track, bake, bake_tolerance)
 
     animation = animation_manager.AnimationManager(
         Format='XMTM', Version=version, AnimationName=animation_name,
@@ -1023,6 +1087,20 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
         maxlen=40,
     )
 
+    bake: BoolProperty(
+        name="Bake Curves",
+        description="Sample every frame so the game interpolation follows the Blender curves, then remove the keys the game rebuilds",
+        default=True
+    )
+
+    bake_tolerance: FloatProperty(
+        name="Bake Tolerance",
+        description="Largest difference allowed when a key is removed",
+        default=animation_bake.DEFAULT_TOLERANCE,
+        min=0.0,
+        precision=5
+    )
+
     bone_checkboxes: CollectionProperty(type=BoneCheckbox)
     view_object_items: CollectionProperty(type=BoneCheckbox)
 
@@ -1052,6 +1130,12 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
 
         layout.prop(self, "animation_type", text="Type")
         layout.prop(self, "extension", text="Format")
+
+        row = layout.row()
+        row.prop(self, "bake")
+
+        if self.bake:
+            row.prop(self, "bake_tolerance", text="Tolerance")
 
         if self.animation_type == "ARMATURE":
             layout.prop(self, "armature_name", text="Armature")
@@ -1161,7 +1245,9 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
                     selected_items=selected_items,
                     transformations=selected_transformations,
                     extension=self.extension,
-                    uv_material_mode=self.uv_material_mode
+                    uv_material_mode=self.uv_material_mode,
+                    bake=self.bake,
+                    bake_tolerance=self.bake_tolerance
                 )
             )            
 
@@ -1177,7 +1263,9 @@ class ExportAnimation(bpy.types.Operator, ExportHelper):
                         selected_items=selected_items,
                         transformations=selected_transformations,
                         extension=self.extension,
-                        uv_material_mode=self.uv_material_mode
+                        uv_material_mode=self.uv_material_mode,
+                        bake=self.bake,
+                        bake_tolerance=self.bake_tolerance
                     )
                 )
             self.report({'INFO'}, f"Successfully exported {self.animation_type} animation '{self.animation_name}' with format {self.extension}.")
