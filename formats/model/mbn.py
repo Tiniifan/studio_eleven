@@ -16,23 +16,20 @@ def matrix_vector_multiply(matrix, vector):
             result[i] += matrix[i][j] * vector[j]
     return result
 
-def matrix_to_bytes(matrix, head, tail, local_matrix):
+def matrix_to_bytes(location, rotation, scale, head, tail, local_matrix, bind_head):
     out = bytes()
     
     # Location
-    location = matrix.to_translation()
     for i in range(3):
         out += bytearray(struct.pack("f", scientific_float_to_float(location[i])))
     
     # Rotation
-    rotation = matrix.to_quaternion()
     matrix_rotation = rotation.to_matrix().to_3x3()
     for i in range(3):
         for j in range(3):
             out += bytearray(struct.pack("f", float(matrix_rotation[j][i])))
      
     # Scale 
-    scale = matrix.to_scale()
     for i in range(3):
         out += bytearray(struct.pack("f", float(scale[i])))
 
@@ -46,7 +43,7 @@ def matrix_to_bytes(matrix, head, tail, local_matrix):
             local_matrix_rotation_ordered[i][j] = local_matrix_rotation[j][i]                    
 
     # Location rotation * head
-    rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, head)
+    rotated_head = matrix_vector_multiply(local_matrix_rotation_ordered, bind_head)
     for i in range(3):
         out += bytearray(struct.pack("f", float(rotated_head[i]*-1)))
 
@@ -104,9 +101,14 @@ def open(data):
         head = struct.unpack('<fff', stream.read(12))
         tail = tuple(tmh + h for tmh, h in zip(tail_min_head, head))
 
+        # The game skins with the inverse bind of the file: the local rotation transposed, then the rotated head
+        inverse_bind = local_rotation_matrix.transposed().to_4x4()
+        inverse_bind.translation = Vector(rotation_time_head)
+
         bone['crc32'] = bone_id
         bone['parent_crc32'] = parent_index
         bone['flag'] = flag
+        bone['inverse_bind'] = inverse_bind
         bone['location'] = location
         bone['quaternion_rotation'] = quaternion_rotation
         bone['scale'] = scale
@@ -116,21 +118,18 @@ def open(data):
 
     return bone
 
-def write(armature, pose_bone, flag=None):
+def write(armature, pose_bone, transform, flag=None):
     out = bytes()  
         
-    # get bone matrix relative to bone_parent           
+    # get bone parent
     parent = pose_bone.parent	
     while parent:
         if parent.bone.use_deform:
             break
         parent = parent.parent   
 
-    pose_matrix = pose_bone.matrix
-    local_matrix = pose_matrix
-    if parent:
-        parent_matrix = parent.matrix
-        pose_matrix = parent_matrix.inverted() @ pose_matrix
+    # Location, rotation and scale relative to the parent, a matrix loses the rotation of a node of scale 0
+    location, rotation, scale = transform
 
     out += zlib.crc32(pose_bone.name.encode("utf-8")).to_bytes(4, 'little')
     if (parent is not None):
@@ -146,6 +145,8 @@ def write(armature, pose_bone, flag=None):
 
     out += int(flag).to_bytes(4, 'little')
     
-    out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
+    # The inverse bind and the bone are the rest pose the vertices are in, the pose holds the rest scale of the node
+    bone = pose_bone.bone
+    out += matrix_to_bytes(location, rotation, scale, bone.head_local, bone.tail_local, bone.matrix_local, bone.head_local)
     
     return out

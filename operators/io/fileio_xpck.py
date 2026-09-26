@@ -53,7 +53,7 @@ def create_files_dict(extension, data_list):
         
     return output
 
-def create_bone(armature, bone_name, parent_name, relative_location, relative_rotation, scale, head, tail):
+def create_bone(armature, bone_name, parent_name, relative_location, relative_rotation, head, tail):
     # Select amature
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='EDIT')
@@ -63,18 +63,9 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     new_bone = armature.data.edit_bones[-1]
     new_bone.name = bone_name
 
-    # Blender deletes a bone with no length, the game has nodes of scale 0 that an animation scales up
+    # Blender deletes a bone with no length
     if (Vector(head) - Vector(tail)).length < 0.001:
         tail = Vector(head) + Vector((0, 1, 0))
-
-    clamped_scale = []
-    for component in scale:
-        if abs(component) < 0.001:
-            component = 0.001
-
-        clamped_scale.append(component)
-
-    scale = clamped_scale
 
     new_bone.head = head
     new_bone.tail = tail
@@ -92,15 +83,10 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
             # Create a rotation matrix from the quaternion
             rotation_matrix = relative_rotation.to_matrix().to_4x4()
 
-            # Create a scaling matrix
-            scale_matrix = Matrix.Scale(scale[0], 4, (1, 0, 0))
-            scale_matrix *= Matrix.Scale(scale[1], 4, (0, 1, 0))
-            scale_matrix *= Matrix.Scale(scale[2], 4, (0, 0, 1))
-
-            # Apply transformations
-            new_bone.matrix = parent_bone.matrix @ translation_matrix @ rotation_matrix @ scale_matrix
+            # Apply transformations, the rest scale is the scale of the pose bone (an edit bone only scales its length)
+            new_bone.matrix = parent_bone.matrix @ translation_matrix @ rotation_matrix
     else:
-        new_bone.matrix = Matrix.Translation(relative_location) @ relative_rotation.to_matrix().to_4x4() @ Matrix.Scale(scale[0], 4)
+        new_bone.matrix = Matrix.Translation(relative_location) @ relative_rotation.to_matrix().to_4x4()
     
     # Set object mode
     bpy.ops.object.mode_set(mode='OBJECT')
@@ -313,6 +299,9 @@ def build_archive(context, content, session):
 
     res_data = content["res_data"]
     bone_flags = {}
+    inverse_binds = {}
+    rest_scales = {}
+    bind_offsets = {}
     armature = None
     libs = {}
 
@@ -356,14 +345,35 @@ def build_archive(context, content, session):
 
             # Checks if the bone has a parent
             if bone_parent_crc32 == 0:
-                create_bone(armature, bone_name, False, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
+                create_bone(armature, bone_name, False, bone_location, bone_rotation, bone_head, bone_tail)
             else:
-                create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
+                create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_head, bone_tail)
 
             bone_flags[bone_name] = bone_flag
+            inverse_binds[bone_name] = bones_data[i]['inverse_bind']
+            rest_scales[bone_name] = bone_scale
 
         # Set object mode
         bpy.ops.object.mode_set(mode='OBJECT')
+
+        # Without a scale track a node keeps the scale of its rest pose
+        for bone_name, rest_scale in rest_scales.items():
+            pose_bone = armature.pose.bones.get(bone_name)
+            if pose_bone is not None:
+                pose_bone.scale = rest_scale
+
+        # A skinned mesh is bound to the inverse bind of the file, which isn't always the rest pose the bones are built from
+        for bone_name, inverse_bind in inverse_binds.items():
+            bone = armature.data.bones.get(bone_name)
+            if bone is None:
+                continue
+
+            offset = bone.matrix_local @ inverse_bind
+
+            for row in range(4):
+                for column in range(4):
+                    if abs(offset[row][column] - (row == column)) > 0.01:
+                        bind_offsets[bone_name] = offset
 
         # Apply 90-degree rotation around X axis
         armature.rotation_euler = (radians(90), 0, 0)
@@ -486,7 +496,7 @@ def build_archive(context, content, session):
             atr_state = atr_states.get(mesh_data['material_name'])
 
             # Create the mesh using the mesh data
-            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state)
+            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state, bind_offsets=bind_offsets)
 
     # The flag of the node is written back as it is read (its visibility bit doesn't match what the effects show, UNKNOWN)
     if armature:
@@ -719,6 +729,34 @@ def import_armature_items(self, context):
 
 # Animations drawn at once in the animation menu
 ANIMATIONS_PER_PAGE = 12
+ANIMATION_DIALOG_WIDTH = 800
+
+def center_dialog(context, rows):
+    """Move the mouse to the middle of the 3D view, Blender opens a dialog under the mouse (its top edge)."""
+    window = context.window
+    if window is None:
+        return
+
+    x = window.width // 2
+    y = window.height // 2
+
+    # The largest 3D view, the window when there is none
+    view_area = None
+    for area in window.screen.areas:
+        if area.type == 'VIEW_3D':
+            if view_area is None or area.width * area.height > view_area.width * view_area.height:
+                view_area = area
+
+    if view_area is not None:
+        x = view_area.x + view_area.width // 2
+        y = view_area.y + view_area.height // 2
+
+    # Rows of a box are about 1.4 widget unit high, plus the title, the label, the page and the OK button
+    widget_unit = 20 * context.preferences.system.ui_scale
+    height = (rows * 1.4 + 6) * widget_unit
+
+    y = min(int(y + height / 2), window.height - 1)
+    window.cursor_warp(x, y)
 
 class ImportAnimationChoice(bpy.types.PropertyGroup):
     name: StringProperty()
@@ -762,7 +800,9 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
             item.armature = find_best_armature(context, group, used_armatures)
             used_armatures.add(item.armature)
 
-        return context.window_manager.invoke_props_dialog(self, width=700)
+        center_dialog(context, ANIMATIONS_PER_PAGE)
+
+        return context.window_manager.invoke_props_dialog(self, width=ANIMATION_DIALOG_WIDTH)
 
     def draw(self, context):
         layout = self.layout
@@ -796,10 +836,11 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
 
             item = self.animations[i]
 
-            split = box.split(factor=0.35)
+            split = box.split(factor=0.22)
             split.label(text=item.name, icon='ACTION')
 
-            row = split.row()
+            # The armature takes half of the rest so its name can be read
+            row = split.split(factor=0.5)
 
             checkboxes = row.row(align=True)
             for track_type in ['bone', 'uv', 'material']:
@@ -902,7 +943,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     mbns = []
     if armature:
         for bone in armature.pose.bones:
-            mbns.append(mbn.write(armature, bone, bone.bone.get(BONE_FLAG_PROPERTY)))
+            mbns.append(mbn.write(armature, bone, get_bone_transform(bone), bone.bone.get(BONE_FLAG_PROPERTY)))
 
     # Make images
     imgcs = []

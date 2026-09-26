@@ -6,6 +6,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from bpy.props import StringProperty, EnumProperty
 
 import bmesh
+import numpy as np
 
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
@@ -256,7 +257,53 @@ def apply_atr_state(material, atr_state):
 
     material.show_transparent_back = not resolved["depth_write"]
 
-def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None):
+def apply_bind_offsets(model_data, bones, bind_offsets):
+    """Move the vertices of a skinned mesh from the bind pose of the file to the rest pose Blender skins from."""
+    vertices = model_data["vertices"]
+    weights = vertices["weights"]
+    bone_indices = vertices["bone_indices"]
+
+    offsets = {}
+    for bone_crc32, bone_name in bones.items():
+        if bone_name in bind_offsets:
+            offsets[bone_crc32] = np.array(bind_offsets[bone_name])
+
+    if not offsets or not weights or not bone_indices:
+        return
+
+    # Each vertex takes the blend of the offsets of its bones
+    identity = np.identity(4)
+    blended = np.empty((len(weights), 4, 4))
+
+    for vertex, (vertex_weights, vertex_bones) in enumerate(zip(weights, bone_indices)):
+        total = sum(vertex_weights)
+
+        if total <= 0.0:
+            blended[vertex] = identity
+            continue
+
+        matrix = np.zeros((4, 4))
+        for weight, bone_crc32 in zip(vertex_weights, vertex_bones):
+            matrix += (weight / total) * offsets.get(bone_crc32, identity)
+
+        blended[vertex] = matrix
+
+    positions = np.array(vertices["positions"], dtype=float).reshape(-1, 3)
+    positions = np.einsum('nij,nj->ni', blended[:, :3, :3], positions) + blended[:, :3, 3]
+    vertices["positions"] = positions.tolist()
+
+    if vertices["normals"]:
+        normals = np.array(vertices["normals"], dtype=float).reshape(-1, 3)
+        normals = np.einsum('nij,nj->ni', blended[:, :3, :3], normals)
+
+        lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        lengths[lengths == 0.0] = 1.0
+        vertices["normals"] = (normals / lengths).tolist()
+
+def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, atr_state=None, bind_offsets=None):
+    if bind_offsets and bones and model_data["node_table"] and model_data["single_bind"] is None:
+        apply_bind_offsets(model_data, bones, bind_offsets)
+
     mesh = bpy.data.meshes.new(name=model_data['name'])
     mesh_obj = bpy.data.objects.new(name=model_data['name'], object_data=mesh)
     
@@ -390,6 +437,11 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             mesh_obj.parent_type = 'BONE'
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
+
+            # Blender puts the child of a bone at its tail, the game draws the mesh at the node
+            bone = armature.data.bones.get(single_bind)
+            if bone is not None:
+                mesh_obj.location = mesh_obj.matrix_parent_inverse.inverted().to_3x3() @ Vector((0, -bone.length, 0))
         elif parent_node:
             # The node which hides a skinned mesh, the game doesn't draw it while this node is hidden
             mesh_obj[PARENT_NODE_PROPERTY] = parent_node
