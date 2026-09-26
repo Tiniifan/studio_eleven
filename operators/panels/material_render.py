@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from bpy.props import BoolProperty, BoolVectorProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty
 
 from ...formats import atr
+from ...rendering import project as rendering_project
 
 ##########################################
 # CONST
@@ -655,6 +656,14 @@ class Level5_Color_Mask_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
 class Level5_Advanced_Panel(Level5RenderStateSubPanel, bpy.types.Panel):
     bl_label = "Advanced"
     bl_idname = "MATERIAL_PT_level5_advanced_panel"
+
+    @classmethod
+    def poll(cls, context):
+        # V1 files have no room for these settings
+        if rendering_project.get_scene_engine(context.scene).file_version != 2:
+            return False
+
+        return super().poll(context)
 
     def draw(self, context):
         layout = self.layout

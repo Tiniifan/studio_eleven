@@ -1,0 +1,50 @@
+{
+  "name": "#FIX_RGB",
+  "file_version": 1,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "PRIMARY_COLOR",
+          "TEXTURE0",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "MODULATE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "PRIMARY_COLOR",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "MODULATE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

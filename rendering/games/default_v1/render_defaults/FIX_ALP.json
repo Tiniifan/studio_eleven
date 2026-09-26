@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_ALP",
+  "vertex_program": "#FIX_SPR",
+  "combiner": "#FIX_ALP",
+  "skinned": false,
+  "fragment_lighting": false
+}

@@ -166,7 +166,7 @@ def write_triangle(indices):
           
     return out
                 
-def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, mode, single_bind = None, draw_priority = 21, mesh_type = 1, tints = None, parent_node = None):
+def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights, bone_names, material_name, render_program_hash, parent_node = None, draw_priority = 21, mesh_type = 1, tints = None):
     # Get only used bones
     bone_names = used_bones(weights, bone_names)
     weights = used_weights(weights)
@@ -214,17 +214,13 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     material = zlib.crc32(mesh_name.encode("shift-jis")).to_bytes(4, 'little')
     material += zlib.crc32(material_name.encode("shift-jis")).to_bytes(4, 'little')
     
-    if single_bind:
-        material += bytes([int(x,0) for x in ["0xF1", "0x69", "0x7E", "0x54"] ])
-        material += zlib.crc32(single_bind.encode("shift-jis")).to_bytes(4, 'little')
-    else:
-        material += bytes.fromhex(mode[0])
+    material += int(render_program_hash).to_bytes(4, 'little')
 
-        # A skinned mesh can have a parent node too, the game doesn't draw it while this node is hidden
-        if parent_node:
-            material += zlib.crc32(parent_node.encode("shift-jis")).to_bytes(4, 'little')
-        else:
-            material += int(0).to_bytes(4, 'little')
+    # The bone of a single bind mesh, or the node that hides a skinned mesh
+    if parent_node:
+        material += zlib.crc32(parent_node.encode("shift-jis")).to_bytes(4, 'little')
+    else:
+        material += int(0).to_bytes(4, 'little')
         
     material += int(0).to_bytes(4, 'little')
     material += int(0).to_bytes(4, 'little')
@@ -452,8 +448,8 @@ def open_xmpr(reader):
     reader.seek(properties_offset)
     mesh_name_hash = struct.unpack("<I", reader.read(4))[0]
     mat_name_hash = struct.unpack("<I", reader.read(4))[0]
-    unk_hash = struct.unpack("<I", reader.read(4))[0]
-    mesh_name_split_hash = struct.unpack("<I", reader.read(4))[0]
+    render_program_hash = struct.unpack("<I", reader.read(4))[0]
+    parent_node_hash = struct.unpack("<I", reader.read(4))[0]
     reader.read(32) # unk
     draw_priority = struct.unpack("<I", reader.read(4))[0]
     mesh_type = struct.unpack("<H", reader.read(2))[0]
@@ -475,7 +471,7 @@ def open_xmpr(reader):
     
     single_bind = None
     if nodes_lenght == 0:
-        single_bind = mesh_name_split_hash
+        single_bind = parent_node_hash
     
     reader.close()
     
@@ -486,7 +482,8 @@ def open_xmpr(reader):
         "name": mesh_name,
         "material_name": material_name,
         "single_bind": single_bind,
-        "parent_node": mesh_name_split_hash,
+        "parent_node": parent_node_hash,
+        "render_program_hash": render_program_hash,
         "draw_priority": draw_priority,
         "mesh_type": mesh_type,
     }

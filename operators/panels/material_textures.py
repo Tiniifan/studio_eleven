@@ -18,6 +18,10 @@ SAMPLER_NODE_PREFIX = "Level5 Sampler"
 SAMPLER_UV_NODE = SAMPLER_NODE_PREFIX + " Texture Coordinate"
 SAMPLER_PARTS = ["Separate", "Combine", "Wrap X", "Wrap Y"]
 
+# The vertex color layer the combiner of the game multiplies with (the tint of the mesh)
+TINT_NODE_PREFIX = "Level5 Tint"
+TINT_LAYER = "Tint"
+
 # Nodes a material animation plays on: the game replaces the colour (attribute) and the alpha (transparency) of the material
 TRANSPARENCY_NODE = "Level5 Transparency"
 ATTRIBUTE_NODE = "Level5 Attribute"
@@ -264,6 +268,10 @@ def unlink_from(tree, target, node_names):
         if old.from_node.name in node_names or old.from_node.name.startswith("Level5 "):
             tree.links.remove(old)
 
+def unlink(tree, target):
+    for old in list(target.links):
+        tree.links.remove(old)
+
 def find_bsdf(tree):
     bsdf = tree.nodes.get("Principled BSDF")
 
@@ -439,7 +447,105 @@ def mix_textures(tree, textures, prefix, bl_idname, output_name):
 
     return output
 
-def wire_textures(tree, textures, node_names):
+def get_material_meshes(material):
+    meshes = []
+
+    for mesh in bpy.data.meshes:
+        for slot in mesh.materials:
+            if slot == material:
+                meshes.append(mesh)
+                break
+
+    return meshes
+
+def get_tint_dependencies(material):
+    """What the combiner of the render program of the meshes takes from the texture and from the vertex color (Tint)."""
+    from ...rendering import project as rendering_project
+    from ...rendering.studio_render import combiner, resources
+
+    meshes = get_material_meshes(material)
+
+    if len(meshes) == 0 or meshes[0].vertex_colors.get(TINT_LAYER) is None:
+        return None
+
+    engine_id = rendering_project.get_scene_engine_id(bpy.context.scene)
+    render_default = rendering_project.get_mesh_render_default(meshes[0], engine_id)
+
+    if render_default is None:
+        return None
+
+    stages = resources.load_combiner(engine_id, render_default.data["combiner"])
+
+    if not stages:
+        return None
+
+    return combiner.input_dependencies(combiner.build_program(stages))
+
+def apply_tint(material, tree, textures, color, alpha, has_alpha):
+    """The combiner of the game multiplies by the vertex color (Tint), return the color and alpha outputs once multiplied."""
+    color_name = TINT_NODE_PREFIX + " Color"
+    alpha_name = TINT_NODE_PREFIX + " Alpha"
+    layer_name = TINT_NODE_PREFIX + " Attribute"
+
+    dependencies = None
+    if textures:
+        dependencies = get_tint_dependencies(material)
+
+    uses_tint = False
+    if dependencies is not None:
+        for _, primary in dependencies.values():
+            if primary:
+                uses_tint = True
+
+    if not uses_tint:
+        for name in [color_name, alpha_name, layer_name]:
+            if name in tree.nodes:
+                tree.nodes.remove(tree.nodes[name])
+
+        return color, alpha
+
+    origin = textures[-1].location
+
+    layer = get_node(tree, layer_name, 'ShaderNodeVertexColor', (origin.x + 300, origin.y - 450), "Tint")
+    layer.layer_name = TINT_LAYER
+
+    tinted_color = get_node(tree, color_name, 'ShaderNodeMixRGB', (origin.x + 550, origin.y - 250), "Tint Color")
+    tinted_color.blend_type = 'MULTIPLY'
+    tinted_color.inputs[0].default_value = 1.0
+    tinted_color.inputs[1].default_value = (1.0, 1.0, 1.0, 1.0)
+    tinted_color.inputs[2].default_value = (1.0, 1.0, 1.0, 1.0)
+
+    if dependencies["rgb"][0]:
+        link(tree, color, tinted_color.inputs[1])
+    else:
+        unlink(tree, tinted_color.inputs[1])
+
+    link(tree, layer.outputs["Color"], tinted_color.inputs[2])
+
+    if not has_alpha:
+        if alpha_name in tree.nodes:
+            tree.nodes.remove(tree.nodes[alpha_name])
+
+        return tinted_color.outputs[0], alpha
+
+    tinted_alpha = get_node(tree, alpha_name, 'ShaderNodeMath', (origin.x + 550, origin.y - 450), "Tint Alpha")
+    tinted_alpha.operation = 'MULTIPLY'
+    tinted_alpha.inputs[0].default_value = 1.0
+    tinted_alpha.inputs[1].default_value = 1.0
+
+    if dependencies["alpha"][0]:
+        link(tree, alpha, tinted_alpha.inputs[0])
+    else:
+        unlink(tree, tinted_alpha.inputs[0])
+
+    if dependencies["alpha"][1]:
+        link(tree, layer.outputs["Alpha"], tinted_alpha.inputs[1])
+    else:
+        unlink(tree, tinted_alpha.inputs[1])
+
+    return tinted_color.outputs[0], tinted_alpha.outputs[0]
+
+def wire_textures(material, tree, textures, node_names):
     color = mix_textures(tree, textures, MIX_COLOR_PREFIX, 'ShaderNodeMixRGB', 'Color')
     alpha = mix_textures(tree, textures, MIX_ALPHA_PREFIX, 'ShaderNodeMath', 'Alpha')
 
@@ -447,6 +553,13 @@ def wire_textures(tree, textures, node_names):
 
     if bsdf is None:
         return
+
+    has_alpha = False
+    for texture in textures:
+        if texture.image.alpha_mode != 'NONE':
+            has_alpha = True
+
+    color, alpha = apply_tint(material, tree, textures, color, alpha, has_alpha)
 
     # The animated colour multiplies the colour of the textures
     attribute = tree.nodes.get(ATTRIBUTE_NODE)
@@ -480,11 +593,6 @@ def wire_textures(tree, textures, node_names):
         target = multiplier.inputs[0]
     else:
         target = bsdf.inputs['Alpha']
-
-    has_alpha = False
-    for texture in textures:
-        if texture.image.alpha_mode != 'NONE':
-            has_alpha = True
 
     if alpha is None or not has_alpha:
         alpha = None
@@ -591,7 +699,7 @@ def apply_material_textures(material):
                 remove_sampler_nodes(tree, node.name)
                 tree.nodes.remove(node)
 
-        wire_textures(tree, textures, node_names)
+        wire_textures(material, tree, textures, node_names)
     finally:
         resume_updates()
 

@@ -1,0 +1,182 @@
+{
+  "name": "#FIX_FNT",
+  "file_version": 1,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "CONSTANT",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "TEXTURE0",
+          "TEXTURE1",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_R",
+          "SRC_R",
+          "SRC_ALPHA"
+        ],
+        "combine": "MODULATE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rgb": {
+        "source": [
+          "PREVIOUS",
+          "PREVIOUS",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "TEXTURE0",
+          "TEXTURE1",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_G",
+          "SRC_G",
+          "SRC_ALPHA"
+        ],
+        "combine": "MULT_ADD",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rgb": {
+        "source": [
+          "PREVIOUS",
+          "PREVIOUS",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "TEXTURE0",
+          "TEXTURE1",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_B",
+          "SRC_B",
+          "SRC_ALPHA"
+        ],
+        "combine": "MULT_ADD",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rgb": {
+        "source": [
+          "PRIMARY_COLOR",
+          "PREVIOUS",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "PRIMARY_COLOR",
+          "PREVIOUS",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "MODULATE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

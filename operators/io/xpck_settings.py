@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import StringProperty, BoolProperty, FloatProperty, IntProperty, EnumProperty, CollectionProperty, PointerProperty
+from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorProperty, IntProperty, EnumProperty, CollectionProperty, PointerProperty
 
 ##########################################
 # CONST
@@ -115,8 +115,13 @@ class Level5OutlineMesh(bpy.types.PropertyGroup):
 
 class Level5Outline(bpy.types.PropertyGroup):
     name: StringProperty()
-    thickness: FloatProperty(default=0.0025, min=0.0000, max=0.9999, precision=4)
-    visibility: FloatProperty(default=0.5, min=0.0, max=1.0, precision=4)
+    thickness: FloatProperty(name="Width", description="Width of the outline: a share of the screen height when Constant Screen Width is on (0.002 in the game), a distance in game units otherwise (0.15)", default=0.0025, min=0.0000, max=0.9999, precision=4)
+    visibility: FloatProperty(name="Color Factor", description="The vertex colors of the outline are multiplied by this value, lower is darker", default=0.5, min=0.0, max=1.0, precision=4)
+    scale: FloatProperty(name="Marked Color Factor", description="Same as Color Factor for the vertices the model marks in its second silhouette weight", default=0.4, min=0.01, max=10.0, precision=3)
+    depth_min: FloatProperty(name="Depth Min", description="Closest distance of the depth range the width is kept inside when Constant Screen Width is off (the game reads 10)", default=10.0, min=0.0, precision=2)
+    depth_max: FloatProperty(name="Depth Max", description="Farthest distance of the depth range the width is kept inside when Constant Screen Width is off (the game reads 60)", default=60.0, min=0.0, precision=2)
+    open_width: BoolProperty(name="Constant Screen Width", description="Keep the outline the same size on the screen whatever the distance, otherwise the width is a distance kept inside the depth range", default=True)
+    color: FloatVectorProperty(name="Color", description="Color of the outline, multiplied by the vertex colors of the mesh", subtype='COLOR', size=4, default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0)
     private_index: IntProperty()
     meshes: CollectionProperty(type=Level5OutlineMesh)
 

@@ -1,0 +1,50 @@
+{
+  "name": "#FIX_ALP",
+  "file_version": 1,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "CONSTANT",
+          "PRIMARY_COLOR",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "MODULATE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "TEXTURE0",
+          "PRIMARY_COLOR",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "MODULATE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

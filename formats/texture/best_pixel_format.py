@@ -18,8 +18,9 @@ from ...compression.best_compression import LEVEL5_COMPRESSIONS, get_best_compre
 #
 #   1. Filter by what the image needs (like the automatic modes of tex3ds, auto-etc1 / auto-l8 / auto-l4):
 #        - the alpha: an opaque image never takes a pixel format with alpha, an image with alpha only takes one with it;
-#        - the colors: an alpha mask (every pixel white) takes A8 / A4, a gray image the luminance formats
-#          (L8, L4, LA8, LA4), a color image the RGB ones;
+#        - the colors: a gray image (an alpha mask too) takes the luminance formats (L8, L4, LA8, LA4), a color image
+#          the RGB ones. A8 / A4 are never picked: the GPU reads their color as black, only a combiner that ignores
+#          the color of the texture (#FIX_ALP) can use them;
 #        - a pixel format that keeps the same information as another one in more bits is dropped (RGBA8 for an opaque
 #          image: RBGR888 keeps the same colors in 24 bits).
 #      What is left is 2 to 4 pixel formats (CANDIDATES).
@@ -77,7 +78,8 @@ PIXEL_FORMATS = {
 CANDIDATES = {
     ("OPAQUE", "GRAY"): ["L4", "ETC1", "L8"],
     ("OPAQUE", "COLOR"): ["ETC1", "RGB565", "RBGR888"],
-    ("ALPHA", "MASK"): ["A4", "A8"],
+    # The GPU reads the color of A8 / A4 as black, a white mask keeps its color with the luminance formats
+    ("ALPHA", "MASK"): ["LA4", "ETC1A4", "LA8"],
     ("ALPHA", "GRAY"): ["LA4", "ETC1A4", "LA8"],
     ("ALPHA", "COLOR"): ["ETC1A4", "RGBA4", "RGBA5551", "RGBA8"],
 }

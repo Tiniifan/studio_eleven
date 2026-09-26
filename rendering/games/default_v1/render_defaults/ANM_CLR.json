@@ -1,0 +1,7 @@
+{
+  "name": "#ANM_CLR",
+  "vertex_program": "#FIX_ANM",
+  "combiner": "#FIX_CLR",
+  "skinned": false,
+  "fragment_lighting": false
+}

@@ -1,0 +1,98 @@
+{
+  "#FIX_ANM": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 0,
+    "gls_geometry": null
+  },
+  "#FIX_CLR": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 1,
+    "gls_geometry": null
+  },
+  "#FIX_CPT": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 2,
+    "gls_geometry": null
+  },
+  "#FIX_FNT": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 3,
+    "gls_geometry": null
+  },
+  "#FIX_MDL": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 4,
+    "gls_geometry": null
+  },
+  "#FIX_MDS": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [
+      "unf_vtx_bone"
+    ],
+    "skinned": true,
+    "gls_vertex": 5,
+    "gls_geometry": null
+  },
+  "#FIX_MRG": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [
+      "unf_vtx_bone"
+    ],
+    "skinned": true,
+    "gls_vertex": 6,
+    "gls_geometry": null
+  },
+  "#FIX_MRG_POS": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [
+      "unf_vtx_bone"
+    ],
+    "skinned": true,
+    "gls_vertex": 7,
+    "gls_geometry": null
+  },
+  "#FIX_SKY": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 8,
+    "gls_geometry": null
+  },
+  "#FIX_SPR": {
+    "shader_binary": null,
+    "vertex_dvle": null,
+    "geometry_dvle": null,
+    "skin_uniforms": [],
+    "skinned": false,
+    "gls_vertex": 2,
+    "gls_geometry": null
+  }
+}

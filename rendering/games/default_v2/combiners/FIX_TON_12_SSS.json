@@ -1,0 +1,94 @@
+{
+  "name": "#FIX_TON_12_SSS",
+  "file_version": 2,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "FRAGMENT_SECONDARY_COLOR",
+          "TEXTURE0",
+          "TEXTURE0"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "ADD",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "TEXTURE0",
+          "TEXTURE0",
+          "TEXTURE0"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "rgb": {
+        "source": [
+          "FRAGMENT_PRIMARY_COLOR",
+          "CONSTANT",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "MULT_ADD",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "PREVIOUS",
+          "PREVIOUS",
+          "PREVIOUS"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "REPLACE",
+        "scale": 1,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

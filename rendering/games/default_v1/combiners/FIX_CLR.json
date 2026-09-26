@@ -1,0 +1,50 @@
+{
+  "name": "#FIX_CLR",
+  "file_version": 1,
+  "stages": [
+    {
+      "rgb": {
+        "source": [
+          "PRIMARY_COLOR",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_COLOR",
+          "SRC_COLOR",
+          "SRC_COLOR"
+        ],
+        "combine": "REPLACE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "alpha": {
+        "source": [
+          "PRIMARY_COLOR",
+          "CONSTANT",
+          "CONSTANT"
+        ],
+        "operand": [
+          "SRC_ALPHA",
+          "SRC_ALPHA",
+          "SRC_ALPHA"
+        ],
+        "combine": "REPLACE",
+        "scale": 2,
+        "buffer_input": "PREVIOUS"
+      },
+      "constant_color": [
+        127,
+        127,
+        127,
+        127
+      ],
+      "buffer_color": [
+        0,
+        0,
+        0,
+        0
+      ]
+    }
+  ]
+}

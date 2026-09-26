@@ -13,7 +13,7 @@ import numpy as np
 from math import radians
 from mathutils import Matrix, Quaternion, Vector
 
-from ...formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, atr, animation_manager, animation_support
+from ...formats import xmpr, xpck, mbn, imgc, res, minf, xcsl, xcma, xcmt, cmn, txp, atr, mtr, animation_manager, animation_support
 from .fileio_xmpr import *
 from .fileio_animation_manager import *
 from .fileio_xcma import *
@@ -22,9 +22,10 @@ from ...formats.texture import pixel_formats
 from ...formats.texture.best_pixel_format import find_best_pixel_format
 from ...compression import compressor
 from ..panels.material_render import state_from_properties, default_state
+from ..panels.material_lighting import write_material_lighting
 from ..panels.material_textures import PIXEL_FORMAT_ITEMS, WRAP_ITEMS, FILTER_ITEMS, MIPMAP_ITEMS, TEXTURE_MODE_ITEMS, SAMPLER_PROPERTIES, to_pixel_format, properties_to_sampler
 from ...utils.properties import *
-from ...templates import *
+from ...rendering import project as rendering_project
 from ...controls import CameraElevenObject
 
 ##########################################
@@ -174,6 +175,8 @@ def new_archive_content(name):
         "animations_split_data": {},
         "txp_data": [],
         "atr_data": [],
+        "mtr_data": [],
+        "sil_data": [],
         "res_data": None,
     }
 
@@ -270,6 +273,17 @@ def read_archive(data, archive_name, session):
             except Exception as e:
                 session_warning(session, f"{archive_name}/{file_name} can't be read: {e}")
                 content["atr_data"].append(None)
+        elif file_name.endswith('.mtr'):
+            try:
+                content["mtr_data"].append(mtr.read_mtr(archive[file_name]))
+            except Exception as e:
+                session_warning(session, f"{archive_name}/{file_name} can't be read: {e}")
+                content["mtr_data"].append(None)
+        elif file_name.endswith('.sil'):
+            try:
+                content["sil_data"].append(xcsl.read(archive[file_name]))
+            except Exception as e:
+                session_warning(session, f"{archive_name}/{file_name} can't be read: {e}")
         else:
             for animation_type, extensions in SPLIT_EXTENSIONS.items():
                 if file_name.endswith(extensions[1]):
@@ -286,6 +300,43 @@ def read_archive(data, archive_name, session):
                     })
 
     return content
+
+def get_material_names(res_data, table_type):
+    """Material names in the order of a RES table, the order of MATERIAL_DATA when the table has no names."""
+    names = list(res_data.get(table_type, {}).values())
+
+    for name in names:
+        if not isinstance(name, str):
+            names = []
+
+    if len(names) == 0:
+        for value in res_data[res.RESType.MATERIAL_DATA].values():
+            names.append(value['name'])
+
+    return names
+
+def import_outlines(armature, outlines, names):
+    """The .sil files of an archive become the outlines of the export settings of its armature."""
+    settings = armature.level5_archive
+    mesh_names = [mesh.name for mesh in get_armature_meshes(armature)]
+
+    for data in outlines:
+        item = settings.outlines.add()
+        item.private_index = find_unused_index([outline.private_index for outline in settings.outlines if outline != item])
+        item.name = names.get(data["name_hash"], "outline_" + str(item.private_index))
+        item.thickness = min(max(data["thickness"], 0.0), 0.9999)
+        item.visibility = min(max(data["visibility"], 0.0), 1.0)
+        item.scale = max(data["scale"], 0.01)
+        item.depth_min = data["depth_min"]
+        item.depth_max = data["depth_max"]
+        item.open_width = data["open_width"]
+        item.color = [channel / 255 for channel in data["color"]]
+
+        sync_outline_meshes(item, mesh_names)
+
+        for mesh in item.meshes:
+            if zlib.crc32(mesh.name.encode("shift-jis")) in data["mesh_hashes"]:
+                mesh.assigned = True
 
 def build_archive(context, content, session):
     scene = context.scene
@@ -442,15 +493,18 @@ def build_archive(context, content, session):
 
                 libs[material_name] = material_textures
 
-    # Make render states
+    # Make render states and lighting materials
     atr_states = {}
+    mtr_materials = {}
     if res_data is not None and res.RESType.MATERIAL_DATA in res_data:
-        # The .atr files are numbered like the materials, not like the meshes
-        materials_data = res_data[res.RESType.MATERIAL_DATA]
-        res_materials_key = list(materials_data)
+        # The game numbers the .atr files like MATERIAL_2 and the .mtr files like MATERIAL_1, MATERIAL_DATA has an order of its own
+        atr_names = get_material_names(res_data, res.RESType.MATERIAL_2)
+        for i in range(min(len(content["atr_data"]), len(atr_names))):
+            atr_states[atr_names[i]] = content["atr_data"][i]
 
-        for i in range(min(len(content["atr_data"]), len(res_materials_key))):
-            atr_states[materials_data[res_materials_key[i]]['name']] = content["atr_data"][i]
+        mtr_names = get_material_names(res_data, res.RESType.MATERIAL_1)
+        for i in range(min(len(content["mtr_data"]), len(mtr_names))):
+            mtr_materials[mtr_names[i]] = content["mtr_data"][i]
 
     # Make txps
     txps = []
@@ -492,11 +546,15 @@ def build_archive(context, content, session):
             else:
                 mesh_data["parent_node"] = None
 
-            # Get render state
+            # Get render state and lighting material
             atr_state = atr_states.get(mesh_data['material_name'])
+            mtr_material = mtr_materials.get(mesh_data['material_name'])
 
             # Create the mesh using the mesh data
-            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state, bind_offsets=bind_offsets)
+            make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state, mtr_material=mtr_material, bind_offsets=bind_offsets)
+
+        if armature is not None and len(content["sil_data"]) > 0:
+            import_outlines(armature, content["sil_data"], res_data.get(res.RESType.SHADING, {}))
 
     # The flag of the node is written back as it is read (its visibility bit doesn't match what the effects show, UNKNOWN)
     if armature:
@@ -916,7 +974,7 @@ def get_export_compressions():
 
     return [compressor.default_compression]
 
-def make_atr(material_name, template):
+def make_atr(material_name, engine):
     material = bpy.data.materials.get(material_name)
 
     if material is not None and hasattr(material, "level5_atr"):
@@ -924,18 +982,22 @@ def make_atr(material_name, template):
     else:
         state = default_state()
 
-    return atr.write_atr(state, template[0].file_version)
+    return atr.write_atr(state, engine.file_version)
 
-def make_xpck_files(operator, context, template, mode, meshes = [], armature = None, textures = {}, animations = [], outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
+def make_xpck_files(operator, context, engine, mode, meshes = [], armature = None, textures = {}, animations = [], outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
     xmprs = []
     atrs = []
     mtrs = []
 
     if meshes:
         for mesh in meshes:
-            xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.material_name, template[0].modes[template[1]]))
-            atrs.append(make_atr(mesh.material_name, template))
-            mtrs.append(bytes.fromhex(template[0].mtr))
+            try:
+                xmprs.append(fileio_write_xmpr(context, mesh.name, mesh.material_name, operator))
+            except ValueError as error:
+                raise XpckExportError(str(error))
+
+            atrs.append(make_atr(mesh.material_name, engine))
+            mtrs.append(write_material_lighting(mesh.material_name, context.scene, engine.file_version))
 
         report_bone_limit(operator, [mesh.name for mesh in meshes])
 
@@ -970,7 +1032,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     mtminfs = []
 
     anim_version = "V2"
-    if template[0].file_version == 1:
+    if engine.file_version == 1:
         anim_version = "V1"
 
     scene = context.scene
@@ -1013,14 +1075,17 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     xcsls = []
     if outlines:
         for outline in outlines:
-            xcsls.append(xcsl.write(outline['name'], outline['meshes'], outline['thickness'], outline['visibility'], template[0].outline_mesh_data, template[0].cmb1, template[0].cmb2))
+            xcsls.append(xcsl.write(
+                outline['name'], outline['meshes'], outline['thickness'], outline['visibility'], outline['scale'],
+                outline['depth_min'], outline['depth_max'], outline['open_width'], outline['color'], engine.file_version
+            ))
 
     # Make cameras
     xcmas = []
     cameras_sorted = []
 
     camera_version = "V2"
-    if template[0].file_version == 1:
+    if engine.file_version == 1:
         camera_version = "V1"
 
     if cameras:
@@ -1150,7 +1215,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
             texprojs=texprojs
         )
 
-        if template[0].file_version == 1:
+        if engine.file_version == 1:
             files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
         else:
             files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
@@ -1164,7 +1229,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
             properties=properties,
         )
 
-        if template[0].file_version == 1:
+        if engine.file_version == 1:
             files["RES.bin"] = res.write_xres(b"XRES", items, string_table)
         else:
             files["RES.bin"] = res.write_res(b"CHRC00\x00\x00", items, string_table)
@@ -1177,8 +1242,8 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
 
     return files
 
-def fileio_write_xpck(operator, context, filepath, template, mode, **kwargs):
-    xpck.pack_archive(make_xpck_files(operator, context, template, mode, **kwargs), filepath)
+def fileio_write_xpck(operator, context, filepath, engine, mode, **kwargs):
+    xpck.pack_archive(make_xpck_files(operator, context, engine, mode, **kwargs), filepath)
 
     return {'FINISHED'}
 
@@ -1429,30 +1494,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         default=0
     )
 
-    def template_items_callback(self, context):
-        my_templates = get_templates()
-        items = [(template.name, template.name, "") for template in my_templates]
-        return items
-
-    template_name: EnumProperty(
-        name="Templates",
-        description="Choose a template",
-        items=template_items_callback,
-        default=0,
-    )
-
-    def template_mode_items_callback(self, context):
-        my_template = get_template_by_name(self.template_name)
-        items = [(mode, mode, "") for mode in my_template.modes.keys()]
-        return items
-
-    template_mode_name: EnumProperty(
-        name="Mode",
-        description="Choose a mode",
-        items=template_mode_items_callback,
-        default=0,
-    )
-
     def get_settings_armature(self):
         """Armature whose animations and outlines are configured in the current mode."""
         armature = None
@@ -1516,10 +1557,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 row.prop(settings, "archive_name", text="Archive")
 
     def draw_general(self, context, layout):
-        # Add the template_name property to the general section
-        layout.prop(self, "template_name", text="Template")
-        layout.prop(self, "template_mode_name", text="Mode")
-
         # Create a box for export option, mesh group, and armature enum
         options_box = layout.box()
         options_box.prop(self, "export_option", text="Export Option")
@@ -1823,8 +1860,16 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             remove_button.index = index
 
             # Properties
-            item_box.prop(outline_item, "thickness", text="Thickness")
-            item_box.prop(outline_item, "visibility", text="Visibility")
+            item_box.prop(outline_item, "thickness")
+            item_box.prop(outline_item, "visibility")
+            item_box.prop(outline_item, "scale")
+
+            row = item_box.row(align=True)
+            row.prop(outline_item, "depth_min")
+            row.prop(outline_item, "depth_max")
+
+            item_box.prop(outline_item, "open_width")
+            item_box.prop(outline_item, "color")
 
             # Mesh selection for this outline
             mesh_box = item_box.box()
@@ -2077,6 +2122,11 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 "name": outline_item.name,
                 "thickness": outline_item.thickness,
                 "visibility": outline_item.visibility,
+                "scale": outline_item.scale,
+                "depth_min": outline_item.depth_min,
+                "depth_max": outline_item.depth_max,
+                "open_width": outline_item.open_width,
+                "color": [round(channel * 255) for channel in outline_item.color],
                 "meshes": meshes,
             })
 
@@ -2114,7 +2164,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         return properties
 
-    def make_mode_files(self, context, template):
+    def make_mode_files(self, context, engine):
         armature = None
         meshes = []
         textures = {}
@@ -2151,7 +2201,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         return make_xpck_files(
             self, context,
-            template,
+            engine,
             self.export_option,
             armature=armature,
             meshes=meshes,
@@ -2164,7 +2214,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             attach_bone=attach_bone,
         )
 
-    def make_scene_files(self, context, template):
+    def make_scene_files(self, context, engine):
         """One archive per armature and per camera archive name, packed in a single archive."""
         files = {}
         base_name = os.path.splitext(os.path.basename(self.filepath))[0]
@@ -2191,7 +2241,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
             archive_files = make_xpck_files(
                 self, context,
-                template,
+                engine,
                 settings.export_mode,
                 armature=armature,
                 meshes=meshes,
@@ -2220,7 +2270,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             if archive_name in files:
                 raise XpckExportError(f"Several objects use the archive name {archive_name}")
 
-            archive_files = make_xpck_files(self, context, template, 'CAMERA', cameras=self.get_cameras(camera_objects))
+            archive_files = make_xpck_files(self, context, engine, 'CAMERA', cameras=self.get_cameras(camera_objects))
             files[archive_name] = xpck.pack_archive_bytes(archive_files)
 
         if len(files) == 0:
@@ -2229,13 +2279,17 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         return files
 
     def execute(self, context):
-        template = [get_template_by_name(self.template_name), self.template_mode_name]
+        engine = rendering_project.get_scene_engine(context.scene)
+
+        if not rendering_project.is_scene_engine_usable(context.scene):
+            self.report({'ERROR'}, f"{engine.name} is not installed, install it from the add-on preferences or choose another game engine")
+            return {'CANCELLED'}
 
         try:
             if self.export_option == 'SCENE':
-                files = self.make_scene_files(context, template)
+                files = self.make_scene_files(context, engine)
             else:
-                files = self.make_mode_files(context, template)
+                files = self.make_mode_files(context, engine)
         except XpckExportError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}

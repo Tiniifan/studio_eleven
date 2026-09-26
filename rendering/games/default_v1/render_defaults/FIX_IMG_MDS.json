@@ -1,0 +1,7 @@
+{
+  "name": "#FIX_IMG_MDS",
+  "vertex_program": "#FIX_MDS",
+  "combiner": "#FIX_IMG",
+  "skinned": true,
+  "fragment_lighting": false
+}
