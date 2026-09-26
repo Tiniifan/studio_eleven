@@ -28,6 +28,9 @@ MESH_TYPE_INT_TO_ENUM = {
 
 MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
 
+# Property of a skinned mesh: the name of its parent node, which hides it
+PARENT_NODE_PROPERTY = "level5_parent_node"
+
 # The bone palette of the shaders holds 24 bones, past it some engines overwrite other uniforms
 MAX_MESH_BONES = 24
 
@@ -273,6 +276,7 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
     color_data = model_data["vertices"]["color_data"]
     tint_data = model_data["vertices"]["tint_data"]
     single_bind = model_data["single_bind"]
+    parent_node = model_data.get("parent_node")
     draw_priority = model_data["draw_priority"]
     mesh_type = model_data["mesh_type"]
     
@@ -386,6 +390,9 @@ def make_mesh(model_data, armature=None, bones=None, lib=None, txp_data=None, at
             mesh_obj.parent_type = 'BONE'
             mesh_obj.parent_bone = single_bind
             mesh_obj.rotation_euler = (0, 0, 0)
+        elif parent_node:
+            # The node which hides a skinned mesh, the game doesn't draw it while this node is hidden
+            mesh_obj[PARENT_NODE_PROPERTY] = parent_node
     
     if lib is not None:
         material = bpy.data.materials.new(name=model_data['material_name'])
@@ -495,8 +502,11 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         return {'CANCELLED'}
 
     single_bind = None
+    parent_node = None
     if mesh.parent_type == 'BONE' and mesh.parent_bone:
         single_bind = mesh.parent_bone
+    else:
+        parent_node = mesh.get(PARENT_NODE_PROPERTY)
 
     draw_priority = mesh.data.level5_properties.draw_priority
     mesh_type = MESH_TYPE_ENUM_TO_INT.get(mesh.data.level5_properties.mesh_type, 0)
@@ -510,7 +520,7 @@ def fileio_write_xmpr(context, mesh_name, library_name, mode):
         mesh.name_full, texspace_array,
         indices, vertices, uvs, normals, colors,
         weights, bone_names, library_name, mode,
-        single_bind, draw_priority, mesh_type, tints
+        single_bind, draw_priority, mesh_type, tints, parent_node
     )
     
 def fileio_open_xmpr(context, filepath):

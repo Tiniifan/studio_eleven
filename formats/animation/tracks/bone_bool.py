@@ -11,4 +11,4 @@ class BoneBool:
         return self.X == obj.X
     
     def ToBytes(self):
-        return struct.pack("<B", float(self.X))
+        return struct.pack("<B", int(self.X) & 0xFF)

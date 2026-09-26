@@ -18,6 +18,12 @@ SAMPLER_NODE_PREFIX = "Level5 Sampler"
 SAMPLER_UV_NODE = SAMPLER_NODE_PREFIX + " Texture Coordinate"
 SAMPLER_PARTS = ["Separate", "Combine", "Wrap X", "Wrap Y"]
 
+# Nodes a material animation plays on: the game replaces the colour (attribute) and the alpha (transparency) of the material
+TRANSPARENCY_NODE = "Level5 Transparency"
+ATTRIBUTE_NODE = "Level5 Attribute"
+TRANSPARENCY_MULTIPLY_NODE = "Level5 Transparency Multiply"
+ATTRIBUTE_MULTIPLY_NODE = "Level5 Attribute Multiply"
+
 # The node group the previous versions put in front of an Image Texture node to wrap each axis
 LEGACY_WRAP_GROUP_PREFIX = "Level Five Wrap"
 
@@ -442,6 +448,26 @@ def wire_textures(tree, textures, node_names):
     if bsdf is None:
         return
 
+    # The animated colour multiplies the colour of the textures
+    attribute = tree.nodes.get(ATTRIBUTE_NODE)
+
+    if attribute is not None:
+        multiply = get_node(tree, ATTRIBUTE_MULTIPLY_NODE, 'ShaderNodeMixRGB', (bsdf.location.x - 250, bsdf.location.y + 100), "Attribute")
+        multiply.blend_type = 'MULTIPLY'
+        multiply.inputs[0].default_value = 1.0
+
+        if color is not None:
+            link(tree, color, multiply.inputs[1])
+        else:
+            unlink_from(tree, multiply.inputs[1], node_names)
+
+            # Without texture the colour of the shader is the one multiplied
+            if not bsdf.inputs['Base Color'].is_linked:
+                multiply.inputs[1].default_value = bsdf.inputs['Base Color'].default_value
+
+        link(tree, attribute.outputs[0], multiply.inputs[2])
+        color = multiply.outputs[0]
+
     if color is not None:
         link(tree, color, bsdf.inputs['Base Color'])
     else:
@@ -460,10 +486,52 @@ def wire_textures(tree, textures, node_names):
         if texture.image.alpha_mode != 'NONE':
             has_alpha = True
 
-    if alpha is not None and has_alpha:
+    if alpha is None or not has_alpha:
+        alpha = None
+
+    # The animated transparency multiplies the alpha of the textures
+    transparency = tree.nodes.get(TRANSPARENCY_NODE)
+
+    if transparency is not None:
+        if alpha is not None:
+            multiply = get_node(tree, TRANSPARENCY_MULTIPLY_NODE, 'ShaderNodeMath', (bsdf.location.x - 250, bsdf.location.y - 300), "Transparency")
+            multiply.operation = 'MULTIPLY'
+
+            link(tree, alpha, multiply.inputs[0])
+            link(tree, transparency.outputs[0], multiply.inputs[1])
+            alpha = multiply.outputs[0]
+        else:
+            if TRANSPARENCY_MULTIPLY_NODE in tree.nodes:
+                tree.nodes.remove(tree.nodes[TRANSPARENCY_MULTIPLY_NODE])
+
+            alpha = transparency.outputs[0]
+
+    if alpha is not None:
         link(tree, alpha, target)
     else:
         unlink_from(tree, target, node_names)
+
+def add_material_animation_nodes(material):
+    """Add the nodes a material animation plays on, white and opaque until a key changes them."""
+    if not material.use_nodes:
+        material.use_nodes = True
+
+    tree = material.node_tree
+    bsdf = find_bsdf(tree)
+
+    origin = (0, 0)
+    if bsdf is not None:
+        origin = bsdf.location
+
+    if tree.nodes.get(TRANSPARENCY_NODE) is None:
+        transparency = get_node(tree, TRANSPARENCY_NODE, 'ShaderNodeValue', (origin[0] - 500, origin[1] - 450), "Transparency")
+        transparency.outputs[0].default_value = 1.0
+
+    if tree.nodes.get(ATTRIBUTE_NODE) is None:
+        attribute = get_node(tree, ATTRIBUTE_NODE, 'ShaderNodeRGB', (origin[0] - 500, origin[1] + 350), "Attribute")
+        attribute.outputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
+
+    apply_material_textures(material)
 
 def apply_material_textures(material):
     if material is None or not hasattr(material, "level5_textures"):

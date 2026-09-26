@@ -74,8 +74,7 @@ def open(data):
 
     bone = {}
     with io.BytesIO(data) as stream:
-        bone_id, parent_index = struct.unpack('<II', stream.read(8))
-        stream.seek(4)
+        bone_id, parent_index, flag = struct.unpack('<III', stream.read(12))
 
         stream.seek(0xC)
         location = struct.unpack('<fff', stream.read(12))
@@ -107,6 +106,7 @@ def open(data):
 
         bone['crc32'] = bone_id
         bone['parent_crc32'] = parent_index
+        bone['flag'] = flag
         bone['location'] = location
         bone['quaternion_rotation'] = quaternion_rotation
         bone['scale'] = scale
@@ -116,7 +116,7 @@ def open(data):
 
     return bone
 
-def write(armature, pose_bone):
+def write(armature, pose_bone, flag=None):
     out = bytes()  
         
     # get bone matrix relative to bone_parent           
@@ -138,10 +138,13 @@ def write(armature, pose_bone):
     else:
         out += int(0).to_bytes(4, 'little')
         
-    if pose_bone.name == "billboard" or pose_bone.name == "cam_rot":
-        out += int(5).to_bytes(4, "little")
-    else:
-        out += int(4).to_bytes(4, 'little')
+    # An imported node keeps its flag, a new one is a billboard (5) or a node (4)
+    if flag is None:
+        flag = 4
+        if pose_bone.name == "billboard" or pose_bone.name == "cam_rot":
+            flag = 5
+
+    out += int(flag).to_bytes(4, 'little')
     
     out += matrix_to_bytes(pose_matrix, pose_bone.head, pose_bone.tail, local_matrix)
     

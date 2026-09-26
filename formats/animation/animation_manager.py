@@ -161,7 +161,8 @@ class AnimationManager:
             # Write bone count
             writer.seek(0x24)
             if has_bone_count:
-                writer.write(pack("<I", self.GetDistincHashes()))
+                # Names of the location, rotation and scale nodes, the BoneBool names follow them
+                writer.write(pack("<I", len(self.GetNameHashes())))
   
             # Write animation hash
             writer.write(pack("<I", (crc32(self.AnimationName.encode("shift-jis")))))
@@ -432,24 +433,27 @@ class AnimationManager:
                     writer.write(tableHeader.Pack())
                     headerPos = writer.tell()
 
-            header.DecompSize = len(writer.getvalue()) * 2
+            # Memory the game reserves: the decompressed data and 88 bytes per node
+            header.DecompSize = len(writer.getvalue()) + 88 * self.CountHashes()
             writerDecomp.write(compressor.compress(writer.getvalue()))
 
     def SaveAnimationDataV2(self, writerDecomp, header):
         with BytesIO() as writer:
             hashCount = self.CountHashes()
-            hashCountDistinct = self.GetDistincHashes()
+
+            # The BoneBool nodes index a second list of names, after the names of the other tracks
             nameHashes = self.GetNameHashes()
-            
+            boolHashes = self.GetBoolHashes()
+            hashCountDistinct = len(nameHashes) + len(boolHashes)
+
             # Write data header
             writer.write(pack("<I", 0x0C))
             writer.write(pack("<I", 0x0C + hashCountDistinct * 4))
             writer.write(pack("<I", (0x0C + hashCountDistinct * 4) + 4 * 10))
             
             # Write name hash
-            if hashCountDistinct > 0:
-                for i in nameHashes:
-                    writer.write(pack("<I", i))
+            for i in nameHashes + boolHashes:
+                writer.write(pack("<I", i))
                     
             # Store position
             trackOffset = writer.tell() + 4 * 2
@@ -485,7 +489,10 @@ class AnimationManager:
                             
                             # Write data
                             writer.seek(dataOffset)
-                            writer.write(pack("<H", nameHashes.index(node.Name) if node.Name in nameHashes else -1))
+                            if myTrack.Name == "BoneBool":
+                                writer.write(pack("<H", boolHashes.index(node.Name)))
+                            else:
+                                writer.write(pack("<H", nameHashes.index(node.Name)))
                             
                             # Key count on 13 bits, interpolation on the 3 high bits
                             writer.write(pack("<H", (len(node.Frames) & 0x1FFF) | (node.Interpolation << 13)))
@@ -499,7 +506,10 @@ class AnimationManager:
                             valueOffset = writer.tell()
                             for frame in node.Frames:
                                 writer.write(frame.Value.ToBytes())
-                                
+
+                            # The next node starts on 4 bytes (the bool values are 1 byte)
+                            self.WriteAlignment(writer, 4, 0)
+
                             # Update data offset
                             dataOffset = writer.tell()
                             
@@ -514,7 +524,8 @@ class AnimationManager:
                 writer.write(track.Pack())
                 trackDataOffset += 8
             
-            header.DecompSize = len(writer.getvalue()) * 2
+            # Memory the game reserves: the decompressed data and 84 bytes per node
+            header.DecompSize = len(writer.getvalue()) + 84 * hashCount
             writerDecomp.write(compressor.compress(writer.getvalue()))
     
     def ReadFrameDataV1(self, reader, tableOffset, trackNum, trackIndex):
@@ -656,14 +667,28 @@ class AnimationManager:
         return sum(len(track.Nodes) for track in self.Tracks)
     
     def GetNameHashes(self):
+        """Distinct node names of the tracks, the BoneBool nodes have their own list in V2."""
         nameHashes = []
-        
+
         for track in self.Tracks:
+            if track.Name == "BoneBool":
+                continue
+
             for node in track.Nodes:
                 if node.Name not in nameHashes:
                     nameHashes.append(node.Name)
-                    
+
         return nameHashes
+
+    def GetBoolHashes(self):
+        boolHashes = []
+
+        for track in self.Tracks:
+            if track.Name == "BoneBool":
+                for node in track.Nodes:
+                    boolHashes.append(node.Name)
+
+        return boolHashes
     
     def FillArray(self, inputArray: list, size):
         result = [0] * size

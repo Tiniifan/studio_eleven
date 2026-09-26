@@ -62,7 +62,20 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
     bpy.ops.armature.bone_primitive_add()
     new_bone = armature.data.edit_bones[-1]
     new_bone.name = bone_name
-    
+
+    # Blender deletes a bone with no length, the game has nodes of scale 0 that an animation scales up
+    if (Vector(head) - Vector(tail)).length < 0.001:
+        tail = Vector(head) + Vector((0, 1, 0))
+
+    clamped_scale = []
+    for component in scale:
+        if abs(component) < 0.001:
+            component = 0.001
+
+        clamped_scale.append(component)
+
+    scale = clamped_scale
+
     new_bone.head = head
     new_bone.tail = tail
     
@@ -78,10 +91,6 @@ def create_bone(armature, bone_name, parent_name, relative_location, relative_ro
 
             # Create a rotation matrix from the quaternion
             rotation_matrix = relative_rotation.to_matrix().to_4x4()
-            
-            # Check and adjust scale if necessary
-            if scale == (0, 0, 0):
-                scale = (0.00001, 0.00001, 0.00001)
 
             # Create a scaling matrix
             scale_matrix = Matrix.Scale(scale[0], 4, (1, 0, 0))
@@ -303,6 +312,7 @@ def build_archive(context, content, session):
             session_warning(session, f"{child['name']} can't be imported: {e}")
 
     res_data = content["res_data"]
+    bone_flags = {}
     armature = None
     libs = {}
 
@@ -332,6 +342,7 @@ def build_archive(context, content, session):
             bone_scale = bones_data[i]['scale']
             bone_head = bones_data[i]['head']
             bone_tail = bones_data[i]['tail']
+            bone_flag = bones_data[i].get('flag', 4)
 
             # Get bone name
             bone_name = "bone_" + str(i)
@@ -348,6 +359,8 @@ def build_archive(context, content, session):
                 create_bone(armature, bone_name, False, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
             else:
                 create_bone(armature, bone_name, parent_name, bone_location, bone_rotation, bone_scale, bone_head, bone_tail)
+
+            bone_flags[bone_name] = bone_flag
 
         # Set object mode
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -463,11 +476,24 @@ def build_archive(context, content, session):
             if mesh_data["single_bind"] is not None:
                 mesh_data["single_bind"] = res_data[res.RESType.BONE][mesh_data["single_bind"]]
 
+            # Parent node of a skinned mesh
+            if bones and mesh_data.get("parent_node") in bones:
+                mesh_data["parent_node"] = bones[mesh_data["parent_node"]]
+            else:
+                mesh_data["parent_node"] = None
+
             # Get render state
             atr_state = atr_states.get(mesh_data['material_name'])
 
             # Create the mesh using the mesh data
             make_mesh(mesh_data, armature=armature, bones=bones, lib=lib, txp_data=txps, atr_state=atr_state)
+
+    # The flag of the node is written back as it is read (its visibility bit doesn't match what the effects show, UNKNOWN)
+    if armature:
+        for bone_name, bone_flag in bone_flags.items():
+            bone = armature.data.bones.get(bone_name)
+            if bone is not None:
+                bone[BONE_FLAG_PROPERTY] = bone_flag
 
     # Group the animations by name, the animation menu applies them
     groups = {}
@@ -876,7 +902,7 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     mbns = []
     if armature:
         for bone in armature.pose.bones:
-            mbns.append(mbn.write(armature, bone))
+            mbns.append(mbn.write(armature, bone, bone.bone.get(BONE_FLAG_PROPERTY)))
 
     # Make images
     imgcs = []

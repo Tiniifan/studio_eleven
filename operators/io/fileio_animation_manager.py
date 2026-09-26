@@ -11,6 +11,30 @@ from bpy.props import StringProperty, EnumProperty, BoolProperty, FloatProperty,
 
 from ...formats.animation.tracks import *
 from ...formats import  animation_manager, animation_support, animation_bake, res
+from ..panels.material_textures import add_material_animation_nodes, TRANSPARENCY_NODE, ATTRIBUTE_NODE
+from .fileio_xmpr import PARENT_NODE_PROPERTY
+
+##########################################
+# CONST
+##########################################
+
+TRANSPARENCY_DATA_PATH = f'node_tree.nodes["{TRANSPARENCY_NODE}"].outputs[0].default_value'
+ATTRIBUTE_DATA_PATH = f'node_tree.nodes["{ATTRIBUTE_NODE}"].outputs[0].default_value'
+
+# Property of a pose bone the BoneBool track animates, it drives the visibility of the meshes bound to the bone
+VISIBLE_PROPERTY = "level5_visible"
+
+# Flag of the .mbn node, kept on the bone to write it back
+BONE_FLAG_PROPERTY = "level5_flag"
+
+# Curves of a material animation, the older versions of the add-on animated the shader and the alpha multiplier
+MATERIAL_DATA_PATHS = {
+    TRANSPARENCY_DATA_PATH: 'transparency',
+    ATTRIBUTE_DATA_PATH: 'attribute',
+    'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value': 'transparency',
+    'node_tree.nodes["Principled BSDF"].inputs[21].default_value': 'transparency',
+    'node_tree.nodes["Principled BSDF"].inputs[19].default_value': 'attribute',
+}
 
 ##########################################
 # XMTN Function
@@ -81,18 +105,50 @@ def calculate_transformed_rotation(rest_matrix, rotation):
     return rest_matrix.inverted().to_quaternion() @ Quaternion(rotation)
 
 def calculate_transformed_scale(rest_matrix, scale):
-    # Create scale matrices for each axis
-    scale_matrix_x = Matrix.Scale(scale[0], 4, (1, 0, 0))
-    scale_matrix_y = Matrix.Scale(scale[1], 4, (0, 1, 0))
-    scale_matrix_z = Matrix.Scale(scale[2], 4, (0, 0, 1))
+    # A Blender bone has no scale at rest, the pose scale is the scale of the file with its sign (to_scale of a matrix flips the 3 axes of a mirror)
+    return Vector(scale)
 
-    # Multiply rest matrix by scale matrices
-    transformed_matrix = rest_matrix.inverted() @ (scale_matrix_x @ scale_matrix_y @ scale_matrix_z)
+def get_pose_rotation(pose_bone):
+    if pose_bone.rotation_mode == 'QUATERNION':
+        return pose_bone.rotation_quaternion.normalized()
+    elif pose_bone.rotation_mode == 'AXIS_ANGLE':
+        angle, x, y, z = pose_bone.rotation_axis_angle
+        return Quaternion(Vector((x, y, z)), angle)
 
-    # Extract scales from the result
-    transformed_scale = transformed_matrix.to_scale()
+    return pose_bone.rotation_euler.to_quaternion()
 
-    return transformed_scale
+def get_bone_transform(pose_bone):
+    """Location, rotation and scale of a bone as the file stores them (relative to its deform parent)."""
+    if len(pose_bone.constraints) == 0:
+        # The inverse of the import, the channels keep the sign of the quaternion and of the scale
+        rest_matrix = get_rest_matrix(pose_bone)
+        location = rest_matrix @ pose_bone.location
+        rotation = rest_matrix.to_quaternion() @ get_pose_rotation(pose_bone)
+        scale = pose_bone.scale.copy()
+    else:
+        # Constraints only show in the matrix, which loses the sign of the scale
+        pose_matrix = pose_bone.matrix
+        parent = pose_bone.parent
+
+        while parent and not parent.bone.use_deform:
+            parent = parent.parent
+
+        if parent:
+            pose_matrix = parent.matrix.inverted() @ pose_matrix
+
+        location = pose_matrix.to_translation()
+        rotation = pose_matrix.to_quaternion()
+        scale = pose_matrix.to_scale()
+
+    return snap_zeros(location), snap_zeros(rotation), snap_zeros(scale)
+
+def snap_zeros(values):
+    # The float noise of the conversions hides the exact zeros of the game files, which the compression needs
+    for i in range(len(values)):
+        if abs(values[i]) < 0.000001:
+            values[i] = 0.0
+
+    return values
 
 def get_keyframe_interpolation(node):
     """Blender interpolation of the keys of a node: the game holds the key or interpolates."""
@@ -134,8 +190,55 @@ def get_frames(fcurve, bake, frame_count):
 
     return sampled_frames
 
+def get_bound_meshes(armature, bone_name):
+    meshes = []
+
+    for child in armature.children:
+        if child.type != 'MESH':
+            continue
+
+        # A rigid mesh is parented to its node, a skinned mesh remembers it
+        if child.parent_type == 'BONE' and child.parent_bone == bone_name:
+            meshes.append(child)
+        elif child.get(PARENT_NODE_PROPERTY) == bone_name:
+            meshes.append(child)
+
+    return meshes
+
+def setup_bone_visibility(armature, bone_name, visible=None):
+    """The game doesn't draw a mesh bound to a hidden node: a property of the pose bone drives the visibility of its meshes."""
+    pose_bone = armature.pose.bones.get(bone_name)
+    if pose_bone is None:
+        return
+
+    if VISIBLE_PROPERTY not in pose_bone.keys():
+        pose_bone[VISIBLE_PROPERTY] = 1
+        pose_bone.id_properties_ui(VISIBLE_PROPERTY).update(min=0, max=1, description="Level 5 visibility of the node, 0 hides the meshes bound to it")
+
+    if visible is not None:
+        pose_bone[VISIBLE_PROPERTY] = int(visible)
+
+    for mesh in get_bound_meshes(armature, bone_name):
+        for property_name in ["hide_viewport", "hide_render"]:
+            if mesh.animation_data and mesh.animation_data.drivers.find(property_name):
+                continue
+
+            driver = mesh.driver_add(property_name).driver
+            driver.type = 'SCRIPTED'
+            driver.expression = "visible < 0.5"
+
+            variable = driver.variables.new()
+            variable.name = "visible"
+            variable.type = 'SINGLE_PROP'
+            variable.targets[0].id_type = 'OBJECT'
+            variable.targets[0].id = armature
+            variable.targets[0].data_path = f'pose.bones["{bone_name}"]["{VISIBLE_PROPERTY}"]'
+
+def get_visible_data_path(bone_name):
+    return f'pose.bones["{bone_name}"]["{VISIBLE_PROPERTY}"]'
+
 def get_track_type(track_name):
-    if track_name.startswith("Bone") and track_name != "BoneBool":
+    if track_name.startswith("Bone"):
         return 'bone'
     elif track_name.startswith("UV"):
         return 'uv'
@@ -224,6 +327,23 @@ def process_bone_track(track, node, armature, action, bone_names, interpolation)
     elif track.Name == "BoneScale":
         data_path = f'pose.bones["{bone_name}"].scale'
         indices = [0, 1, 2]  # X, Y, Z scale
+    elif track.Name == "BoneBool":
+        setup_bone_visibility(armature, bone_name)
+
+        fcurve = action.fcurves.find(data_path=get_visible_data_path(bone_name), index=0)
+        if not fcurve:
+            fcurve = action.fcurves.new(data_path=get_visible_data_path(bone_name), index=0, action_group=bone_name)
+
+        # The game holds the key, any value but 0 shows the node
+        for frame in node.Frames:
+            visible = 0
+            if frame.Value.X != 0:
+                visible = 1
+
+            keyframe = fcurve.keyframe_points.insert(frame=frame.Key, value=visible)
+            keyframe.interpolation = 'CONSTANT'
+
+        return
     else:
         # Skip unknown bone tracks
         return
@@ -307,6 +427,14 @@ def process_uv_track(track, node, action, meshes, interpolation):
 
                 keyframe.interpolation = interpolation
 
+def get_material_value(value_fcurves, material_name, transformation, index, frame, default):
+    fcurve = value_fcurves.get((material_name, transformation, index))
+
+    if fcurve is None:
+        return default
+
+    return float(fcurve.evaluate(frame))
+
 def process_material_track(track, node, action_name, meshes, material_actions, interpolation):
     """Process a track related to material."""
     for mesh in meshes:
@@ -314,28 +442,22 @@ def process_material_track(track, node, action_name, meshes, material_actions, i
             continue
 
         material = mesh.data.materials[0]
-        if material is None or not material.use_nodes:
+        if material is None:
             continue
 
         # Define the corresponding data paths
         if track.Name == "MaterialAttribute":
-            data_path = f'node_tree.nodes["Principled BSDF"].inputs[19].default_value'
+            data_path = ATTRIBUTE_DATA_PATH
             indices = [0, 1, 2]
         elif track.Name == "MaterialTransparency":
-            # Get texture node
-            nodes = material.node_tree.nodes
-            texture_node = nodes.get("Image Texture")
-
-            # Changes the data_path if the texture has an alpha channel or not
-            if texture_node and texture_node.outputs["Alpha"].is_linked:
-                data_path = f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value'
-            else:
-                data_path = f'node_tree.nodes["Principled BSDF"].inputs[21].default_value'
-
+            data_path = TRANSPARENCY_DATA_PATH
             indices = [0]
         else:
             # Skip unknown material tracks
             return
+
+        # The game replaces the colour and the alpha of the material, the nodes multiply the textures by them
+        add_material_animation_nodes(material)
 
         # Get or create the action of this material
         action = material_actions.get(material.name)
@@ -512,6 +634,7 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
         'location': animation_manager.Track('BoneLocation', 0, []),
         'rotation': animation_manager.Track('BoneRotation', 1, []),
         'scale': animation_manager.Track('BoneScale', 2, []),
+        'bool': animation_manager.Track('BoneBool', 3, []),
     }
 
     if armature.animation_data and armature.animation_data.action:
@@ -524,7 +647,13 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
             bone_name = data_path.split('"')[1] if '"' in data_path else None
 
             if bone_name and bone_name in bones:
-                transformation_type = next((t for t in transformations if t in data_path), None)
+                if data_path == get_visible_data_path(bone_name):
+                    transformation_type = None
+                    if 'bool' in transformations:
+                        transformation_type = 'bool'
+                else:
+                    transformation_type = next((t for t in transformations if t in data_path), None)
+
                 if not transformation_type:
                     continue
 
@@ -542,33 +671,36 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
                 if not pose_bone or not pose_bone.bone.use_deform:
                     continue
 
-                pose_matrix = pose_bone.matrix
-                parent = pose_bone.parent
-                while parent and not parent.bone.use_deform:
-                    parent = parent.parent
-                if parent:
-                    pose_matrix = parent.matrix.inverted() @ pose_matrix
+                location, rotation, scale = get_bone_transform(pose_bone)
 
                 name_crc32 = zlib.crc32(bone_name.encode())
                 for transformation in bone_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
                         interpolation = get_node_interpolation(node_fcurves[(bone_name, transformation)])
+
+                        # The game always holds the keys of a bool track
+                        if transformation == 'bool':
+                            interpolation = animation_support.INTERPOLATION_CONSTANT
+
                         tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, interpolation, []))
 
-                    if transformation == 'location':
-                        location = pose_matrix.to_translation()
+                    if transformation == 'bool':
+                        visible = 0
+                        if pose_bone.get(VISIBLE_PROPERTY, 1) >= 0.5:
+                            visible = 1
+
+                        tracks['bool'].GetNodeByName(name_crc32).add_frame(frame, BoneBool(visible))
+                    elif transformation == 'location':
                         tracks['location'].GetNodeByName(name_crc32).add_frame(
                             frame, BoneLocation(*map(float, location))
                         )
                     elif transformation == 'rotation':
-                        rotation = pose_matrix.to_euler()
-                        rotation = BoneRotation(*map(float, rotation))
-                        rotation.ToQuaternion()
-                        tracks['rotation'].GetNodeByName(name_crc32).add_frame(frame, rotation)
+                        tracks['rotation'].GetNodeByName(name_crc32).add_frame(
+                            frame, BoneRotation(rotation.x, rotation.y, rotation.z, rotation.w)
+                        )
                     elif transformation == 'scale':
-                        scale = pose_matrix.to_scale()
                         tracks['scale'].GetNodeByName(name_crc32).add_frame(
-                            frame, BoneLocation(*map(float, scale))
+                            frame, BoneScale(*map(float, scale))
                         )
 
     for track in tracks.values():
@@ -758,7 +890,8 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                     if len(obj.data.materials) > 0:
                         if obj.data.materials[0].name in objects:
                             if obj.data.materials[0].animation_data and obj.data.materials[0].animation_data.action:
-                                materials_enabled.append(obj.data.materials[0])
+                                if obj.data.materials[0] not in materials_enabled:
+                                    materials_enabled.append(obj.data.materials[0])
                 else:
                     meshes_enabled.append(obj)
     elif focused_object.type == 'MESH':
@@ -773,34 +906,22 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
     
     # Vérifie quel type d'objets est activé
     if materials_enabled and not meshes_enabled:
-        print(f"materials activés : {[mat.name for mat in materials_enabled]}")
-        
-        keyframes_data = {}  # Structure pour stocker les données des keyframes
+        keyframes_data = {}
         node_fcurves = {}
-        
-        # Parcours des modifiers activés
+        value_fcurves = {}
+
         for material in materials_enabled:
             if material.animation_data and material.animation_data.action:
                 action = material.animation_data.action
-                
+
                 for fcurve in action.fcurves:
-                    data_path = fcurve.data_path
-                    
-                    if data_path == f'node_tree.nodes["Alpha Multiplier"].inputs[1].default_value' or data_path == f'node_tree.nodes["Principled BSDF"].inputs[21].default_value':
-                        # Transparency
-                        transformation_type = 'transparency'
-                        if not 'transparency' in transformations:
-                            continue
-                        
-                    elif data_path == f'node_tree.nodes["Principled BSDF"].inputs[19].default_value':
-                        # Emission
-                        transformation_type = 'attribute'
-                        if not 'attribute' in transformations:
-                            continue
-                    else:
+                    transformation_type = MATERIAL_DATA_PATHS.get(fcurve.data_path)
+
+                    if transformation_type is None or transformation_type not in transformations:
                         continue
-                        
+
                     node_fcurves.setdefault((material.name, transformation_type), []).append(fcurve)
+                    value_fcurves[(material.name, transformation_type, fcurve.array_index)] = fcurve
 
                     for frame in get_frames(fcurve, bake, frame_count):
                         frame_transformations = keyframes_data.setdefault(frame, {}).setdefault(material.name, [])
@@ -808,40 +929,29 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                             frame_transformations.append(transformation_type)
 
         for frame, material_data in sorted(keyframes_data.items()):
-            scene.frame_set(frame)
-            
             for material_name, material_transformations in material_data.items():
-                # Récupérer le material par son nom et l'objet associé
-                material = next((mat for mat in materials_enabled if mat.name == material_name), None)
-                if not material:
-                    continue
-                
-                nodes = material.node_tree.nodes
-                name_crc32 = zlib.crc32(material_name.encode())
-                
+                # A copy of an imported material (".001") keeps the hash of the original name
+                name_crc32 = zlib.crc32(get_real_name(material_name).encode())
+
                 for transformation in material_transformations:
                     if not tracks[transformation].NodeExists(name_crc32):
                         interpolation = get_node_interpolation(node_fcurves[(material_name, transformation)])
                         tracks[transformation].Nodes.append(animation_manager.Node(name_crc32, interpolation, []))
 
+                    # The values are read on the curves, whatever the nodes the material has
                     if transformation == 'transparency':
-                        texture_node = nodes.get("Image Texture")
-                        if texture_node:
-                            transparency = 0
-                            
-                            if texture_node.outputs["Alpha"].is_linked:
-                                transparency = nodes["Alpha Multiplier"].inputs[1].default_value
-                            else:
-                                transparency = nodes["Principled BSDF"].inputs[21].default_value
-
-                            tracks['transparency'].GetNodeByName(name_crc32).add_frame(
-                                frame, Transparency(transparency)
-                            )
+                        transparency = get_material_value(value_fcurves, material_name, transformation, 0, frame, 1.0)
+                        tracks['transparency'].GetNodeByName(name_crc32).add_frame(
+                            frame, Transparency(transparency)
+                        )
                     elif transformation == 'attribute':
-                        emission = nodes["Principled BSDF"].inputs[19].default_value
+                        attribute = []
+                        for index in range(3):
+                            attribute.append(get_material_value(value_fcurves, material_name, transformation, index, frame, 1.0))
+
                         tracks['attribute'].GetNodeByName(name_crc32).add_frame(
-                            frame, MaterialAttribute(*map(float, emission))
-                        )                    
+                            frame, MaterialAttribute(*attribute)
+                        )
     elif meshes_enabled and not materials_enabled:
         meshes_material_dict = {}
         for i, obj in enumerate(context.scene.objects):
