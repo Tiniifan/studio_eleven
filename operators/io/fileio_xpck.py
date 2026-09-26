@@ -691,6 +691,9 @@ def import_armature_items(self, context):
 
     return armature_enum_items
 
+# Animations drawn at once in the animation menu
+ANIMATIONS_PER_PAGE = 12
+
 class ImportAnimationChoice(bpy.types.PropertyGroup):
     name: StringProperty()
     archive_name: StringProperty()
@@ -710,6 +713,7 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
     animations: CollectionProperty(type=ImportAnimationChoice)
+    page: IntProperty(name="Page", default=1, min=1, description="Page of the animation list")
 
     def invoke(self, context, event):
         self.animations.clear()
@@ -732,19 +736,44 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
             item.armature = find_best_armature(context, group, used_armatures)
             used_armatures.add(item.armature)
 
-        return context.window_manager.invoke_props_dialog(self, width=600)
+        return context.window_manager.invoke_props_dialog(self, width=700)
 
     def draw(self, context):
         layout = self.layout
 
         if len(self.animations) == 0:
             layout.label(text="No animation found")
+            return
 
+        archive_names = []
         for item in self.animations:
-            box = layout.box()
-            box.label(text=f"{item.name} ({item.archive_name})", icon='ACTION')
+            if item.archive_name not in archive_names:
+                archive_names.append(item.archive_name)
 
-            row = box.row()
+        if len(archive_names) > 3:
+            layout.label(text=f"{len(self.animations)} animations in {len(archive_names)} archives")
+        else:
+            layout.label(text=f"{len(self.animations)} animations in {', '.join(archive_names)}")
+
+        # The dialog shows one page at a time so the OK button stays visible (template_list crashes in a dialog)
+        page_count = (len(self.animations) + ANIMATIONS_PER_PAGE - 1) // ANIMATIONS_PER_PAGE
+        page = min(self.page, page_count)
+        first = (page - 1) * ANIMATIONS_PER_PAGE
+
+        box = layout.box()
+
+        for i in range(first, first + ANIMATIONS_PER_PAGE):
+            if i >= len(self.animations):
+                # Empty rows keep the height of the dialog
+                box.label(text="")
+                continue
+
+            item = self.animations[i]
+
+            split = box.split(factor=0.35)
+            split.label(text=item.name, icon='ACTION')
+
+            row = split.row()
 
             checkboxes = row.row(align=True)
             for track_type in ['bone', 'uv', 'material']:
@@ -753,6 +782,10 @@ class ImportXC_ChooseAnimations(bpy.types.Operator):
                 sub.prop(item, "import_" + track_type)
 
             row.prop(item, "armature", text="")
+
+        if page_count > 1:
+            row = layout.row()
+            row.prop(self, "page", text=f"Page {page} / {page_count}")
 
     def execute(self, context):
         if import_session is None:
