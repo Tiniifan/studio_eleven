@@ -315,7 +315,8 @@ def write_v2(animation_name, camera_speed, cam_values):
             else:
                 cam_data_stream += struct.pack(f'{len(cam_value[key])}f', *cam_value[key])
 
-        compressed_cam_data = compressor.compress(bytes(cam_data_stream))
+        compressed_cam_data = bytearray(compressor.compress(bytes(cam_data_stream)))
+        write_alignment(compressed_cam_data)
 
         file_bytes.write(struct.pack('4i', 0x10, 0x04, cam_data_start_offset, len(compressed_cam_data) + 0x10))
         file_bytes.write(compressed_cam_data)

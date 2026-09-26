@@ -827,6 +827,8 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
             atrs.append(make_atr(mesh.material_name, template))
             mtrs.append(bytes.fromhex(template[0].mtr))
 
+        report_bone_limit(operator, [mesh.name for mesh in meshes])
+
     # Make bones
     mbns = []
     if armature:

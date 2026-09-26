@@ -175,6 +175,7 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     tint, tint_streamed = classify_tint(tints)
     att_buffer, stride = write_attributes(tint_streamed)
     fixed_buffer = write_fixed_tint(tint)
+    fixed_buffer += bytes(-len(fixed_buffer) % 4)
 
     streamed_tints = None
     if tint_streamed:
@@ -186,6 +187,10 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
 
     # XPVB-------------------------------------------
     compress_geometrie = compressor.compress(data_geometrie)
+
+    # The game decompresses the blocks where they are, its Huffman decoder needs them 4 bytes aligned
+    compress_geometrie += bytes(-len(compress_geometrie) % 4)
+
     xpvb = bytes()
     xpvb += b"XPVB"
     xpvb += int(16).to_bytes(2, 'little')
@@ -203,6 +208,7 @@ def write(mesh_name, texspace, indices, vertices, uvs, normals, colors, weights,
     xpvi += bytes([int(x,0) for x in ["0x58", "0x50", "0x56", "0x49", "0x02", "0x00", "0x0c", "0x00"] ])
     xpvi += int(len(data_triangle)/2).to_bytes(4, 'little')
     xpvi += compress_triangle
+    xpvi += bytes(-len(xpvi) % 4)
 
     # Material-------------------------------------------
     material = zlib.crc32(mesh_name.encode("shift-jis")).to_bytes(4, 'little')

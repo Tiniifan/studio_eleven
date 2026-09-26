@@ -28,6 +28,9 @@ MESH_TYPE_INT_TO_ENUM = {
 
 MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
 
+# The bone palette of the shaders holds 24 bones, past it some engines overwrite other uniforms
+MAX_MESH_BONES = 24
+
 ##########################################
 # XMPR Function
 ##########################################
@@ -35,6 +38,37 @@ MESH_TYPE_ENUM_TO_INT = {v: k for k, v in MESH_TYPE_INT_TO_ENUM.items()}
 def get_bone_names(armature):
     for bone in armature.pose.bones:
         yield(bone.name)
+
+def get_used_bone_count(mesh):
+    """Number of bones written in the node table of the exported mesh."""
+    if mesh.parent is None or mesh.parent.type != 'ARMATURE':
+        return 0
+
+    bone_names = set(get_bone_names(mesh.parent))
+    used = set()
+
+    for polygon in mesh.data.polygons:
+        for vertex_index in polygon.vertices:
+            for group in mesh.data.vertices[vertex_index].groups:
+                if group.weight != 0 and mesh.vertex_groups[group.group].name in bone_names:
+                    used.add(group.group)
+
+    return len(used)
+
+def report_bone_limit(operator, mesh_names):
+    """Warn about the meshes that use more bones than the bone palette of the games holds."""
+    too_many = []
+
+    for mesh_name in mesh_names:
+        bone_count = get_used_bone_count(bpy.data.objects[mesh_name])
+
+        if bone_count > MAX_MESH_BONES:
+            too_many.append(f"{mesh_name} ({bone_count} bones)")
+
+    if len(too_many) == 0:
+        return
+
+    operator.report({'WARNING'}, f"Meshes over the limit of {MAX_MESH_BONES} bones, depending on the game they can be unstable in game, reducing their bones is advised: {', '.join(too_many)}")
 
 def get_mesh_info_and_weights(mesh, bone_names=None):
     vertex_map = {}
@@ -580,7 +614,10 @@ class ExportXPRM(bpy.types.Operator, ExportHelper):
             template = get_template_by_name(self.template_name)
             mode = template.modes[self.template_mode_name]
             f.write(fileio_write_xmpr(context, self.mesh_name, self.material_name, mode))
-            return {'FINISHED'}
+
+        report_bone_limit(self, [self.mesh_name])
+
+        return {'FINISHED'}
 
     def invoke(self, context, event):
         """Ensure the update function is called on the menu launch."""
