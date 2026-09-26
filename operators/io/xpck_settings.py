@@ -44,19 +44,6 @@ class Level5AnimationSettings(bpy.types.PropertyGroup):
     transform_transparency: BoolProperty(name="Transparency", default=True, description="Include transparency in the export")
     transform_attribute: BoolProperty(name="Attribute", default=True, description="Include attribute in the export")
 
-    bake: BoolProperty(
-        name="Bake Curves",
-        default=True,
-        description="Sample every frame so the game interpolation follows the Blender curves, then remove the keys the game rebuilds"
-    )
-    bake_tolerance: FloatProperty(
-        name="Bake Tolerance",
-        default=0.0001,
-        min=0.0,
-        precision=5,
-        description="Largest difference allowed when a key is removed"
-    )
-
     mode: EnumProperty(
         name="Mode",
         description="Choose a mode for UV or Material animations",
@@ -71,6 +58,14 @@ class Level5MaterialAction(bpy.types.PropertyGroup):
     name: StringProperty()
     action: PointerProperty(type=bpy.types.Action)
 
+def poll_armature_action(self, action):
+    armature = self.id_data
+
+    if armature.type != 'ARMATURE':
+        return True
+
+    return is_armature_action(armature, action)
+
 class Level5Animation(bpy.types.PropertyGroup):
     name: StringProperty(
         name="Animation Name",
@@ -80,15 +75,11 @@ class Level5Animation(bpy.types.PropertyGroup):
     action: PointerProperty(
         type=bpy.types.Action,
         name="Action",
-        description="Action of the armature, the UV Warp modifiers of its meshes play it too"
+        description="Action of the armature, the UV Warp modifiers of its meshes play it too. Only the actions of the armature are listed",
+        poll=poll_armature_action
     )
+    # The actions the materials play in this animation, filled by the import and the add button
     material_actions: CollectionProperty(type=Level5MaterialAction)
-    frame_count: IntProperty(
-        name="Frame Count",
-        default=0,
-        min=0,
-        description="Last frame of the animation, 0 uses the end frame of the scene"
-    )
 
     armature_animation: PointerProperty(type=Level5AnimationSettings)
     uv_animation: PointerProperty(type=Level5AnimationSettings)
@@ -289,8 +280,6 @@ def copy_animation_settings(source, target):
     target.include = source.include
     target.name = source.name
     target.mode = source.mode
-    target.bake = source.bake
-    target.bake_tolerance = source.bake_tolerance
 
     for property_name in ["transform_location", "transform_rotation", "transform_scale", "transform_bool", "transform_transparency", "transform_attribute"]:
         setattr(target, property_name, getattr(source, property_name))
@@ -305,18 +294,108 @@ def copy_animation_settings(source, target):
         item.frame_end = split.frame_end
         item.private_index = split.private_index
 
+def get_path_name(data_path, prefix):
+    return data_path[len(prefix):data_path.find('"]')]
+
+def uses_action(armature, action):
+    """The armature plays the action or has it in its animation list."""
+    if armature.animation_data and armature.animation_data.action == action:
+        return True
+
+    for animation in armature.level5_archive.animations:
+        if animation.action == action:
+            return True
+
+    return False
+
+def is_armature_action(armature, action):
+    """Action that animates a bone of the armature or a UV Warp modifier of its meshes, and no other armature uses."""
+    if uses_action(armature, action):
+        return True
+
+    # The characters share their bone names, an action another armature uses is its own
+    for obj in bpy.data.objects:
+        if obj.type == 'ARMATURE' and obj != armature and uses_action(obj, action):
+            return False
+
+    meshes = get_armature_meshes(armature)
+
+    for fcurve in action.fcurves:
+        data_path = fcurve.data_path
+
+        if data_path.startswith('pose.bones["'):
+            if get_path_name(data_path, 'pose.bones["') in armature.data.bones:
+                return True
+        elif data_path.startswith('modifiers["'):
+            modifier_name = get_path_name(data_path, 'modifiers["')
+
+            for mesh in meshes:
+                if modifier_name in mesh.modifiers:
+                    return True
+
+    return False
+
+def get_default_action(armature):
+    """Action a new animation takes: the one the armature plays, or the first action of the armature not used yet."""
+    if armature.animation_data and armature.animation_data.action:
+        return armature.animation_data.action
+
+    used_actions = []
+    for animation in armature.level5_archive.animations:
+        used_actions.append(animation.action)
+
+    for action in bpy.data.actions:
+        if action not in used_actions and is_armature_action(armature, action):
+            return action
+
+    return None
+
+def is_animated_action(action):
+    """An action with a curve that changes (Berry Bush gives every material an action with its initial state)."""
+    for fcurve in action.fcurves:
+        values = set()
+
+        for keyframe in fcurve.keyframe_points:
+            values.add(round(keyframe.co.y, 6))
+
+        if len(values) > 1:
+            return True
+
+    return False
+
 def get_material_actions(armature):
-    """Actions the materials of the armature meshes play now."""
+    """Actions the materials of the armature meshes play now, only the ones that animate something."""
     material_actions = {}
 
     for mesh in get_armature_meshes(armature):
         for material in mesh.data.materials:
             if material and material.animation_data and material.animation_data.action:
-                material_actions[material.name] = material.animation_data.action
+                if is_animated_action(material.animation_data.action):
+                    material_actions[material.name] = material.animation_data.action
 
     return material_actions
 
-def add_animation(settings, name, action=None, material_actions=None, frame_count=0):
+def get_animation_frame_count(animation):
+    """Last key of the actions of the animation, 0 when they have none."""
+    actions = []
+
+    if animation.action:
+        actions.append(animation.action)
+
+    for material_action in animation.material_actions:
+        if material_action.action:
+            actions.append(material_action.action)
+
+    frame_count = 0
+
+    for action in actions:
+        for fcurve in action.fcurves:
+            for keyframe in fcurve.keyframe_points:
+                frame_count = max(frame_count, int(round(keyframe.co.x)))
+
+    return frame_count
+
+def add_animation(settings, name, action=None, material_actions=None):
     """Add an animation to the list, an animation with the same name is replaced (the archive can't have two)."""
     animation = None
 
@@ -331,7 +410,6 @@ def add_animation(settings, name, action=None, material_actions=None, frame_coun
 
     animation.name = name
     animation.action = action
-    animation.frame_count = frame_count
     animation.material_actions.clear()
 
     if material_actions is None:
@@ -440,7 +518,7 @@ class LEVEL5_UL_animations(bpy.types.UIList):
 class ExportXC_AddAnimation(bpy.types.Operator):
     bl_idname = "export_xc.add_animation"
     bl_label = "Add Animation"
-    bl_description = "Add an animation to the archive, it takes the actions the armature and its materials play now"
+    bl_description = "Add an animation to the archive, it takes the action of the armature"
     bl_options = {'INTERNAL', 'UNDO'}
 
     object_name: StringProperty()
@@ -450,11 +528,10 @@ class ExportXC_AddAnimation(bpy.types.Operator):
         if armature is None or armature.type != 'ARMATURE':
             return {'CANCELLED'}
 
-        action = None
+        action = get_default_action(armature)
         name = "animation"
 
-        if armature.animation_data and armature.animation_data.action:
-            action = armature.animation_data.action
+        if action is not None:
             name = action.name
 
         # add_animation replaces an animation with the same name
@@ -509,8 +586,10 @@ class ExportXC_PlayAnimation(bpy.types.Operator):
 
         set_actions(get_animation_assignments(armature, animation))
 
-        if animation.frame_count > 0:
-            context.scene.frame_end = animation.frame_count
+        frame_count = get_animation_frame_count(animation)
+
+        if frame_count > 0:
+            context.scene.frame_end = frame_count
 
         context.scene.frame_set(context.scene.frame_current)
 
