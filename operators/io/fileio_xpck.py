@@ -602,6 +602,7 @@ def apply_animation_imports(context, session, choices):
     """choices: list of (group, armature name, track types) chosen in the animation menu."""
     scene = context.scene
     first_assignments = {}
+    first_animation_indexes = {}
     actions_by_armature = {}
     max_frame = session["max_frame"]
 
@@ -620,25 +621,32 @@ def apply_animation_imports(context, session, choices):
 
         actions_by_armature[armature.name].extend(actions)
 
-        # The first animation of an armature stays active and fills the export settings
-        if armature.name in first_assignments:
-            continue
-
-        first_assignments[armature.name] = assignments
+        # Every animation goes in the export settings of the armature
+        material_actions = {}
+        for id_data, action in assignments:
+            if isinstance(id_data, bpy.types.Material):
+                material_actions[id_data.name] = action
 
         settings = armature.level5_archive
+        sync_archive_settings(armature)
+
+        animation = add_animation(settings, group["name"], actions[0], material_actions, get_group_frame_count(group))
+
         for track_type, animation_type in TRACK_TYPE_TO_ANIMATION_TYPE.items():
             if track_type in track_types:
-                set_animation_settings(settings.get_animation(animation_type), group["name"], group["splits"][animation_type])
+                set_animation_settings(animation.get_animation(animation_type), group["name"], group["splits"][animation_type])
             else:
-                settings.get_animation(animation_type).include = False
+                animation.get_animation(animation_type).include = False
 
         if group["armature_name"] != armature.name:
             # Animation of another archive: export it back as an animation archive
             settings.archive_name = group["archive_name"]
             settings.export_mode = 'ANIMATION'
 
-        sync_archive_settings(armature)
+        # The first animation of an armature stays active
+        if armature.name not in first_assignments:
+            first_assignments[armature.name] = assignments
+            first_animation_indexes[armature.name] = settings.animation_index
 
     # Several animations on the same armature: keep them all but play the first one
     for armature_name, actions in actions_by_armature.items():
@@ -659,6 +667,8 @@ def apply_animation_imports(context, session, choices):
             if id_data.animation_data is None:
                 id_data.animation_data_create()
             id_data.animation_data.action = action
+
+        bpy.data.objects[armature_name].level5_archive.animation_index = first_animation_indexes[armature_name]
 
     if max_frame > 0:
         scene.frame_end = max_frame
@@ -816,7 +826,7 @@ def make_atr(material_name, template):
 
     return atr.write_atr(state, template[0].file_version)
 
-def make_xpck_files(operator, context, template, mode, meshes = [], armature = None, textures = {}, animations = {}, outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
+def make_xpck_files(operator, context, template, mode, meshes = [], armature = None, textures = {}, animations = [], outlines = [], cameras=[], properties=[], texprojs=[], attach_bone=False):
     xmprs = []
     atrs = []
     mtrs = []
@@ -863,24 +873,41 @@ def make_xpck_files(operator, context, template, mode, meshes = [], armature = N
     if template[0].file_version == 1:
         anim_version = "V1"
 
-    for animation_type, animation_data in animations.items():
-        if animation_type == 'armature':
-            mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version))
+    scene = context.scene
+    frame_current = scene.frame_current
 
-            for split_animation in animation_data['split_animation']['split']:
-                mtninfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
-        elif animation_type == 'uv':
-            is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-            imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven, anim_version))
+    for animation in animations:
+        frame_count = animation['frame_count']
+        if frame_count == 0:
+            frame_count = scene.frame_end
 
-            for split_animation in animation_data['split_animation']['split']:
-                imminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
-        elif animation_type == 'material':
-            is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
-            mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven, anim_version))
+        # The writers read the actions the armature, its meshes and its materials play
+        previous_assignments = set_actions(animation['assignments'])
 
-            for split_animation in animation_data['split_animation']['split']:
-                mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+        try:
+            for animation_type, animation_data in animation['types'].items():
+                if animation_type == 'armature':
+                    mtns.append(fileio_write_xmtn(context, armature, animation_data['name'], animation_data['transformations'], animation_data['bones'], anim_version, frame_count))
+
+                    for split_animation in animation_data['split_animation']['split']:
+                        mtninfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+                elif animation_type == 'uv':
+                    is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
+                    imms.append(fileio_write_imm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['texprojs'], is_studio_eleven, anim_version, frame_count))
+
+                    for split_animation in animation_data['split_animation']['split']:
+                        imminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+                elif animation_type == 'material':
+                    is_studio_eleven = animation_data['mode'] == "STUDIO_ELEVEN"
+                    mtms.append(fileio_write_mtm(context, armature, animation_data['name'], animation_data['transformations'], animation_data['materials'], is_studio_eleven, anim_version, frame_count))
+
+                    for split_animation in animation_data['split_animation']['split']:
+                        mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
+        finally:
+            set_actions(previous_assignments)
+
+    if animations:
+        scene.frame_set(frame_current)
 
     # Make outline
     xcsls = []
@@ -1523,25 +1550,58 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             if armature is None:
                 return
 
+            settings = armature.level5_archive
+
+            row = anim_box.row()
+            row.template_list("LEVEL5_UL_animations", "", settings, "animations", settings, "animation_index", rows=3)
+
+            buttons = row.column(align=True)
+            add_button = buttons.operator("export_xc.add_animation", text="", icon='ADD')
+            add_button.object_name = armature.name
+
+            archive_animation = settings.get_active_animation()
+            if archive_animation is None:
+                return
+
+            remove_button = buttons.operator("export_xc.remove_animation", text="", icon='REMOVE')
+            remove_button.object_name = armature.name
+            remove_button.index = settings.animation_index
+
+            play_button = buttons.operator("export_xc.play_animation", text="", icon='PLAY')
+            play_button.object_name = armature.name
+            play_button.index = settings.animation_index
+
+            animation_box = anim_box.box()
+            animation_box.prop(archive_animation, "name", text="Animation Name", icon='ANIM')
+            animation_box.prop(archive_animation, "action", text="Action")
+            animation_box.prop(archive_animation, "frame_count", text="Frame Count")
+
+            if len(archive_animation.material_actions) > 0:
+                materials_box = animation_box.box()
+                materials_box.label(text="Material actions:")
+
+                for material_action in archive_animation.material_actions:
+                    materials_box.prop(material_action, "action", text=material_action.name)
+
             row = anim_box.row(align=True)
             row.prop(self, "export_tab_animation_control", expand=True)
 
             # Check the selected tab
             if self.export_tab_animation_control == 'ARMATURE_ANIMATION':
-                self.draw_animation_settings(context, anim_box, armature, 'armature')
+                self.draw_animation_settings(context, anim_box, armature, archive_animation, 'armature')
             elif self.export_tab_animation_control == 'UV_ANIMATION':
-                self.draw_animation_settings(context, anim_box, armature, 'uv')
+                self.draw_animation_settings(context, anim_box, armature, archive_animation, 'uv')
             elif self.export_tab_animation_control == 'MATERIAL_ANIMATION':
-                self.draw_animation_settings(context, anim_box, armature, 'material')
+                self.draw_animation_settings(context, anim_box, armature, archive_animation, 'material')
         else:
             if self.export_option == 'MESH':
                 anim_box.label(text="Not available on mesh mode")
             elif self.export_option == 'CAMERA':
                 anim_box.label(text="Not available on camera mode")
 
-    def draw_animation_settings(self, context, anim_box, armature, animation_type):
+    def draw_animation_settings(self, context, anim_box, armature, archive_animation, animation_type):
         settings = armature.level5_archive
-        animation = settings.get_animation(animation_type)
+        animation = archive_animation.get_animation(animation_type)
 
         # Checkbox for including animation
         anim_box.prop(animation, "include", text="Includes Animation")
@@ -1552,8 +1612,6 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         # Group for animation settings
         animation_box = anim_box.box()
 
-        # Text field for animation name
-        animation_box.prop(animation, "name", text="Animation Name", icon='ANIM')
         animation_box.prop(self, "animation_format_" + animation_type, text="Animations Format")
         animation_box.prop(self, "split_animation_format_" + animation_type, text="Split Animations Format")
 
@@ -1574,12 +1632,14 @@ class ExportXC(bpy.types.Operator, ExportHelper):
             # Button to remove selected item
             remove_button = row.operator("export_xc.remove_animation_item", text="", icon='REMOVE')
             remove_button.object_name = armature.name
+            remove_button.animation_index = settings.animation_index
             remove_button.animation_type = animation_type
             remove_button.index = index
 
         # Button to add an item
         add_button = items_box.operator("export_xc.add_animation_item", text="Add Item", icon='ADD')
         add_button.object_name = armature.name
+        add_button.animation_index = settings.animation_index
         add_button.animation_type = animation_type
 
         # Draw the transformation checkboxes
@@ -1806,22 +1866,19 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         return meshes, textures, texprojs
 
-    def get_animations(self, armature):
+    def get_animation_types(self, armature, archive_animation):
         settings = armature.level5_archive
-        animations = {}
+        animation_types = {}
 
         for animation_type in ANIMATION_TYPES:
-            animation = settings.get_animation(animation_type)
+            animation = archive_animation.get_animation(animation_type)
 
             if not animation.include:
                 continue
 
-            if not animation.name:
-                raise XpckExportError(f"The {animation_type} animation of {armature.name} doesn't have name")
-
             for sub_animation in animation.splits:
                 if not sub_animation.name:
-                    raise XpckExportError(f"splitted_animation_'{sub_animation.private_index}' of {armature.name} doesn't have a name!")
+                    raise XpckExportError(f"splitted_animation_'{sub_animation.private_index}' of {archive_animation.name} ({armature.name}) doesn't have a name!")
 
             transformations = []
             animation_data = {}
@@ -1856,7 +1913,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 animation_data['mode'] = animation.mode
                 animation_data['materials'] = [material.name for material in settings.materials if material.enabled]
 
-            animation_data['name'] = animation.name
+            animation_data['name'] = archive_animation.name
             animation_data['format'] = getattr(self, "animation_format_" + animation_type)
             animation_data['transformations'] = transformations
             animation_data['split_animation'] = {
@@ -1864,7 +1921,38 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                 'split': list(animation.splits),
             }
 
-            animations[animation_type] = animation_data
+            animation_types[animation_type] = animation_data
+
+        return animation_types
+
+    def get_animations(self, armature):
+        """Every animation of the armature archive, each one plays its own actions while it is written."""
+        animations = []
+        animation_names = []
+
+        for archive_animation in armature.level5_archive.animations:
+            animation_types = self.get_animation_types(armature, archive_animation)
+
+            if len(animation_types) == 0:
+                continue
+
+            if not archive_animation.name:
+                raise XpckExportError(f"An animation of {armature.name} doesn't have name")
+
+            if archive_animation.name in animation_names:
+                raise XpckExportError(f"Several animations of {armature.name} are named {archive_animation.name}")
+
+            if archive_animation.action is None and ('armature' in animation_types or 'uv' in animation_types):
+                raise XpckExportError(f"The animation {archive_animation.name} of {armature.name} doesn't have an action")
+
+            animation_names.append(archive_animation.name)
+
+            animations.append({
+                'name': archive_animation.name,
+                'frame_count': archive_animation.frame_count,
+                'assignments': get_animation_assignments(armature, archive_animation),
+                'types': animation_types,
+            })
 
         return animations
 
@@ -1925,7 +2013,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
         texprojs = []
         cameras = []
         properties = []
-        animations = {}
+        animations = []
         outlines = []
         attach_bone = False
 

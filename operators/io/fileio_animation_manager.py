@@ -456,8 +456,12 @@ def fileio_write_animation(context, armature_name=None, object_name=None, animat
     else:
         raise ValueError(f"Unknown animation type: {animation_type}")
 
-def fileio_write_xmtn(context, armature, animation_name, transformations, bones, version="V2"):    
+def fileio_write_xmtn(context, armature, animation_name, transformations, bones, version="V2", frame_count=None):
     scene = context.scene
+
+    if frame_count is None:
+        frame_count = scene.frame_end
+
     armature.data.pose_position = 'POSE'
     bpy.context.view_layer.objects.active = armature
     bpy.ops.object.mode_set(mode='POSE')
@@ -523,13 +527,17 @@ def fileio_write_xmtn(context, armature, animation_name, transformations, bones,
 
     animation = animation_manager.AnimationManager(
         Format='XMTN', Version=version, AnimationName=animation_name,
-        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+        FrameCount=frame_count, Tracks=list(tracks.values())
     )
     
     return animation.Save()
     
-def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2"):
+def fileio_write_imm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None):
     scene = context.scene
+
+    if frame_count is None:
+        frame_count = scene.frame_end
+
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -625,7 +633,7 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
             if obj.type == 'MESH':
                 meshes_material_dict[obj.name] = f"{obj.name}.texproj0"
         
-        for frame in range(scene.frame_start, scene.frame_end + 1):
+        for frame in range(scene.frame_start, frame_count + 1):
             scene.frame_set(frame)
             
             for mesh in meshes_enabled:
@@ -663,13 +671,17 @@ def fileio_write_imm(context, focused_object, animation_name, transformations, o
 
     animation = animation_manager.AnimationManager(
         Format='XIMA', Version=version, AnimationName=animation_name,
-        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+        FrameCount=frame_count, Tracks=list(tracks.values())
     )
 
     return animation.Save()
 
-def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2"):
+def fileio_write_mtm(context, focused_object, animation_name, transformations, objects, is_studio_eleven, version="V2", frame_count=None):
     scene = context.scene
+
+    if frame_count is None:
+        frame_count = scene.frame_end
+
     bpy.context.view_layer.objects.active = focused_object
     bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -778,7 +790,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
                 else:
                     meshes_material_dict[obj.name] = f"DefaultLib.{obj.name}"
         
-        for frame in range(scene.frame_start, scene.frame_end + 1):
+        for frame in range(scene.frame_start, frame_count + 1):
             scene.frame_set(frame)
             
             for mesh in meshes_enabled:
@@ -817,7 +829,7 @@ def fileio_write_mtm(context, focused_object, animation_name, transformations, o
 
     animation = animation_manager.AnimationManager(
         Format='XMTM', Version=version, AnimationName=animation_name,
-        FrameCount=scene.frame_end, Tracks=list(tracks.values())
+        FrameCount=frame_count, Tracks=list(tracks.values())
     )
 
     return animation.Save()

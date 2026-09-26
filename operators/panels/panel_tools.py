@@ -10,7 +10,7 @@ from bpy.props import IntProperty, StringProperty
 
 from ...utils.mesh_faces_utils import MeshFaceUtils
 from ...templates import *
-from ..io.xpck_settings import set_animation_settings
+from ..io.xpck_settings import set_animation_settings, add_animation
 
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
     bl_idname = "object.convert_single_bind_to_vertex_group"
@@ -183,6 +183,17 @@ class AnimationItemsReader(bpy.types.Operator):
                 "Material": "material",
             }
 
+            settings = armature.level5_archive
+
+            # The config fills the active animation of the archive
+            archive_animation = settings.get_active_animation()
+            if archive_animation is None:
+                action = None
+                if armature.animation_data:
+                    action = armature.animation_data.action
+
+                archive_animation = add_animation(settings, "animation", action)
+
             # Iterate over the formatted data to set the appropriate fields
             for animation_key, animation_data in formatted_data["Animations"].items():
                 # Based on the animation_key (Armature, UV, Material)
@@ -200,7 +211,8 @@ class AnimationItemsReader(bpy.types.Operator):
                         'frame_end': int(animation_split_value[2]),
                     })
 
-                set_animation_settings(armature.level5_archive.get_animation(animation_types[animation_key]), animation_name, splits)
+                archive_animation.name = animation_name
+                set_animation_settings(archive_animation.get_animation(animation_types[animation_key]), animation_name, splits)
 
             return {'FINISHED'}
 

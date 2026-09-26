@@ -352,7 +352,16 @@ def open_xres(data):
     
     return items
 
-def make_library(meshes = [], armature = None, textures = {}, animations = {}, outlines = [], properties=[], texprojs=[]):
+def get_animation_types(animations):
+    animation_types = []
+
+    for animation in animations:
+        for animation_type, animation_data in animation['types'].items():
+            animation_types.append((animation_type, animation_data))
+
+    return animation_types
+
+def make_library(meshes = [], armature = None, textures = {}, animations = [], outlines = [], properties=[], texprojs=[]):
     items = {}
     string_table = bytes()
     materials_offset = {}
@@ -446,7 +455,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         animations_mtm2 = []
         animations_offset = {}
         
-        for animation_type, animation_data in animations.items():
+        for animation_type, animation_data in get_animation_types(animations):
             animation_name = animation_data['name']
             animation_name_encoded = animation_name.encode("shift-jis")
             
@@ -473,7 +482,7 @@ def make_library(meshes = [], armature = None, textures = {}, animations = {}, o
         mtminfs = []
         animations_split_offset = {}
         
-        for animation_type, animation_data in animations.items():
+        for animation_type, animation_data in get_animation_types(animations):
             for split_animation in animation_data['split_animation']['split']:
                 animation_split_name = split_animation.name
                 animation_split_name_encoded = animation_split_name.encode("shift-jis")
