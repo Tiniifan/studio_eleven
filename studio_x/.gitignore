@@ -1,0 +1,7 @@
+*.pyc
+CLAUDE.md
+/.claude
+
+# Local validation scripts and private notes
+/test/
+/.docs/

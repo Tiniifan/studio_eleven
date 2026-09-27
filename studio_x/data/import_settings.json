@@ -1,0 +1,15 @@
+{
+  "fps": 30,
+  "frame_offset": 1,
+  "scale": 10.0,
+  "adapt_textures": true,
+  "camera_frame_offset": 0,
+  "camera_target_distance": 2.5,
+  "split_camera": true,
+  "platform": "3DS",
+  "screen_format": "CUSTOM",
+  "custom_width": 16.0,
+  "custom_height": 9.0,
+  "use_3ds_models": true,
+  "render_engine": "STUDIO_RENDER"
+}
