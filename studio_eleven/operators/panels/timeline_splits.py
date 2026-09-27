@@ -2,7 +2,7 @@ import bpy
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
-from bpy.props import StringProperty, BoolProperty, IntProperty, EnumProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty, FloatProperty, EnumProperty, CollectionProperty, FloatVectorProperty
 
 try:
     import bgl
@@ -40,16 +40,14 @@ addon_keymaps = []
 # Items of the action list of New Animation, Blender needs them kept alive while the dialog is open
 action_items = []
 
+# Copied splits (name, speed, frame_start, frame_end), kept when the active armature changes
+split_clipboard = []
+
 ##########################################
 # Timeline Function
 ##########################################
 
-def get_timeline_armature(context):
-    """Armature the timeline shows: the active armature, or the armature of the active mesh."""
-    obj = context.active_object
-    if obj is None:
-        return None
-
+def get_object_armature(obj):
     if obj.type == 'ARMATURE':
         return obj
 
@@ -57,6 +55,22 @@ def get_timeline_armature(context):
         return obj.parent
 
     return None
+
+def get_timeline_armature(context):
+    """Armature the timeline shows: the active armature, or the armature of the active mesh."""
+    obj = context.active_object
+    if obj is None:
+        return None
+
+    # In pose and edit mode an object picked in the outliner is only selected, the active object stays and is deselected
+    if obj.mode != 'OBJECT' and not obj.select_get():
+        for selected in context.selected_objects:
+            armature = get_object_armature(selected)
+
+            if armature is not None:
+                return armature
+
+    return get_object_armature(obj)
 
 def is_timeline(context):
     space = context.space_data
@@ -75,7 +89,7 @@ def get_track_name(track_index):
     return f"Track {track_index + 1}"
 
 def get_timeline_layout(context, armature):
-    """Rectangles (x, y, width, height) of the tracks, their lanes, their buttons and their splits, in pixels of the region."""
+    """Rectangles (x, y, width, height) of the lanes of the tracks and of their splits, in pixels of the region."""
     region = context.region
     scene = context.scene
     scale = context.preferences.system.ui_scale
@@ -85,29 +99,21 @@ def get_timeline_layout(context, armature):
     track_gap = round(8 * scale)
     # Above the scrollbar of the region
     bottom = round(18 * scale)
-    label_width = round(250 * scale)
 
-    text_width = round(104 * scale)
-    button_width = lane_height
-    combo_x = round(8 * scale) + text_width
-    combo_width = label_width - combo_x - button_width - round(7 * scale)
-
-    # Rows from the top: the three lanes of each track, then the button that adds a second track
+    # Rows from the top: the three lanes of each track
     rows = []
     for track_index in range(get_track_count(armature)):
         for animation_type in ANIMATION_TYPES:
             rows.append((track_index, animation_type))
 
-    height = lane_height + len(rows) * (lane_height + lane_gap) + (get_track_count(armature) - 1) * track_gap
+    height = len(rows) * (lane_height + lane_gap) + (get_track_count(armature) - 1) * track_gap
     y = bottom + height
 
     layout = {
         "scale": scale,
-        "label_width": label_width,
         "bottom": bottom,
         "top": y,
         "lanes": [],
-        "add_track": None,
     }
 
     for track_index, animation_type in rows:
@@ -122,18 +128,9 @@ def get_timeline_layout(context, armature):
             "y": y,
             "height": lane_height,
             "animation": get_track_animation(armature, track_index),
-            "combo": None,
-            "remove": None,
             "has_splits": False,
             "splits": [],
         }
-
-        # The first lane of a track has the combo box of its animation
-        if animation_type == 'armature':
-            lane["combo"] = (combo_x, y, combo_width, lane_height)
-
-            if track_index > 0:
-                lane["remove"] = (combo_x + combo_width + round(3 * scale), y, button_width, lane_height)
 
         splits = get_track_splits(armature, track_index, animation_type)
 
@@ -142,9 +139,16 @@ def get_timeline_layout(context, armature):
             offset = get_solo_offset(scene, armature, track_index)
             active_index = get_track_split_index(armature, track_index)
 
+            # The selection is kept on the splits of the first type, the other types show it too
+            source_splits = get_track_splits(armature, track_index)
+
             for index, split in enumerate(splits):
                 x1 = region.view2d.view_to_region(split.frame_start + offset, 0, clip=False)[0]
                 x2 = region.view2d.view_to_region(split.frame_end + offset, 0, clip=False)[0]
+
+                selected = False
+                if track_index == 0 and index < len(source_splits):
+                    selected = source_splits[index].select
 
                 lane["splits"].append({
                     "index": index,
@@ -152,36 +156,19 @@ def get_timeline_layout(context, armature):
                     "x1": x1,
                     "x2": max(x2, x1 + 2),
                     "active": index == active_index,
+                    "selected": selected,
                 })
 
         layout["lanes"].append(lane)
         y -= lane_gap
 
-    layout["add_track"] = (round(8 * scale), bottom, label_width - round(15 * scale), lane_height)
-
     return layout
 
-def is_inside(rect, x, y):
-    if rect is None:
-        return False
-
-    return rect[0] <= x <= rect[0] + rect[2] and rect[1] <= y <= rect[1] + rect[3]
-
 def hit_timeline(layout, x, y):
-    """What is under the mouse: a button, a split and the part of it (start, end, move), a lane, or None."""
-    if is_inside(layout["add_track"], x, y):
-        return {"kind": "add_track"}
-
+    """What is under the mouse: a split and the part of it (start, end, move), a lane, or None."""
     for lane in layout["lanes"]:
         if y < lane["y"] or y > lane["y"] + lane["height"]:
             continue
-
-        if x < layout["label_width"]:
-            for kind in ["combo", "remove"]:
-                if is_inside(lane[kind], x, y):
-                    return {"kind": kind, "lane": lane}
-
-            return {"kind": "label", "lane": lane}
 
         # The last split drawn is on top
         for item in reversed(lane["splits"]):
@@ -218,32 +205,62 @@ def redraw_timelines(context):
         if area.type == 'DOPESHEET_EDITOR':
             area.tag_redraw()
 
-def add_track_split(scene, armature, frame):
-    """Add a split to the main track at the frame, return an error message or None."""
+def prepare_main_track(armature, animation_name=""):
+    """The main track gets an animation with a type to put the splits on, return an error message or None."""
     settings = armature.level5_archive
 
     # A custom animation gets its export animation with its first split
     if len(settings.animations) == 0:
-        if get_default_action(armature) is None:
+        action = get_default_action(armature)
+        if action is None:
             return "The armature has no action to make an animation from"
 
-        add_default_animation(armature)
+        if animation_name == "":
+            add_default_animation(armature)
+        else:
+            make_animation(armature, animation_name, action)
+
         apply_track_actions(armature)
 
     animation = get_track_animation(armature, 0)
     if animation is None:
         return "Choose the animation of the main track first"
 
-    source_type = get_source_type(animation)
-    if source_type is None:
-        source_type = 'armature'
+    if get_source_type(animation) is None:
         animation.armature_animation.include = True
 
-    splits = animation.get_animation(source_type).splits
+    return None
 
+def get_new_split(armature):
+    """Name and speed Insert Split proposes: the next free name, the speed of the other splits."""
+    splits = get_track_splits(armature, 0)
+    index = 0
     speed = 1.0
-    if len(splits) > 0:
-        speed = splits[0].speed
+
+    if splits is not None:
+        used_indexes = []
+        for split in splits:
+            used_indexes.append(split.private_index)
+
+        index = find_unused_index(used_indexes)
+
+        if len(splits) > 0:
+            speed = splits[0].speed
+
+    return {
+        "name": "splitted_animation_" + str(index),
+        "speed": speed,
+    }
+
+def add_track_split(scene, armature, name, frame_start, frame_end, speed, animation_name=""):
+    """Add a split to the main track, animation_name names the animation made when the armature has none, return an error message or None."""
+    settings = armature.level5_archive
+
+    error = prepare_main_track(armature, animation_name)
+    if error is not None:
+        return error
+
+    splits = get_track_splits(armature, 0)
 
     used_indexes = []
     for split in splits:
@@ -251,14 +268,14 @@ def add_track_split(scene, armature, frame):
 
     split = splits.add()
     split.private_index = find_unused_index(used_indexes)
-    split.name = "splitted_animation_" + str(split.private_index)
+    split.name = get_split_name(splits, name)
     split.speed = speed
-    split.frame_start = max(0, frame)
-    split.frame_end = split.frame_start + 30
+    split.frame_start = max(0, frame_start)
+    split.frame_end = max(split.frame_start + 1, frame_end)
 
     settings.timeline_split_index = len(splits) - 1
 
-    sync_animation_splits(animation)
+    sync_animation_splits(get_track_animation(armature, 0))
     refresh_solo(scene, armature)
 
     return None
@@ -312,6 +329,116 @@ def get_split_name(splits, name):
         index += 1
 
     return new_name
+
+def get_copy_animation_name(armature):
+    """Animation that gets the copied splits by default: the one the main track plays, or the action of the armature."""
+    animation = armature.level5_archive.get_active_animation()
+    if animation is not None:
+        return animation.name
+
+    action = get_default_action(armature)
+    if action is not None:
+        return action.name
+
+    return ""
+
+def select_track_split(armature, index, extend=False):
+    """Select a split of the main track, extend adds it to the selection or removes it."""
+    splits = get_track_splits(armature, 0)
+    if splits is None or index < 0 or index >= len(splits):
+        return
+
+    if extend:
+        splits[index].select = not splits[index].select
+    else:
+        for split in splits:
+            split.select = False
+
+        splits[index].select = True
+
+def get_copied_splits(armature, track_index, index):
+    """The selected splits of the main track when the split is one of them, the split alone otherwise."""
+    splits = get_track_splits(armature, track_index)
+    if splits is None or index < 0 or index >= len(splits):
+        return []
+
+    if track_index == 0 and splits[index].select:
+        return [split for split in splits if split.select]
+
+    return [splits[index]]
+
+def copy_to_clipboard(splits):
+    split_clipboard.clear()
+
+    for split in sorted(splits, key=lambda split: split.frame_start):
+        split_clipboard.append({
+            "name": split.name,
+            "speed": split.speed,
+            "frame_start": split.frame_start,
+            "frame_end": split.frame_end,
+        })
+
+def paste_track_splits(scene, armature, frame):
+    """Paste the copied splits in the main track, the first one starts at the frame, return an error message or None."""
+    if len(split_clipboard) == 0:
+        return "No split copied"
+
+    error = prepare_main_track(armature)
+    if error is not None:
+        return error
+
+    splits = get_track_splits(armature, 0)
+    first_frame = split_clipboard[0]["frame_start"]
+    frame = max(0, frame)
+
+    used_indexes = []
+    for split in splits:
+        used_indexes.append(split.private_index)
+        split.select = False
+
+    # The pasted splits are selected, a copy right after takes them all
+    for item in split_clipboard:
+        split = splits.add()
+        split.private_index = find_unused_index(used_indexes)
+        used_indexes.append(split.private_index)
+        split.name = get_split_name(splits, item["name"])
+        split.speed = item["speed"]
+        split.frame_start = frame + item["frame_start"] - first_frame
+        split.frame_end = frame + item["frame_end"] - first_frame
+        split.select = True
+
+    armature.level5_archive.timeline_split_index = len(splits) - 1
+
+    sync_animation_splits(get_track_animation(armature, 0))
+    refresh_solo(scene, armature)
+
+    return None
+
+def copy_splits_to_armature(scene, armature, target, animation_name):
+    """Give the splits of the main track to an animation of another armature, the splits it had are replaced."""
+    settings = target.level5_archive
+    index = find_animation_index(target, animation_name)
+
+    if index >= 0:
+        animation = settings.animations[index]
+    else:
+        animation_index = settings.animation_index
+        animation = make_animation(target, animation_name, get_default_action(target))
+
+        # The main track of the armature keeps its animation
+        if len(settings.animations) > 1:
+            settings.animation_index = animation_index
+
+    source_type = get_source_type(animation)
+    if source_type is None:
+        source_type = 'armature'
+        animation.armature_animation.include = True
+
+    copy_splits(get_track_splits(armature, 0), animation.get_animation(source_type).splits)
+    sync_animation_splits(animation)
+
+    if scene.level5_timeline_solo.armature_name == target.name:
+        refresh_solo(scene, target)
 
 def get_solo_text(armature):
     names = []
@@ -413,7 +540,7 @@ def draw_lane_splits(shader, layout, lane, region_width):
         x1 = item["x1"]
         x2 = item["x2"]
 
-        if x2 < layout["label_width"] or x1 > region_width:
+        if x2 < 0 or x1 > region_width:
             continue
 
         rect = (x1, y, x2 - x1, height)
@@ -434,6 +561,10 @@ def draw_lane_splits(shader, layout, lane, region_width):
             else:
                 draw_rect(shader, rect, (color[0], color[1], color[2], 0.85))
 
+                # Orange like the selected keyframes of Blender
+                if item["selected"]:
+                    draw_outline(shader, rect, (1.0, 0.6, 0.2, 1.0))
+
             # Grips of the start and the end, they are dragged to change the frames
             if x2 - x1 > 12 * scale:
                 grip_width = max(2, round(2 * scale))
@@ -448,49 +579,12 @@ def draw_lane_splits(shader, layout, lane, region_width):
 
         draw_text(x1 + round(7 * scale), text_y, text, text_color, (x1 + 2, y, x2 - 2, y + height))
 
-def draw_lane_label(shader, layout, lane):
-    scale = layout["scale"]
-    color = LANE_COLORS[lane["type"]]
-    y = lane["y"]
-    height = lane["height"]
-    text_y = y + round(5 * scale)
-    read_only = lane["track"] > 0
+def get_reference_name(armature):
+    animation = get_track_animation(armature, 0)
+    if animation is None:
+        return "None"
 
-    draw_rect(shader, (0, y, round(3 * scale), height), (color[0], color[1], color[2], 1.0))
-
-    if read_only:
-        draw_text(round(8 * scale), text_y, LANE_SHORT_NAMES[lane["type"]] + " (read only)", (0.6, 0.65, 0.8, 1.0))
-    else:
-        draw_text(round(8 * scale), text_y, LANE_NAMES[lane["type"]], (0.85, 0.85, 0.85, 1.0))
-
-    # Combo box of the animation, the arrow tells that it opens a list
-    combo = lane["combo"]
-    if combo is not None:
-        draw_rect(shader, combo, (0.09, 0.09, 0.09, 1.0))
-        draw_outline(shader, combo, (0.38, 0.38, 0.38, 1.0))
-
-        name = "None"
-        if lane["animation"] is not None:
-            name = lane["animation"].name
-
-        arrow_size = round(4 * scale)
-        arrow_x = combo[0] + combo[2] - round(10 * scale)
-        arrow_y = y + height / 2
-        draw_text(combo[0] + round(5 * scale), text_y, name, (0.93, 0.93, 0.93, 1.0), (combo[0], y, arrow_x - arrow_size - 2, y + height))
-        draw_shape(shader, 'TRIS', ((arrow_x - arrow_size, arrow_y + arrow_size / 2), (arrow_x + arrow_size, arrow_y + arrow_size / 2), (arrow_x, arrow_y - arrow_size / 2)), (0.75, 0.75, 0.75, 1.0))
-
-    # Cross that removes a second track
-    remove = lane["remove"]
-    if remove is not None:
-        cross_size = round(4 * scale)
-        center_x = remove[0] + remove[2] / 2
-        center_y = y + height / 2
-
-        draw_rect(shader, remove, (0.24, 0.24, 0.24, 1.0))
-        draw_shape(shader, 'LINES', (
-            (center_x - cross_size, center_y - cross_size), (center_x + cross_size, center_y + cross_size),
-            (center_x - cross_size, center_y + cross_size), (center_x + cross_size, center_y - cross_size),
-        ), (0.9, 0.9, 0.9, 1.0))
+    return animation.name
 
 def draw_timeline_splits():
     context = bpy.context
@@ -522,23 +616,15 @@ def draw_timeline_splits():
             if lane["animation"] is None and lane["track"] == 0:
                 message = "No animation, right click > Insert Split makes one from the action of the armature"
             elif lane["animation"] is None:
-                message = "Choose the animation this track plays"
+                message = f"Choose the animation of the {get_track_name(lane['track']).lower()} in the header"
             else:
                 message = f"No {LANE_SHORT_NAMES[lane['type']]} animation in {lane['animation'].name}"
 
-            draw_text(layout["label_width"] + round(8 * scale), lane["y"] + round(5 * scale), message, (0.55, 0.55, 0.55, 1.0))
+            draw_text(round(10 * scale), lane["y"] + round(5 * scale), message, (0.55, 0.55, 0.55, 1.0))
 
-    # The labels are drawn over the splits that go under them
-    margin = round(3 * scale)
-    draw_rect(shader, (0, layout["bottom"] - margin, layout["label_width"], layout["top"] - layout["bottom"] + 2 * margin), (0.14, 0.14, 0.14, 1.0))
-
-    for lane in layout["lanes"]:
-        draw_lane_label(shader, layout, lane)
-
-    add_track = layout["add_track"]
-    draw_rect(shader, add_track, (0.24, 0.24, 0.24, 1.0))
-    draw_outline(shader, add_track, (0.38, 0.38, 0.38, 1.0))
-    draw_text(add_track[0] + round(6 * scale), add_track[1] + round(5 * scale), "+  Add Second Track", (0.85, 0.85, 0.85, 1.0))
+        # The color of the lane, the i button of the header tells them
+        color = LANE_COLORS[lane["type"]]
+        draw_rect(shader, (0, lane["y"], round(4 * scale), lane["height"]), (color[0], color[1], color[2], 1.0))
 
     if context.scene.level5_timeline_solo.armature_name == armature.name:
         draw_text(round(8 * scale), layout["top"] + round(6 * scale), get_solo_text(armature), (0.91, 0.64, 0.23, 1.0))
@@ -546,8 +632,36 @@ def draw_timeline_splits():
     set_blend(False)
 
 def draw_timeline_header(self, context):
-    if context.space_data.mode == 'TIMELINE':
-        self.layout.prop(context.scene, "level5_timeline_show_splits")
+    if context.space_data.mode != 'TIMELINE':
+        return
+
+    layout = self.layout
+    armature = get_timeline_armature(context)
+
+    # The armature and the animation of each track are chosen in the header, the splits keep the height of the timeline
+    if context.scene.level5_timeline_show_splits and armature is not None:
+        layout.label(text=armature.name, icon='ARMATURE_DATA')
+
+        layout.menu("LEVEL5_MT_timeline_animations", text=f"{get_track_name(0)}: {get_reference_name(armature)}")
+
+        for track_index in range(1, get_track_count(armature)):
+            track = armature.level5_archive.timeline_tracks[track_index - 1]
+
+            name = track.animation_name
+            if name == "":
+                name = "None"
+
+            row = layout.row(align=True)
+            row.context_pointer_set("level5_timeline_track", track)
+            row.menu("LEVEL5_MT_timeline_animations", text=f"{get_track_name(track_index)}: {name}")
+
+            operator = row.operator("level5.timeline_remove_track", text="", icon='X')
+            operator.track_index = track_index
+
+        layout.operator("level5.timeline_add_track", text="", icon='ADD')
+        layout.operator("level5.timeline_colors", text="", icon='INFO')
+
+    layout.prop(context.scene, "level5_timeline_show_splits")
 
 def update_show_splits(self, context):
     # Hiding the splits plays the whole animations again
@@ -561,12 +675,13 @@ def update_show_splits(self, context):
 class LEVEL5_OT_timeline_click(bpy.types.Operator):
     bl_idname = "level5.timeline_click"
     bl_label = "Edit Split"
-    bl_description = "Drag a split of the main track to move it, drag its start or its end to change its frames"
+    bl_description = "Drag a split of the main track to move it, drag its start or its end to change its frames, Shift adds it to the selection"
     bl_options = {'UNDO', 'INTERNAL'}
 
     armature_name: StringProperty()
     index: IntProperty()
     part: StringProperty()
+    extend: BoolProperty(options={'SKIP_SAVE'})
 
     def invoke(self, context, event):
         armature, hit = get_timeline_hit(context, event)
@@ -574,27 +689,7 @@ class LEVEL5_OT_timeline_click(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         scene = context.scene
-        window_manager = context.window_manager
-
-        if hit["kind"] == 'label':
-            return {'CANCELLED'}
-
-        if hit["kind"] == 'add_track':
-            add_second_track(scene, armature)
-            redraw_timelines(context)
-            return {'FINISHED'}
-
         track_index = hit["lane"]["track"]
-
-        if hit["kind"] == 'combo':
-            window_manager.level5_timeline_track = track_index
-            bpy.ops.level5.timeline_open_menu('INVOKE_DEFAULT', menu_name="LEVEL5_MT_timeline_animations", release_type='LEFTMOUSE')
-            return {'CANCELLED'}
-
-        if hit["kind"] == 'remove':
-            remove_second_track(scene, armature, track_index)
-            redraw_timelines(context)
-            return {'FINISHED'}
 
         set_track_split_index(armature, track_index, hit["item"]["index"])
         redraw_timelines(context)
@@ -602,6 +697,11 @@ class LEVEL5_OT_timeline_click(bpy.types.Operator):
         # A second track is only played, its splits are selected but never moved
         if track_index > 0:
             refresh_solo(scene, armature)
+            return {'FINISHED'}
+
+        select_track_split(armature, hit["item"]["index"], self.extend)
+
+        if self.extend:
             return {'FINISHED'}
 
         split = hit["item"]["split"]
@@ -719,8 +819,13 @@ class LEVEL5_OT_timeline_context_menu(bpy.types.Operator):
         window_manager.level5_timeline_frame = round(context.region.view2d.region_to_view(event.mouse_region_x, 0)[0])
 
         if hit["kind"] == 'split':
-            set_track_split_index(armature, track_index, hit["item"]["index"])
-            window_manager.level5_timeline_split = hit["item"]["index"]
+            index = hit["item"]["index"]
+            set_track_split_index(armature, track_index, index)
+            window_manager.level5_timeline_split = index
+
+            # A right click keeps the selection it is on, like the keyframes
+            if track_index == 0 and not get_track_splits(armature, 0)[index].select:
+                select_track_split(armature, index)
 
         bpy.ops.level5.timeline_open_menu('INVOKE_DEFAULT', menu_name="LEVEL5_MT_timeline_split", release_type='RIGHTMOUSE')
         redraw_timelines(context)
@@ -1000,6 +1105,58 @@ class LEVEL5_OT_timeline_remove_track(bpy.types.Operator):
 
         return {'FINISHED'}
 
+class LEVEL5_OT_timeline_add_track(bpy.types.Operator):
+    bl_idname = "level5.timeline_add_track"
+    bl_label = "Add Second Track"
+    bl_description = "Add a second track, it plays another animation of the armature under the main track"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        add_second_track(context.scene, armature)
+        redraw_timelines(context)
+
+        return {'FINISHED'}
+
+class LEVEL5_OT_timeline_colors(bpy.types.Operator):
+    bl_idname = "level5.timeline_colors"
+    bl_label = "Split Colors"
+    bl_description = "What the colors of the splits mean"
+    bl_options = {'INTERNAL'}
+
+    # Only shown in the popup, the swatches are the colors of the timeline
+    armature_color: FloatVectorProperty(subtype='COLOR', default=LANE_COLORS['armature'], min=0.0, max=1.0)
+    uv_color: FloatVectorProperty(subtype='COLOR', default=LANE_COLORS['uv'], min=0.0, max=1.0)
+    material_color: FloatVectorProperty(subtype='COLOR', default=LANE_COLORS['material'], min=0.0, max=1.0)
+    active_color: FloatVectorProperty(subtype='COLOR', default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
+    selected_color: FloatVectorProperty(subtype='COLOR', default=(1.0, 0.6, 0.2), min=0.0, max=1.0)
+    second_color: FloatVectorProperty(subtype='COLOR', default=(0.25, 0.3, 0.5), min=0.0, max=1.0)
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_popup(self, width=420)
+
+    def draw_color(self, property_name, text):
+        row = self.layout.split(factor=0.12)
+        row.prop(self, property_name, text="")
+        row.label(text=text)
+
+    def draw(self, context):
+        self.layout.label(text="Each track has three lanes, from top to bottom:")
+
+        for animation_type in ANIMATION_TYPES:
+            self.draw_color(animation_type + "_color", LANE_NAMES[animation_type])
+
+        self.layout.separator()
+        self.draw_color("active_color", "Outline of the active split")
+        self.draw_color("selected_color", "Outline of the selected splits (Shift + click)")
+        self.draw_color("second_color", "Lanes of a second track, their hollow splits are read only")
+
+    def execute(self, context):
+        return {'FINISHED'}
+
 class LEVEL5_OT_timeline_insert_split(bpy.types.Operator):
     bl_idname = "level5.timeline_insert_split"
     bl_label = "Insert Split"
@@ -1007,13 +1164,81 @@ class LEVEL5_OT_timeline_insert_split(bpy.types.Operator):
     bl_options = {'UNDO', 'INTERNAL'}
 
     frame: IntProperty()
+    animation_name: StringProperty(name="Animation", description="Name of the Level-5 animation made from the action of the armature, the mtn2, imm2 and mtm2 files share it")
+    name: StringProperty(name="Name", description="Name of the split")
+    frame_start: IntProperty(name="Start Frame", min=0)
+    frame_end: IntProperty(name="End Frame", min=0)
+    speed: FloatProperty(name="Speed", default=1.0)
+    new_animation: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def invoke(self, context, event):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        # The first split of an armature without Level-5 animation makes one, its name is asked too
+        self.new_animation = len(armature.level5_archive.animations) == 0
+
+        if self.new_animation:
+            action = get_default_action(armature)
+            if action is None:
+                self.report({'ERROR'}, "The armature has no action to make an animation from")
+                return {'CANCELLED'}
+
+            self.animation_name = get_unique_animation_name(armature, action.name)
+        elif get_track_animation(armature, 0) is None:
+            self.report({'ERROR'}, "Choose the animation of the main track first")
+            return {'CANCELLED'}
+
+        split = get_new_split(armature)
+        self.name = split["name"]
+        self.speed = split["speed"]
+        self.frame_start = max(0, self.frame)
+        self.frame_end = self.frame_start + 30
+
+        return context.window_manager.invoke_props_dialog(self, width=380)
+
+    def draw(self, context):
+        layout = self.layout
+
+        if self.new_animation:
+            layout.label(text="No Level-5 animation yet, one is made from the action", icon='INFO')
+            layout.prop(self, "animation_name")
+            layout.separator()
+
+        row = layout.row()
+        row.activate_init = True
+        row.prop(self, "name")
+
+        layout.prop(self, "frame_start")
+        layout.prop(self, "frame_end")
+        layout.prop(self, "speed")
 
     def execute(self, context):
         armature = get_timeline_armature(context)
         if armature is None:
             return {'CANCELLED'}
 
-        error = add_track_split(context.scene, armature, self.frame)
+        name = self.name.strip()
+        if name == "":
+            self.report({'ERROR'}, "The split needs a name")
+            return {'CANCELLED'}
+
+        if self.frame_end <= self.frame_start:
+            self.report({'ERROR'}, "The end frame must be after the start frame")
+            return {'CANCELLED'}
+
+        animation_name = ""
+
+        if self.new_animation:
+            animation_name = self.animation_name.strip()
+
+            error = check_animation_name(armature, animation_name)
+            if error is not None:
+                self.report({'ERROR'}, error)
+                return {'CANCELLED'}
+
+        error = add_track_split(context.scene, armature, name, self.frame_start, self.frame_end, self.speed, animation_name)
         if error is not None:
             self.report({'ERROR'}, error)
             return {'CANCELLED'}
@@ -1106,6 +1331,140 @@ class LEVEL5_OT_timeline_duplicate_split(bpy.types.Operator):
 
         return {'FINISHED'}
 
+class LEVEL5_OT_timeline_copy_split(bpy.types.Operator):
+    bl_idname = "level5.timeline_copy_split"
+    bl_label = "Copy Splits"
+    bl_description = "Copy the split, or the selected splits when it is one of them, Paste puts them on the main track of any armature"
+    bl_options = {'INTERNAL'}
+
+    track_index: IntProperty()
+    index: IntProperty()
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None or self.track_index >= get_track_count(armature):
+            return {'CANCELLED'}
+
+        splits = get_copied_splits(armature, self.track_index, self.index)
+        if len(splits) == 0:
+            return {'CANCELLED'}
+
+        copy_to_clipboard(splits)
+
+        self.report({'INFO'}, f"{len(splits)} splits copied")
+
+        return {'FINISHED'}
+
+class LEVEL5_OT_timeline_paste_splits(bpy.types.Operator):
+    bl_idname = "level5.timeline_paste_splits"
+    bl_label = "Paste Splits"
+    bl_description = "Paste the copied splits in the main track, the first one starts where the menu was opened"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    frame: IntProperty()
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        error = paste_track_splits(context.scene, armature, self.frame)
+        if error is not None:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+
+        redraw_timelines(context)
+
+        return {'FINISHED'}
+
+class Level5TimelineCopyTarget(bpy.types.PropertyGroup):
+    name: StringProperty()
+    enabled: BoolProperty(name="Copy", default=True, description="Copy the splits to this armature")
+    animation_name: StringProperty(name="Animation", description="Animation that gets the splits, a new animation is made from the action of the armature when it has none with this name")
+
+class LEVEL5_OT_timeline_copy_splits(bpy.types.Operator):
+    bl_idname = "level5.timeline_copy_splits"
+    bl_label = "Copy Splits to Other Armatures"
+    bl_description = "Copy all the splits of the main track to an animation of the other armatures that have an animation"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    targets: CollectionProperty(type=Level5TimelineCopyTarget)
+
+    def invoke(self, context, event):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        splits = get_track_splits(armature, 0)
+        if splits is None or len(splits) == 0:
+            self.report({'ERROR'}, "The main track has no split to copy")
+            return {'CANCELLED'}
+
+        self.targets.clear()
+
+        for obj in bpy.data.objects:
+            if obj.type != 'ARMATURE' or obj == armature:
+                continue
+
+            animation_name = get_copy_animation_name(obj)
+
+            if animation_name != "":
+                target = self.targets.add()
+                target.name = obj.name
+                target.animation_name = animation_name
+
+        if len(self.targets) == 0:
+            self.report({'ERROR'}, "No other armature has an animation")
+            return {'CANCELLED'}
+
+        return context.window_manager.invoke_props_dialog(self, width=450)
+
+    def draw(self, context):
+        layout = self.layout
+
+        layout.label(text="The splits an animation already has are replaced", icon='ERROR')
+        layout.separator()
+
+        row = layout.row()
+        row.label(text="Armature")
+        row.label(text="Level-5 Animation")
+
+        for target in self.targets:
+            row = layout.row()
+            row.prop(target, "enabled", text=target.name)
+
+            column = row.column()
+            column.enabled = target.enabled
+            column.prop(target, "animation_name", text="")
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        splits = get_track_splits(armature, 0)
+        if splits is None or len(splits) == 0:
+            self.report({'ERROR'}, "The main track has no split to copy")
+            return {'CANCELLED'}
+
+        count = 0
+
+        for target in self.targets:
+            obj = bpy.data.objects.get(target.name)
+            animation_name = target.animation_name.strip()
+
+            if not target.enabled or obj is None or animation_name == "":
+                continue
+
+            copy_splits_to_armature(context.scene, armature, obj, animation_name)
+            count += 1
+
+        redraw_timelines(context)
+
+        self.report({'INFO'}, f"{len(splits)} splits copied to {count} armatures")
+
+        return {'FINISHED'}
+
 class LEVEL5_OT_timeline_solo(bpy.types.Operator):
     bl_idname = "level5.timeline_solo"
     bl_label = "Solo"
@@ -1154,9 +1513,17 @@ class LEVEL5_MT_timeline_animations(bpy.types.Menu):
         if armature is None:
             return
 
-        track_index = context.window_manager.level5_timeline_track
-        if track_index >= get_track_count(armature):
-            return
+        # The header gives its track to the menu of a second track, the main track has none
+        track_index = 0
+        track = getattr(context, "level5_timeline_track", None)
+
+        if track is not None:
+            for i, item in enumerate(armature.level5_archive.timeline_tracks):
+                if item.as_pointer() == track.as_pointer():
+                    track_index = i + 1
+
+            if track_index == 0:
+                return
 
         current = get_track_animation(armature, track_index)
 
@@ -1208,6 +1575,9 @@ class LEVEL5_MT_timeline_split(bpy.types.Menu):
         if track_index >= get_track_count(armature):
             return
 
+        layout.label(text=f"{armature.name}  |  {get_reference_name(armature)}", icon='ARMATURE_DATA')
+        layout.separator()
+
         splits = get_track_splits(armature, track_index)
 
         if splits is not None and 0 <= index < len(splits):
@@ -1226,6 +1596,15 @@ class LEVEL5_MT_timeline_split(bpy.types.Menu):
             operator.track_index = track_index
             operator.index = index
 
+            copy_count = len(get_copied_splits(armature, track_index, index))
+            copy_text = "Copy"
+            if copy_count > 1:
+                copy_text = f"Copy {copy_count} Splits"
+
+            operator = layout.operator("level5.timeline_copy_split", text=copy_text, icon='COPYDOWN')
+            operator.track_index = track_index
+            operator.index = index
+
             if track_index == 0:
                 operator = layout.operator("level5.timeline_duplicate_split", text="Duplicate", icon='DUPLICATE')
                 operator.index = index
@@ -1236,8 +1615,22 @@ class LEVEL5_MT_timeline_split(bpy.types.Menu):
             layout.separator()
 
         if track_index == 0:
-            operator = layout.operator("level5.timeline_insert_split", text="Insert Split", icon='ADD')
+            # The dialogs of Insert Split and of the copy need the invoke
+            layout.operator_context = 'INVOKE_DEFAULT'
+
+            operator = layout.operator("level5.timeline_insert_split", text="Insert Split...", icon='ADD')
             operator.frame = window_manager.level5_timeline_frame
+
+            if len(split_clipboard) > 0:
+                paste_text = "Paste Split"
+                if len(split_clipboard) > 1:
+                    paste_text = f"Paste {len(split_clipboard)} Splits"
+
+                operator = layout.operator("level5.timeline_paste_splits", text=paste_text, icon='PASTEDOWN')
+                operator.frame = window_manager.level5_timeline_frame
+
+            if splits is not None and len(splits) > 0:
+                layout.operator("level5.timeline_copy_splits", text="Copy Splits to Other Armatures...", icon='COPYDOWN')
         else:
             layout.label(text="Read only, change the animation of the main track to edit it", icon='LOCKED')
 
@@ -1282,10 +1675,16 @@ classes = (
     LEVEL5_OT_timeline_rename_animation,
     LEVEL5_OT_timeline_remove_animation,
     LEVEL5_OT_timeline_remove_track,
+    LEVEL5_OT_timeline_add_track,
+    LEVEL5_OT_timeline_colors,
     LEVEL5_OT_timeline_insert_split,
     LEVEL5_OT_timeline_remove_split,
     LEVEL5_OT_timeline_delete_key,
     LEVEL5_OT_timeline_duplicate_split,
+    LEVEL5_OT_timeline_copy_split,
+    LEVEL5_OT_timeline_paste_splits,
+    Level5TimelineCopyTarget,
+    LEVEL5_OT_timeline_copy_splits,
     LEVEL5_OT_timeline_solo,
     LEVEL5_OT_timeline_stop_solo,
     LEVEL5_MT_timeline_animations,
@@ -1317,6 +1716,10 @@ def register_timeline_splits():
 
         for idname, event_type, value in [("level5.timeline_click", 'LEFTMOUSE', 'PRESS'), ("level5.timeline_double_click", 'LEFTMOUSE', 'DOUBLE_CLICK'), ("level5.timeline_context_menu", 'RIGHTMOUSE', 'PRESS'), ("level5.timeline_delete_key", 'DEL', 'PRESS')]:
             addon_keymaps.append((keymap, keymap.keymap_items.new(idname, event_type, value)))
+
+        keymap_item = keymap.keymap_items.new("level5.timeline_click", 'LEFTMOUSE', 'PRESS', shift=True)
+        keymap_item.properties.extend = True
+        addon_keymaps.append((keymap, keymap_item))
 
 def unregister_timeline_splits():
     for keymap, keymap_item in addon_keymaps:

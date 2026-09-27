@@ -39,6 +39,8 @@ class Level5SplitAnimation(bpy.types.PropertyGroup):
     frame_start: IntProperty(name="Start Frame", default=1, update=update_split)
     frame_end: IntProperty(name="End Frame", default=250, update=update_split)
     private_index: IntProperty()
+    # Selected in the timeline, only the splits of the first type of an animation use it
+    select: BoolProperty(default=False)
 
 class Level5AnimationSettings(bpy.types.PropertyGroup):
     include: BoolProperty(
