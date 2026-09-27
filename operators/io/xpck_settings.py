@@ -540,6 +540,18 @@ def get_archive_animation(object_name, animation_index):
 
     return animations[animation_index]
 
+def get_unique_animation_name(armature, name):
+    """add_animation replaces an animation with the same name, a new one gets a free name."""
+    names = get_names(armature.level5_archive.animations)
+    new_name = name
+    index = 1
+
+    while new_name in names:
+        new_name = f"{name}.{str(index).rjust(3, '0')}"
+        index += 1
+
+    return new_name
+
 def add_default_animation(armature):
     """Animation made from the action the armature plays, used by the export menu and the timeline."""
     action = get_default_action(armature)
@@ -548,15 +560,10 @@ def add_default_animation(armature):
     if action is not None:
         name = action.name
 
-    # add_animation replaces an animation with the same name
-    names = get_names(armature.level5_archive.animations)
-    base_name = name
-    index = 1
+    return make_animation(armature, get_unique_animation_name(armature, name), action)
 
-    while name in names:
-        name = f"{base_name}.{str(index).rjust(3, '0')}"
-        index += 1
-
+def make_animation(armature, name, action):
+    """Animation of the export that plays the action, the types it has are the ones the action and the materials animate."""
     animation = add_animation(armature.level5_archive, name, action, get_material_actions(armature))
     animation.armature_animation.include = action is not None
     animation.material_animation.include = len(animation.material_actions) > 0

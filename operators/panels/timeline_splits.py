@@ -2,7 +2,7 @@ import bpy
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
-from bpy.props import StringProperty, BoolProperty, IntProperty
+from bpy.props import StringProperty, BoolProperty, IntProperty, EnumProperty
 
 try:
     import bgl
@@ -36,6 +36,9 @@ LANE_COLORS = {
 # Draw and keymap handles, kept to remove them when the addon is disabled
 draw_handlers = []
 addon_keymaps = []
+
+# Items of the action list of New Animation, Blender needs them kept alive while the dialog is open
+action_items = []
 
 ##########################################
 # Timeline Function
@@ -791,19 +794,82 @@ class LEVEL5_OT_timeline_set_track_animation(bpy.types.Operator):
 
         return {'FINISHED'}
 
+def get_action_items(self, context):
+    action_items.clear()
+
+    armature = get_timeline_armature(context)
+    if armature is not None:
+        for action in bpy.data.actions:
+            if is_armature_action(armature, action):
+                action_items.append((action.name, action.name, ""))
+
+    if len(action_items) == 0:
+        action_items.append(('NONE', "No action", ""))
+
+    return action_items
+
+def find_animation_index(armature, animation_name):
+    for i, animation in enumerate(armature.level5_archive.animations):
+        if animation.name == animation_name:
+            return i
+
+    return -1
+
+def check_animation_name(armature, name, old_name=""):
+    """Error message when the name can't be used, None otherwise."""
+    if name == "":
+        return "The animation needs a name"
+
+    if name != old_name and find_animation_index(armature, name) >= 0:
+        return f"An animation named {name} already exists"
+
+    return None
+
 class LEVEL5_OT_timeline_new_animation(bpy.types.Operator):
     bl_idname = "level5.timeline_new_animation"
     bl_label = "New Animation"
-    bl_description = "Make an animation of the export from the action the armature plays, the main track plays it"
+    bl_description = "Make an animation of the export from an action of the armature, the main track plays it"
     bl_options = {'UNDO', 'INTERNAL'}
+
+    name: StringProperty(name="Name", description="Name of the animation, the mtn2, imm2 and mtm2 files share it")
+    action: EnumProperty(name="Action", description="Action of the armature the animation plays", items=get_action_items)
+
+    def invoke(self, context, event):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        # The action the armature plays is chosen first
+        action = get_default_action(armature)
+        if action is not None:
+            self.action = action.name
+            self.name = get_unique_animation_name(armature, action.name)
+        else:
+            self.name = get_unique_animation_name(armature, "animation")
+
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        row = self.layout.row()
+        row.activate_init = True
+        row.prop(self, "name")
+
+        self.layout.prop(self, "action")
 
     def execute(self, context):
         armature = get_timeline_armature(context)
         if armature is None:
             return {'CANCELLED'}
 
-        if get_default_action(armature) is None:
+        action = bpy.data.actions.get(self.action)
+        if action is None:
             self.report({'ERROR'}, "The armature has no action to make an animation from")
+            return {'CANCELLED'}
+
+        name = self.name.strip()
+        error = check_animation_name(armature, name)
+        if error is not None:
+            self.report({'ERROR'}, error)
             return {'CANCELLED'}
 
         scene = context.scene
@@ -811,11 +877,108 @@ class LEVEL5_OT_timeline_new_animation(bpy.types.Operator):
         if scene.level5_timeline_solo.armature_name == armature.name:
             stop_solo(scene)
 
-        add_default_animation(armature)
+        make_animation(armature, name, action)
         armature.level5_archive.timeline_split_index = 0
 
         apply_track_actions(armature)
+
+        frame_count = get_animation_frame_count(armature.level5_archive.get_active_animation())
+        if frame_count > 0:
+            scene.frame_end = frame_count
+
         redraw_timelines(context)
+
+        return {'FINISHED'}
+
+class LEVEL5_OT_timeline_rename_animation(bpy.types.Operator):
+    bl_idname = "level5.timeline_rename_animation"
+    bl_label = "Rename Animation"
+    bl_description = "Change the name of the animation, the mtn2, imm2 and mtm2 files share it"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    animation_name: StringProperty()
+    name: StringProperty(name="Name")
+
+    def invoke(self, context, event):
+        self.name = self.animation_name
+        return context.window_manager.invoke_props_dialog(self)
+
+    def draw(self, context):
+        row = self.layout.row()
+        row.activate_init = True
+        row.prop(self, "name")
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        index = find_animation_index(armature, self.animation_name)
+        if index < 0:
+            return {'CANCELLED'}
+
+        name = self.name.strip()
+        error = check_animation_name(armature, name, self.animation_name)
+        if error is not None:
+            self.report({'ERROR'}, error)
+            return {'CANCELLED'}
+
+        settings = armature.level5_archive
+        settings.animations[index].name = name
+
+        # The second tracks find their animation by its name
+        for track in settings.timeline_tracks:
+            if track.animation_name == self.animation_name:
+                track.animation_name = name
+
+        redraw_timelines(context)
+
+        return {'FINISHED'}
+
+class LEVEL5_OT_timeline_remove_animation(bpy.types.Operator):
+    bl_idname = "level5.timeline_remove_animation"
+    bl_label = "Remove Animation"
+    bl_description = "Remove the animation from the export of the armature, the armature keeps its action"
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    animation_name: StringProperty()
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event)
+
+    def execute(self, context):
+        armature = get_timeline_armature(context)
+        if armature is None:
+            return {'CANCELLED'}
+
+        index = find_animation_index(armature, self.animation_name)
+        if index < 0:
+            return {'CANCELLED'}
+
+        scene = context.scene
+        settings = armature.level5_archive
+        main_removed = index == settings.animation_index
+
+        if scene.level5_timeline_solo.armature_name == armature.name:
+            stop_solo(scene)
+
+        # Only the animation of the export goes, the armature keeps the action
+        settings.animations.remove(index)
+
+        if index < settings.animation_index or settings.animation_index >= len(settings.animations):
+            settings.animation_index = max(0, settings.animation_index - 1)
+
+        if main_removed:
+            settings.timeline_split_index = 0
+
+        for track in settings.timeline_tracks:
+            if track.animation_name == self.animation_name:
+                track.animation_name = ""
+
+        apply_track_actions(armature)
+        redraw_timelines(context)
+
+        self.report({'INFO'}, f"{self.animation_name} removed from the animations of the export, its action is kept")
 
         return {'FINISHED'}
 
@@ -997,6 +1160,9 @@ class LEVEL5_MT_timeline_animations(bpy.types.Menu):
 
         current = get_track_animation(armature, track_index)
 
+        # A menu runs its operators without their invoke, the rename, remove and new dialogs need it
+        layout.operator_context = 'INVOKE_DEFAULT'
+
         for animation in armature.level5_archive.animations:
             types = []
             for animation_type in ANIMATION_TYPES:
@@ -1007,14 +1173,22 @@ class LEVEL5_MT_timeline_animations(bpy.types.Menu):
             if current is not None and animation.name == current.name:
                 icon = 'RADIOBUT_ON'
 
-            operator = layout.operator("level5.timeline_set_track_animation", text=f"{animation.name}  ({', '.join(types)})", icon=icon)
+            row = layout.row(align=True)
+
+            operator = row.operator("level5.timeline_set_track_animation", text=f"{animation.name}  ({', '.join(types)})", icon=icon)
             operator.track_index = track_index
+            operator.animation_name = animation.name
+
+            operator = row.operator("level5.timeline_rename_animation", text="", icon='GREASEPENCIL')
+            operator.animation_name = animation.name
+
+            operator = row.operator("level5.timeline_remove_animation", text="", icon='X')
             operator.animation_name = animation.name
 
         # Only the main track makes animations, the second tracks play the existing ones
         if track_index == 0:
             layout.separator()
-            layout.operator("level5.timeline_new_animation", text="New Animation (current action)", icon='ADD')
+            layout.operator("level5.timeline_new_animation", text="New Animation...", icon='ADD')
 
 class LEVEL5_MT_timeline_split(bpy.types.Menu):
     bl_idname = "LEVEL5_MT_timeline_split"
@@ -1105,6 +1279,8 @@ classes = (
     LEVEL5_OT_timeline_open_menu,
     LEVEL5_OT_timeline_set_track_animation,
     LEVEL5_OT_timeline_new_animation,
+    LEVEL5_OT_timeline_rename_animation,
+    LEVEL5_OT_timeline_remove_animation,
     LEVEL5_OT_timeline_remove_track,
     LEVEL5_OT_timeline_insert_split,
     LEVEL5_OT_timeline_remove_split,
