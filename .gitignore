@@ -11,3 +11,7 @@ CLAUDE.md
 # Local validation scripts and private notes
 /studio_eleven/test/
 /studio_eleven/.docs/
+
+# Addon packaging
+/build_addons.py
+/dist/
