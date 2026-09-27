@@ -1,9 +1,9 @@
 # Studio Optimizer
 
 ## 💡 About
-Studio Optimizer is a Blender addon that gets your models ready for [Studio Eleven](https://github.com/Tiniifan/studio_eleven) and the Level-5 Nintendo 3DS games. In one click it:
+Studio Optimizer is a Blender addon that gets your models ready for [Studio Eleven](https://github.com/Tiniifan/studio_eleven):
 
-- **Reduces the number of faces** of your models, so they run better on the 3DS
+- **Reduces the number of faces** of your models, so they run better
 - **Splits the models that use more than 24 bones**, since past this limit the model can explode in some games (Yo-Kai Watch 1, 2, 3, Blasters, Snack World)
 
 Your animations keep working after the optimization.
@@ -29,14 +29,6 @@ Your animations keep working after the optimization.
    - **Split Meshes Over 24 Bones**: cuts the models that use too many bones into several parts (`Body`, `Body_1`, `Body_2`...)
 
 A message at the bottom of Blender tells how many faces were removed and how many models were split.
-
-## 🙏 Special Thanks
-
-This project was made possible thanks to the following work:
-
-- **[meshoptimizer](https://github.com/zeux/meshoptimizer)** - Mesh simplification rules
-- **Michael Garland & Paul S. Heckbert** - *Surface Simplification Using Quadric Error Metrics* (1997)
-- **[F. Paanakker](https://www.gamedeveloper.com/programming/skinned-mesh-export-optimization)** - Skinned mesh splitting
 
 ## 📄 License
 
