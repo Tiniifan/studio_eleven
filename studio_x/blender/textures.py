@@ -7,8 +7,11 @@ Rules measured against the 3DS FireTornado textures (whs0001_ef1):
 - Threshold gradation shaders (_Use_ThresholdGradation) have no color texture: the mask is compared
   with the three _BorderMin/_BorderMax thresholds, which cut it into flames and pick their color in
   _GradationTex. There is no 3DS equivalent, so this is an approximation of the shader.
-- Character shaders bake occlusion and specular masks into the color (cross_helper open_cross_texture.py).
+- Character shaders bake occlusion and specular masks into the color.
 """
+
+import hashlib
+import math
 
 import bpy
 import numpy as np
@@ -32,11 +35,16 @@ SPECULAR_MIX = 0.2
 class TextureCache:
     """Decode each Texture2D once per import and keep the RGBA arrays for merging."""
 
-    def __init__(self, environment, report=None):
+    def __init__(self, environment, report=None, reduce_512=False):
         self.environment = environment
         self.report = report
+        # 3DS option: a texture 512 texels wide or high is halved on both sides
+        self.reduce_512 = reduce_512
         self.arrays = {}
         self.images = {}
+        # Images by content: two textures made the same (a mask baked twice, a colour texture shared by
+        # several converted layers) are one image, so one texture in the exported archive
+        self.by_content = {}
 
     def array(self, texture_info):
         key = (texture_info.sfile.name, texture_info.path_id)
@@ -59,6 +67,15 @@ class TextureCache:
         image = self.images.get(name)
         if image is not None:
             return image
+        pixels = np.ascontiguousarray(pixels, dtype=np.float32)
+        if self.reduce_512 and 512 in pixels.shape[:2]:
+            pixels = halve(pixels)
+        # Compared as the 8 bit values the texture file keeps
+        content = (pixels.shape, hashlib.sha1(np.round(np.clip(pixels, 0.0, 1.0) * 255).astype(np.uint8).tobytes()).digest())
+        image = self.by_content.get(content)
+        if image is not None:
+            self.images[name] = image
+            return image
         height, width = pixels.shape[:2]
         image = bpy.data.images.new(name, width, height, alpha=True)
         image.pixels.foreach_set(np.ascontiguousarray(pixels, dtype=np.float32).ravel())
@@ -67,7 +84,18 @@ class TextureCache:
         except RuntimeError:
             pass
         self.images[name] = image
+        self.by_content[content] = image
         return image
+
+
+def halve(pixels):
+    """Half the width and the height (512 x 256 -> 256 x 128): mean of each 2 x 2 block, an odd last row or
+    column is dropped."""
+    height, width = pixels.shape[:2]
+    if height < 2 or width < 2:
+        return pixels
+    block = pixels[:height // 2 * 2, :width // 2 * 2]
+    return block.reshape(height // 2, 2, width // 2, 2, -1).mean(axis=(1, 3))
 
 
 def _floats(material):
@@ -105,6 +133,28 @@ def uv_texture_property(material):
         return color
     names = [prop for prop, _ in _tex_envs(material)]
     return next((p for p in COLOR_PROPERTIES if p in names), None)
+
+
+def rest_st(material):
+    """(tiling u, tiling v, offset u, offset v) of the texture the mesh UVs sample, from the material.
+
+    The Soccer/Effect shaders sample uv' = (uv - offset) / tiling (their GLSL divides by _ST.xy, e.g.
+    Basic's TEXCOORD7 = 1 / _ColorTex_ST.xy), and so does the game's UV matrix with UVMove / UVScale.
+    A tiling of 0 would be a division by 0, the shaders clamp it to 1e-4 the same way.
+    """
+    if material is None:
+        return 1.0, 1.0, 0.0, 0.0
+    main_property = uv_texture_property(material)
+    for prop, env in material["m_SavedProperties"]["m_TexEnvs"]:
+        if prop == main_property:
+            scale = [env["m_Scale"]["x"], env["m_Scale"]["y"]]
+            scale = [_safe_tiling(s) for s in scale]
+            return scale[0], scale[1], env["m_Offset"]["x"], env["m_Offset"]["y"]
+    return 1.0, 1.0, 0.0, 0.0
+
+
+def _safe_tiling(value):
+    return math.copysign(max(abs(value), 1e-4), value)
 
 
 def uv_scroll_properties(material):

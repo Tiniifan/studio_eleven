@@ -102,6 +102,7 @@ class ImportOptions:
         # The 3DS bodies and the move names only exist on the 3DS platform
         is_3ds = operator.platform == "3DS"
         self.use_3ds_models = is_3ds and operator.use_3ds_models
+        self.reduce_textures = is_3ds and getattr(operator, "reduce_textures", True)
         self.waza_name = operator.waza_name.strip() if is_3ds else ""
 
 
@@ -109,7 +110,7 @@ class ImportOptions:
 SETTINGS_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "import_settings.json")
 SAVED_OPTIONS = ("fps", "frame_offset", "scale", "adapt_textures", "camera_frame_offset", "camera_target_distance",
                  "split_camera", "platform", "screen_format", "custom_width", "custom_height", "use_3ds_models",
-                 "render_engine")
+                 "reduce_textures", "render_engine")
 
 
 def load_settings():
@@ -244,6 +245,10 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
         name="Use 3DS Bodies and Ball", default=False, update=_option_changed,
         description="Replace \"Ally\" and \"Opponent\" models by the 3DS bodies (fat, normal, small, tall) and "
                     "\"Ball\" models by the 3DS ball, with their animations retargeted")
+    reduce_textures: BoolProperty(
+        name="Reduce 512 Textures", default=True, update=_option_changed,
+        description="Halve the width and the height of every texture 512 texels wide or high "
+                    "(512x512 -> 256x256, 512x256 -> 256x128), lighter for the 3DS")
     waza_name: StringProperty(
         name="Waza Name", default="", options={"SKIP_SAVE"},
         description="Name of the 3DS move (whs0001...). When set, the Studio Eleven export settings get the "
@@ -307,6 +312,7 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
         row.prop(self, "fps")
         if self.platform == "3DS":
             box.prop(self, "use_3ds_models")
+            box.prop(self, "reduce_textures")
             box.prop(self, "waza_name")
 
     def execute(self, context):
@@ -382,7 +388,7 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
             bpy.ops.object.mode_set(mode="OBJECT")
 
         entries = {entry.key: entry for entry in _session["catalog"]}
-        cache = TextureCache(environment, self.report)
+        cache = TextureCache(environment, self.report, reduce_512=options.reduce_textures)
         last_frame = 0
         imported = 0
         effects = 0
@@ -441,19 +447,24 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
             result.armature.animation_data_create()
             result.armature.animation_data.action = action
             animations.bake_bones(action, result, sampler, options)
-            created = [(result.armature, action)] + animations.bake_renderers(result, sampler, name, options)
+            created = [(result.armature, action)] + animations.bake_renderers(result, sampler, action, options)
             if len(sources) > 1:
                 for _, created_action in created:
                     created_action.use_fake_user = True
 
-            splits = eleven.split_animations(source, options.fps)
-            eleven.create_split_actions(action, action.name, splits)
             if index == 0:
                 first_assignments = created
+                splits = eleven.split_animations(source, options.fps)
                 animation_types = {"armature"}
-                for id_data, _ in created[1:]:
-                    animation_types.add("material" if isinstance(id_data, bpy.types.Material) else "uv")
-                eleven.store_armature_animation(result.armature, action.name, splits, animation_types, archive)
+                material_actions = {}
+                for id_data, created_action in created[1:]:
+                    if isinstance(id_data, bpy.types.Material):
+                        animation_types.add("material")
+                        material_actions[id_data.name] = created_action
+                    else:
+                        animation_types.add("uv")
+                eleven.store_armature_animation(result.armature, action, splits, animation_types, archive,
+                                                material_actions)
         # Keep the first selected animation active when several were imported
         for id_data, action in first_assignments:
             id_data.animation_data.action = action

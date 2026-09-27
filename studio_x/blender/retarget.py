@@ -2,13 +2,11 @@
 retarget their animations onto them.
 
 The armatures (data/default_armatures.json) are the bones Studio Eleven builds from the 3DS files
-uaa0001/uba0001/usa0001/uta0001 (normal/fat/small/tall bodies) and bal00 (ball), extracted by
-research-help/agent-script/extract_default_armatures.py.
+uaa0001/uba0001/usa0001/uta0001 (normal/fat/small/tall bodies) and bal00 (ball).
 
 Rules measured on FireTornado (Unity "Ally 0" / "Ball 0") against the same move on 3DS, whs0001_aa1 on the
-normal body and whs0001_bl1 on the ball, plus the game's own fat/small/tall versions (ba1/sa1/ta1), see
-research-help/agent-script/analyze_retarget.py:
-- the Victory Road player bones share the frames of the 3DS normal body (c_c_1_0 = c_c1, r_a_1_1 = r_a3...)
+normal body and whs0001_bl1 on the ball, plus the game's own fat/small/tall versions (ba1/sa1/ta1):
+- the Inazuma Eleven Cross player bones share the frames of the 3DS normal body (c_c_1_0 = c_c1, r_a_1_1 = r_a3...)
   except the hands, turned by 90 degrees on Z (thumbs have their own offset): with W_3ds = W_unity * C,
   L_3ds = C_parent^-1 * L_unity * C;
 - the game adapts a normal body animation to another body with rest_body * rest_normal^-1 * rotation
@@ -173,9 +171,8 @@ def build_default_armature(context, kind, name):
     for pose_bone in armature.pose.bones:
         pose_bone.rotation_mode = "QUATERNION"
 
-    if hasattr(armature, "level5_archive"):
-        # Like the 3DS move archives (whs0001_aa1): the body itself comes from the game
-        armature.level5_archive.export_mode = "ANIMATION"
+    # Like the 3DS move archives (whs0001_aa1): the body itself comes from the game
+    armature.level5_archive.export_mode = "ANIMATION"
     return armature, skeleton
 
 
@@ -342,10 +339,9 @@ def import_replacement(context, entry, kind, sources, options, report):
             if len(sources) > 1:
                 action.use_fake_user = True
             retargeter.bake(action, skeleton, sampler, sampled)
-            eleven.create_split_actions(action, action.name, splits)
             if index == 0:
                 first_actions[armature.name] = action
-                eleven.store_armature_animation(armature, action.name, splits, {"armature"}, archive)
+                eleven.store_armature_animation(armature, action, splits, {"armature"}, archive)
     for armature, _ in targets:
         action = first_actions.get(armature.name)
         if action is not None:

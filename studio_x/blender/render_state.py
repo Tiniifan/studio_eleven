@@ -1,14 +1,14 @@
 """Unity material render settings -> Studio Eleven material render state (.atr) and texture samplers.
 
-Fills material.level5_atr (studio_eleven/formats/atr.py) and material.level5_image
-(studio_eleven/formats/res.py), then lets Studio Eleven's own fileio_xmpr.apply_atr_state and
-apply_material_sampler set up the Blender preview, exactly like its xpck import does. The sampler
-used to live on the image (Image.level5_texture) and moved to the material; StudioRender reads
-material.level5_image itself (rendering/studio_render/material.py sampler_of), so these values drive
-the render as well as the export.
+Fills material.level5_atr (studio_eleven/formats/material/atr.py, edited through
+operators/panels/material_render.py) and the sampler of the material's texture slot
+(material.level5_textures.slots, operators/panels/material_textures.py), then lets Studio Eleven's
+own fileio_xmpr.apply_atr_state and material_textures.apply_material_textures set up the Blender
+preview, exactly like its xpck import (operators/io/fileio_xmpr.py make_mesh) does. The export and
+StudioRender (rendering/studio_render/material.py samplers_of) read the same slots, so these values
+drive the render as well as the RES.bin.
 
-Rules measured on FireTornado (Unity materials vs the whs0001_ef1 .atr / RES.bin of the 3DS move,
-see research-help/agent-script/dump_unity_materials.py and dump_3ds_render_states.py):
+Rules measured on FireTornado (Unity materials vs the whs0001_ef1 .atr / RES.bin of the 3DS move):
     _Cull 0 -> cull off, 2 -> cull on (both sides of the X mirror keep the same culled side)
     _ZWrite 0 -> depth write off
     _SrcBlend One / _DstBlend OneMinusSrcAlpha -> SRC_ALPHA / ONE_MINUS_SRC_ALPHA
@@ -62,9 +62,11 @@ def unity_render_state(material):
     blended = is_blended(material)
     state = {
         "cull": "OFF" if int(floats.get("_Cull", 2.0)) == 0 else "ON",
-        "depth_bias_enable": "OFF",
-        "depth_bias": -1.0,
-        "blend": "ON",
+        # Every shipped file (whs0001_ef1, the 3DS bodies and ball) leaves blend and the depth bias switch
+        # out and writes a depth bias of 0; blending is on by default in the engine
+        "depth_bias_enable": INHERIT,
+        "depth_bias": 0.0,
+        "blend": INHERIT,
         "blend_rgb_equation": UNITY_BLEND_OPS.get(int(floats.get("_BlendOp", 0.0)), "ADD"),
         "blend_alpha_equation": "ADD",
         "depth_write": "ON" if floats.get("_ZWrite", 0.0 if blended else 1.0) >= 0.5 else "OFF",
@@ -136,25 +138,19 @@ def draw_priorities(sfile):
 
 
 def apply_render_state(blender_material, material):
-    """Store the render state on the material and preview it (needs Studio Eleven's commit 55fb60a)."""
-    if not hasattr(blender_material, "level5_atr"):
-        return False
-    try:
-        from studio_eleven.formats import atr
-        from studio_eleven.operators import fileio_xmpr
-    except ImportError:
-        return False
+    """Store the render state on the material and preview it."""
+    from studio_eleven.operators.io import fileio_xmpr
+    from studio_eleven.operators.panels.material_render import state_from_properties
 
     properties = blender_material.level5_atr
     for name, value in unity_render_state(material).items():
         setattr(properties, name, value)
-    # Same preview and panel mode as Studio Eleven's xpck import
-    fileio_xmpr.apply_atr_state(blender_material, atr.state_from_properties(properties))
-    return True
+    # Same preview and panel mode (simple / expert) as Studio Eleven's xpck import
+    fileio_xmpr.apply_atr_state(blender_material, state_from_properties(properties))
 
 
 def unity_sampler(texture):
-    """material.level5_image property values for a Unity Texture2D."""
+    """Texture slot sampler values (Level5TextureSlot) for a Unity Texture2D."""
     settings = texture.get("m_TextureSettings", {})
     filter_mode = settings.get("m_FilterMode", 1)
     has_mips = texture.get("m_MipCount", 1) > 1
@@ -169,32 +165,25 @@ def unity_sampler(texture):
     }
 
 
-def apply_sampler(blender_material, texture):
-    """Store the wrap/filter of a Unity texture on the material it is sampled by.
+def apply_sampler(slot, texture):
+    """Store the wrap/filter of a Unity texture on the texture slot that samples it.
 
     Mirrored wrapping matters: the effect shaders store a glow as one quarter of it and let the
     mirror rebuild the whole (Ocean Birth's ball lights, UVs -0.9..0.9 on a MIRROR texture); read as
     REPEAT the quarter is tiled instead and the glow becomes a hard edged wedge.
     """
-    if texture is None or not hasattr(blender_material, "level5_image"):
-        return False
-    properties = blender_material.level5_image
+    if texture is None:
+        return
     for name, value in unity_sampler(texture).items():
-        setattr(properties, name, value)
-    return refresh_preview(blender_material)
+        setattr(slot, name, value)
 
 
 def refresh_preview(blender_material):
-    """Let Studio Eleven wire the wrap (math nodes, mirror = ping pong) and the tint of a material.
+    """Let Studio Eleven rebuild the shader graph of a material from its texture slots: sampler wrap
+    (math nodes, mirror = ping pong), tint and animated transparency.
 
     The tint needs the material to be on its mesh already, so models.py calls this again after that.
     """
-    try:
-        from studio_eleven.operators import fileio_xmpr
-    except ImportError:
-        return False
-    apply = getattr(fileio_xmpr, "apply_material_sampler", None)
-    if apply is None:
-        return False
-    apply(blender_material)
-    return True
+    from studio_eleven.operators.panels.material_textures import apply_material_textures
+
+    apply_material_textures(blender_material)

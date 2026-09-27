@@ -2,8 +2,10 @@
 
 Mapping (measured by comparing FireTornado's Unity clips with the 3DS whs0001 animations):
     bones:     pose bone location / rotation_quaternion / scale (armature action)
-    UV:        UV_WARP modifier offset = (_Tex_ST.z, -_Tex_ST.w), scale = (_Tex_ST.x, _Tex_ST.y) (mesh action)
-    material:  alpha = Renderer.m_Enabled * GameObject.m_IsActive * (1 - _Transparency) (material action)
+    UV:        UV_WARP modifier offset = (_Tex_ST.z, -_Tex_ST.w), scale = (_Tex_ST.x, _Tex_ST.y) (armature
+               action, which the meshes play too, like Studio Eleven's import and export)
+    material:  alpha = Renderer.m_Enabled * GameObject.m_IsActive * (1 - _Transparency) (material action,
+               on the "Level5 Transparency" node)
     timing:    3DS frame f (30 fps) == Unity time f / 30 + 1 / 60 (cameras: f / 30, see cameras.py)
 Curves are sampled on every frame, then keys that linear interpolation already reproduces are dropped.
 """
@@ -14,8 +16,8 @@ import bpy
 import numpy as np
 from mathutils import Quaternion
 
-from . import convert, materials
-from .textures import uv_scroll_properties
+from . import convert, materials, mask_shaders
+from .textures import rest_st, uv_scroll_properties
 from ..unity import animation
 
 ATTRIBUTE_ENABLED = zlib.crc32(b"m_Enabled")
@@ -283,8 +285,14 @@ def _renderer_bindings(clip, model_node, record):
     return visibility, properties
 
 
-def bake_renderers(model, sampler, action_name, options):
-    """Return the list of (id_data, action) created for UV and material animations."""
+def bake_renderers(model, sampler, action, options):
+    """Bake the UV and material animations; return the (id_data, action) they are played by.
+
+    UV curves go into the armature action, which every mesh of the armature plays: Studio Eleven's
+    export gives the armature's action to its meshes while it writes an animation
+    (xpck_settings.get_animation_assignments). Materials get their own actions.
+    """
+    action_name = action.name
     created = []
     model_node = model.entry.node
     clips = sampler.source.clips
@@ -300,10 +308,17 @@ def bake_renderers(model, sampler, action_name, options):
                                  if any(any(k[0] == p + "_ST" for k in props)
                                         for _, props in per_clip.values())), None)
 
-        if has_visibility:
-            created.extend(_bake_alpha(record, per_clip, sampler, action_name))
+        alpha_actions = _bake_alpha(record, per_clip, sampler, action_name) if has_visibility else []
+        if mask_shaders.shader_kind(first_material) and record.uv_layer and record.unity_mesh is not None:
+            if not record.mask_converted:
+                # Colour and mask on two texture units with their own UVs and scroll; converted with
+                # the first animation only (the threshold masks are baked for it, the foam copy added)
+                foam_actions = mask_shaders.convert(model, record, per_clip, sampler, action, alpha_actions, write_curve)
+                created.extend(alpha_actions + foam_actions + [(record.object, action)])
+                continue
+        created.extend(alpha_actions)
         if texture_property and record.uv_layer:
-            created.append(_bake_uv(record, per_clip, sampler, action_name, texture_property,
+            created.append(_bake_uv(record, per_clip, sampler, action, texture_property,
                                     texture_property == candidates[0]))
     return created
 
@@ -317,7 +332,7 @@ def _static_st(record, texture_property):
     return (1.0, 1.0, 0.0, 0.0)
 
 
-def _bake_uv(record, per_clip, sampler, action_name, texture_property, is_baked_texture):
+def _bake_uv(record, per_clip, sampler, action, texture_property, is_baked_texture):
     obj = record.object
     uv_property = texture_property + "_ST"
     static = _static_st(record, texture_property)
@@ -330,22 +345,27 @@ def _bake_uv(record, per_clip, sampler, action_name, texture_property, is_baked_
 
     if obj.animation_data is None:
         obj.animation_data_create()
-    action = bpy.data.actions.new("%s.%s" % (action_name, obj.name))
     obj.animation_data.action = action
     base = 'modifiers["%s"].' % record.uv_layer
-    if is_baked_texture:
-        offsets = (series["z"], [-v for v in series["w"]])
-    else:
-        # Scroll of another texture: its tiling is not in the baked image, so only the motion it
-        # adds is kept, brought back to the mesh UV scale (offset / tiling, from its rest offset)
-        offsets = ([(v - static[2]) / (static[0] or 1.0) for v in series["z"]],
-                   [-(v - static[3]) / (static[1] or 1.0) for v in series["w"]])
+    if action.fcurves.find(base + "offset", index=0) is not None:
+        # Another mesh of the armature has a modifier with this name (same material): the game knows
+        # the texture projection by its name only, so the first mesh's curves are the ones written
+        return obj, action
+    # The mesh UVs already hold the rest _ST of the baked texture (textures.rest_st): only the motion from
+    # the rest pose is keyed, in the units of those UVs. The game computes ((u - UVMove.x) / UVScale.x,
+    # (v + UVMove.y) / UVScale.y) on them (V flipped by the mesh reader), the shaders (uv - _ST.zw) / _ST.xy.
+    # Blender and StudioRender add the offset instead: their preview scrolls mirrored in X, the game does not.
+    # The scroll of another texture (not in the baked image) moves the same way, from its own rest offset.
+    mesh_scale = rest_st(next((m for _, m in record.unity_materials if m), None))[:2]
+    offsets = ([(v - static[2]) / mesh_scale[0] for v in series["z"]],
+               [-(v - static[3]) / mesh_scale[1] for v in series["w"]])
     write_curve(action, base + "offset", 0, sampler.frames, offsets[0], 1e-5)
     write_curve(action, base + "offset", 1, sampler.frames, offsets[1], 1e-5)
     # The 3DS files hold no UVScale track when the tiling never changes: don't create curves for it
-    if is_baked_texture and any(abs(v - 1.0) > 1e-5 for v in series["x"] + series["y"]):
-        write_curve(action, base + "scale", 0, sampler.frames, series["x"], 1e-5)
-        write_curve(action, base + "scale", 1, sampler.frames, series["y"], 1e-5)
+    scales = ([v / mesh_scale[0] for v in series["x"]], [v / mesh_scale[1] for v in series["y"]]) if is_baked_texture else None
+    if scales and any(abs(v - 1.0) > 1e-5 for v in scales[0] + scales[1]):
+        write_curve(action, base + "scale", 0, sampler.frames, scales[0], 1e-5)
+        write_curve(action, base + "scale", 1, sampler.frames, scales[1], 1e-5)
     return obj, action
 
 
@@ -376,10 +396,11 @@ def _bake_alpha(record, per_clip, sampler, action_name):
             record.object.data.materials[slot] = blender_material
             record.blender_materials[slot] = blender_material
         record.owned_slots.add(slot)
+        data_path = materials.add_transparency_animation(blender_material)
         if blender_material.animation_data is None:
             blender_material.animation_data_create()
         action = bpy.data.actions.new("%s.%s" % (action_name, blender_material.name))
         blender_material.animation_data.action = action
-        write_curve(action, materials.alpha_data_path(blender_material), 0, sampler.frames, values, 1e-3)
+        write_curve(action, data_path, 0, sampler.frames, values, 1e-3)
         created.append((blender_material, action))
     return created

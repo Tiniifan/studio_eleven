@@ -1,11 +1,9 @@
 """Fill Studio Eleven's xpck export settings the way its own xpck import does.
 
-Mirrors studio_eleven/operators/fileio_xpck.py (apply_animation_group, apply_animation_imports and the
-camera markers of build_archive) and fileio_xcma.py set_camera_settings, so an imported Unity move can be
-exported back as xpck with its animation names, split animations and cameras already filled in.
+Mirrors studio_eleven/operators/io/fileio_xpck.py (apply_animation_imports and the camera markers of
+build_archive) and fileio_xcma.py set_camera_settings, so an imported Unity move can be exported back
+as xpck with its animation names, split animations and cameras already filled in.
 """
-
-import bpy
 
 ANIMATION_TYPES = ("armature", "uv", "material")
 
@@ -39,14 +37,6 @@ def animation_name(archive):
     return archive.rsplit(".", 1)[0] if archive else None
 
 
-def _xpck_settings():
-    try:
-        from studio_eleven.operators import xpck_settings
-    except ImportError:
-        return None
-    return xpck_settings
-
-
 def split_name(index):
     """Split names of the 3DS mtninf files; the cameras of a cut use the same name."""
     return "%02d" % (index + 1)
@@ -66,47 +56,35 @@ def split_animations(source, fps):
     return splits
 
 
-def create_split_actions(action, name, splits):
-    """Copy each split range of the armature action into its own action starting at frame 0."""
-    for split in splits:
-        start, end = split["frame_start"], split["frame_end"]
-        split_action = bpy.data.actions.new(name="%s_%s" % (name, split["name"]))
-        split_action.use_fake_user = True
-        for fcurve in action.fcurves:
-            new_fcurve = split_action.fcurves.new(data_path=fcurve.data_path, index=fcurve.array_index,
-                                                  action_group=fcurve.group.name if fcurve.group else "")
-            # Keys were simplified, so the range edges are evaluated instead of copied
-            frames = {start, end}
-            frames.update(int(round(k.co.x)) for k in fcurve.keyframe_points if start <= k.co.x <= end)
-            points = new_fcurve.keyframe_points
-            points.add(len(frames))
-            for point, frame in zip(points, sorted(frames)):
-                point.co = (frame - start, fcurve.evaluate(frame))
-                point.interpolation = "LINEAR"
-            new_fcurve.update()
+def store_armature_animation(armature, action, splits, animation_types, archive=None, material_actions=None):
+    """Add the animation an armature plays to its export settings (level5_archive.animations).
 
+    action: the armature action, which its meshes play too (bones and UV curves); material_actions:
+    {material name: action} of the material animations. archive: 3DS archive name, which also names the
+    animation (an animation archive holds one animation, named like the archive). The splits are only
+    ranges of the action shown on the timeline, like Studio Eleven's import they get no action of their own.
+    """
+    from studio_eleven.operators.io import xpck_settings
 
-def store_armature_animation(armature, name, splits, animation_types, archive=None):
-    """Fill the export settings of an armature. archive: 3DS archive name, which also names the animations
-    of the included types (an animation archive holds one animation per type, named like the archive)."""
-    settings_module = _xpck_settings()
-    if settings_module is None or not hasattr(armature, "level5_archive"):
-        return
     settings = armature.level5_archive
+    name = action.name
     if archive:
         settings.archive_name = archive
         name = animation_name(archive)
+    # Bones, texprojs and materials of the armature, which the export lists
+    xpck_settings.sync_archive_settings(armature)
+    animation = xpck_settings.add_animation(settings, name, action, material_actions or {})
     for animation_type in ANIMATION_TYPES:
         if animation_type in animation_types:
-            settings_module.set_animation_settings(settings.get_animation(animation_type), name, splits)
+            xpck_settings.set_animation_settings(animation.get_animation(animation_type), name, splits)
         else:
-            settings.get_animation(animation_type).include = False
-    settings_module.sync_archive_settings(armature)
+            animation.get_animation(animation_type).include = False
+    xpck_settings.setup_timeline(armature)
 
 
 def store_camera(context, camera_obj, name, frame, speed, archive=None):
     camera_eleven = camera_obj.parent
-    if camera_eleven is not None and hasattr(camera_eleven, "level5_camera"):
+    if camera_eleven is not None:
         camera_eleven.level5_camera.animation_name = name
         camera_eleven.level5_camera.speed = max(0.1, speed)
         if archive:

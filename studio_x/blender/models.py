@@ -10,12 +10,16 @@ import bpy
 from mathutils import Matrix
 
 from . import convert, materials, render_state
-from .textures import uv_texture_property
+from .textures import rest_st
 from ..unity.mesh import decode_mesh
 
 
 # Studio Eleven's xmpr writer default
 DEFAULT_DRAW_PRIORITY = 21
+# Bone property Studio Eleven writes back as the .mbn node flag (fileio_animation_manager.BONE_FLAG_PROPERTY);
+# 4 = visible node, 5 = billboard node
+BONE_FLAG_PROPERTY = "level5_flag"
+NODE_FLAG = 4
 
 
 class RendererRecord:
@@ -27,6 +31,11 @@ class RendererRecord:
         self.uv_layer = uv_layer
         # Material slots already duplicated for per-renderer animation
         self.owned_slots = set()
+        # Decoded Unity mesh (every UV channel), for the shaders converted with their own UVs (threshold.py)
+        self.unity_mesh = None
+        # Converted by mask_shaders.py (two texture units), and its foam copy for a threshold shader
+        self.mask_converted = False
+        self.foam = None
 
 
 class ModelResult:
@@ -37,6 +46,7 @@ class ModelResult:
         self.relative = {}       # id(node) -> rest_parent^-1 @ rest
         self.renderers = []
         self.draw_priorities = {}  # renderer path_id -> Studio Eleven draw priority
+        self.cache = None
 
 
 def _set_mode(obj, mode):
@@ -99,6 +109,7 @@ def build_armature(context, entry, environment, options, cache, report):
     armature.rotation_euler = convert.ARMATURE_ROTATION
     armature["unity_model"] = entry.key
     result = ModelResult(entry, armature)
+    result.cache = cache
     result.draw_priorities = render_state.draw_priorities(entry.sfile)
 
     used = set()
@@ -124,6 +135,12 @@ def build_armature(context, entry, environment, options, cache, report):
         if node.parent is not None and id(node.parent) in result.bone_names:
             bone.parent = armature_data.edit_bones[result.bone_names[id(node.parent)]]
     _set_mode(armature, "OBJECT")
+    # Unity nodes are plain nodes (.mbn flag 4): Studio Eleven's export turns a bone without a flag named
+    # "cam_rot" or "billboard" into a billboard node (5), but a Unity cam_rot already carries its facing
+    # rotation in the clips; the game would add the camera rotation on top of it (Ocean Birth's ball glow
+    # drawn off the ball)
+    for bone in armature_data.bones:
+        bone[BONE_FLAG_PROPERTY] = NODE_FLAG
 
     for node in nodes:
         parent_rest = rests[id(node.parent)] if node.parent is not None and id(node.parent) in rests else Matrix.Identity(4)
@@ -176,7 +193,7 @@ def _build_renderer(context, entry, node, info, renderer_type, result, worlds, r
     skinned = any(bones)
     # Skinned vertices are in renderer space. Rigid meshes stay in the local space of their own bone and
     # are parented to it: Studio Eleven then writes them as "single bind" meshes, like every effect mesh
-    # of the game (goRepack). As skinned meshes their bind pose would be the pose of the frame displayed
+    # of the game. As skinned meshes their bind pose would be the pose of the frame displayed
     # when exporting (mbn.write reads pose_bone.matrix), which moved or hid the effects in game.
     vertex_matrix = worlds[id(node)] if skinned else Matrix.Identity(4)
 
@@ -212,9 +229,14 @@ def _build_renderer(context, entry, node, info, renderer_type, result, worlds, r
         base = first_material.get("m_Name", node.name) if first_material else node.name
         uv_layer_name = "%s_texproj0" % base
         layer = blender_mesh.uv_layers.new(name=uv_layer_name)
+        # The rest tiling/offset of the texture goes into the UVs: Studio Eleven only exports a UV_WARP
+        # that is animated (a static tiling was lost in the game) and previews its scale as a product
+        # where the shaders and the game divide (see rest_st)
+        scale_u, scale_v, offset_u, offset_v = rest_st(first_material)
         flat = []
         for vertex in loop_vertices:
-            flat.extend(uvs[vertex])
+            u, v = uvs[vertex]
+            flat.extend(((u - offset_u) / scale_u, (v - offset_v) / scale_v))
         layer.data.foreach_set("uv", flat)
 
     # The vertex colors of the shipped 3DS effects live in the tint (vertex buffer slot 1); slot 9, the
@@ -241,20 +263,19 @@ def _build_renderer(context, entry, node, info, renderer_type, result, worlds, r
         blender_mesh.normals_split_custom_set_from_vertices([tuple(n) for n in normals])
     blender_mesh.update()
 
-    if hasattr(blender_mesh, "level5_properties"):
-        blender_mesh.level5_properties.draw_priority = result.draw_priorities.get(info.path_id, DEFAULT_DRAW_PRIORITY)
-        blender_mesh.level5_properties.mesh_type = "MODEL"
-        # Unity data carries no 3DS render program hash, so Studio Eleven would otherwise leave the
-        # engine's default (a lit character shader, e.g. #FIX_TON_12_SIL on IE4, declared "skinned")
-        # on every mesh: pick the unlit one that reads the texture colour and alpha directly instead
-        # (#FIX_IMG exists in every engine, same one the field uses, and is declared rigid). Every
-        # mesh built here is single_bind/rigid unless it actually carries bone weights (real,
-        # non-retargeted Unity characters): leaving a rigid mesh on the engine's skinned default
-        # mismatches the render program's own skinned/rigid flag (Studio Eleven's exporter warns:
-        # "render default ... is skinned but the mesh is rigid"). Only true skinned characters keep
-        # the engine default.
-        if not skinned or (first_material is not None and render_state.is_blended(first_material)):
-            blender_mesh.level5_properties.render_default = "#FIX_IMG"
+    blender_mesh.level5_properties.draw_priority = result.draw_priorities.get(info.path_id, DEFAULT_DRAW_PRIORITY)
+    blender_mesh.level5_properties.mesh_type = "MODEL"
+    # Unity data carries no 3DS render program hash, so Studio Eleven would otherwise leave the
+    # engine's default (a lit character shader, e.g. #FIX_TON_12_SIL on IE4, declared "skinned")
+    # on every mesh: pick the unlit one that reads the texture colour and alpha directly instead
+    # (#FIX_IMG exists in every engine, same one the field uses, and is declared rigid). Every
+    # mesh built here is single_bind/rigid unless it actually carries bone weights (real,
+    # non-retargeted Unity characters): leaving a rigid mesh on the engine's skinned default
+    # mismatches the render program's own skinned/rigid flag (Studio Eleven's exporter warns:
+    # "render default ... is skinned but the mesh is rigid"). Only true skinned characters keep
+    # the engine default.
+    if not skinned or (first_material is not None and render_state.is_blended(first_material)):
+        blender_mesh.level5_properties.render_default = "#FIX_IMG"
 
     obj = bpy.data.objects.new(node.name, blender_mesh)
     context.collection.objects.link(obj)
@@ -291,7 +312,7 @@ def _build_renderer(context, entry, node, info, renderer_type, result, worlds, r
             # (a material can live in a different bundle, shared across techniques, e.g. an effect's ball)
             blender_material = materials.build_material(material.get("m_Name", "material"), material,
                                                         material_info.sfile, cache,
-                                                        options.adapt_textures, uv_layer_name)
+                                                        options.adapt_textures)
             material_cache[key] = blender_material
         blender_mesh.materials.append(blender_material)
         blender_materials.append(blender_material)
@@ -299,14 +320,11 @@ def _build_renderer(context, entry, node, info, renderer_type, result, worlds, r
         render_state.refresh_preview(blender_material)
 
     if uv_layer_name:
-        # Studio Eleven drives UV animations through a UV_WARP modifier named like the texproj
+        # Studio Eleven drives UV animations through a UV_WARP modifier named like the texproj; at rest it
+        # is the identity (the rest _ST is in the UVs), animations.py keys the motion from there
         warp = obj.modifiers.new(name=uv_layer_name, type="UV_WARP")
         warp.uv_layer = uv_layer_name
         warp.center = (0.0, 0.0)
-        if first_material:
-            main_property = uv_texture_property(first_material)
-            for prop, env in first_material["m_SavedProperties"]["m_TexEnvs"]:
-                if prop == main_property:
-                    warp.scale = (env["m_Scale"]["x"], env["m_Scale"]["y"])
-                    warp.offset = (env["m_Offset"]["x"], -env["m_Offset"]["y"])
-    return RendererRecord(node, obj, unity_materials, blender_materials, uv_layer_name)
+    record = RendererRecord(node, obj, unity_materials, blender_materials, uv_layer_name)
+    record.unity_mesh = mesh
+    return record

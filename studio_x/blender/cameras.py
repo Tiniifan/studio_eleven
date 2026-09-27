@@ -4,15 +4,14 @@ Uses CameraElevenObject from studio_eleven/controls/camera.py and the same keyfr
 as studio_eleven/operators/fileio_xcma.py create_camera(), so ExportXCMA can write them back.
 The Unity camera looks along its local +Z; the target is placed along that axis.
 
-Measured against the 3DS cameras of whs0001 and who0003 (research-help/agent-script/dump_cameras.py,
-compare_camera_dirs.py, dump_unity_camera_fov.py):
+Measured against the 3DS cameras of whs0001 and who0003:
     - the .cmr2 "focal_length" track is the full vertical field of view in radians: ShippuuDash (who0003)
       keeps the 3DS FOV and matches to 4 decimals (Unity 35.05 deg = 0.6117, 18.9 deg = 0.3300).
-      FireTornado's Unity FOVs were retouched for Victory Road and cannot be compared.
+      FireTornado's Unity FOVs were retouched for Inazuma Eleven Cross and cannot be compared.
       Studio Eleven writes it as `lens - 33`, so the lens holds 33 + that value and the sensor height is
       animated to keep Blender's preview at the right field of view;
     - the .cmr2 roll value equals minus the Unity roll angle in radians. Studio Eleven imports and exports
-      it unchanged in rotation_euler.z, so the camera stores it as is (research-help/cameras/goStudio_pck);
+      it unchanged in rotation_euler.z, so the camera stores it as is;
     - the Unity moves come from Inazuma Eleven Cross, a portrait (9:16) mobile game: its cameras keep the
       3DS field of view but stand further back so the players fit the narrow screen. On ShippuuDash the
       camera-to-player distance is 1.27 to 1.35 times the 3DS one (cut 1). This matches a subject framed
@@ -207,6 +206,12 @@ def _build_camera(context, entry, name, frames, samples, options):
             animations.write_curve(action, "location", index, frames, [v[index] for v in values], 1e-4 * options.scale)
         if obj is camera:
             animations.write_curve(action, "rotation_euler", 2, frames, rolls, 1e-6)
+            # studio_eleven/operators/io/fileio_xcma.py fileio_write_xcma() only walks the object's action and
+            # writes the focal at its first and last keys, or at the keys of a curve whose path holds "lens":
+            # with the lens keyed on the camera data alone, the .cmr2 kept 2 focal keys per cut and the game
+            # zoomed linearly (Ocean Birth cut 1: 48 -> 35 degrees instead of 48 -> 60 -> 35). The same keys on
+            # "data.lens" here (the data action below still drives the preview)
+            animations.write_curve(action, "data.lens", 0, frames, lenses, 1e-4)
 
     camera.data.animation_data_create()
     lens_action = bpy.data.actions.new("%s.lens" % name)

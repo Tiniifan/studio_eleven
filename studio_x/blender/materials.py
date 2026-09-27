@@ -1,8 +1,10 @@
-"""Blender materials laid out like Studio Eleven's make_mesh (operators/fileio_xmpr.py), so the
-Studio Eleven exporters find the nodes they animate:
-    "Image Texture" -> "Principled BSDF".Base Color
-    "Image Texture".Alpha -> "Alpha Multiplier" (Math MULTIPLY) -> "Principled BSDF".Alpha
-Transparency animations then target node_tree.nodes["Alpha Multiplier"].inputs[1].
+"""Blender materials laid out like the ones Studio Eleven's xpck import makes (operators/io/fileio_xmpr.py
+make_mesh), so its exporters and StudioRender read them the same way:
+    texture slot 1 (material.level5_textures) = the baked Unity texture, with its sampler (wrap/filter)
+    "Alpha Multiplier" (Math MULTIPLY) -> "Principled BSDF".Alpha, the static 1 - _Transparency
+Studio Eleven's apply_material_textures builds the rest of the graph from the slot: the texture node,
+the wrap nodes, the tint (vertex colors of the "Tint" layer) and, once add_material_animation_nodes has
+added them, the "Level5 Transparency" value node that material animations key (TRANSPARENCY_DATA_PATH).
 The render state (.atr) and texture wrap/filter come from render_state.py.
 """
 
@@ -11,7 +13,6 @@ import bpy
 from . import render_state, textures
 
 ALPHA_MULTIPLIER = "Alpha Multiplier"
-IMAGE_TEXTURE = "Image Texture"
 PRINCIPLED = "Principled BSDF"
 
 
@@ -44,17 +45,32 @@ def base_alpha(material):
 
 
 def alpha_data_path(blender_material):
-    nodes = blender_material.node_tree.nodes
-    if ALPHA_MULTIPLIER in nodes:
-        return 'node_tree.nodes["%s"].inputs[1].default_value' % ALPHA_MULTIPLIER
-    bsdf = nodes.get(PRINCIPLED)
-    index = list(bsdf.inputs).index(bsdf.inputs["Alpha"])
-    return 'node_tree.nodes["%s"].inputs[%d].default_value' % (PRINCIPLED, index)
+    """Data path of the animated transparency, the one Studio Eleven's import keys and StudioRender fades with."""
+    from studio_eleven.operators.panels.material_textures import TRANSPARENCY_NODE
+
+    return 'node_tree.nodes["%s"].outputs[0].default_value' % TRANSPARENCY_NODE
 
 
-def build_material(name, material, sfile, cache, adapt_textures, uv_layer_name):
+def add_transparency_animation(blender_material):
+    """Add the value node a transparency animation keys; the animated values already hold the static
+    1 - _Transparency, so the Alpha Multiplier stops applying it."""
+    from studio_eleven.operators.panels.material_textures import add_material_animation_nodes
+
+    add_material_animation_nodes(blender_material)
+    multiplier = blender_material.node_tree.nodes.get(ALPHA_MULTIPLIER)
+    if multiplier is not None:
+        multiplier.inputs[1].default_value = 1.0
+    return alpha_data_path(blender_material)
+
+
+def build_material(name, material, sfile, cache, adapt_textures):
+    from studio_eleven.operators.panels import material_textures
+
     blender_material = bpy.data.materials.new(name=name)
     blender_material.use_nodes = True
+    # Like an imported material: Studio Eleven gives a new, uninitialized material the render state and
+    # lighting of the scene template (rendering/project.py init_new_material), which would replace ours
+    blender_material.level5_mtr.initialized = True
     nodes = blender_material.node_tree.nodes
     links = blender_material.node_tree.links
 
@@ -70,38 +86,32 @@ def build_material(name, material, sfile, cache, adapt_textures, uv_layer_name):
         image = textures.build_main_image(material, sfile, cache, adapt_textures)
 
     alpha = base_alpha(material)
+    # Filling the slot must not rebuild the graph on every property
+    material_textures.suspend_updates()
+    try:
+        blender_material.level5_textures.initialized = True
+        if image is not None:
+            slot = blender_material.level5_textures.slots.add()
+            slot.image = image
+            slot.show_expanded = False
+            render_state.apply_sampler(slot, textures.uv_texture(material, sfile))
+    finally:
+        material_textures.resume_updates()
+
     if image is not None:
-        texture = nodes.new("ShaderNodeTexImage")
-        texture.name = IMAGE_TEXTURE
-        texture.image = image
-        texture.location = (-600, 200)
-        links.new(texture.outputs["Color"], bsdf.inputs["Base Color"])
-
-        if uv_layer_name:
-            uv_map = nodes.new("ShaderNodeUVMap")
-            uv_map.uv_map = uv_layer_name
-            uv_map.location = (-850, 200)
-            links.new(uv_map.outputs["UV"], texture.inputs["Vector"])
-
+        # apply_material_textures wires the texture alpha into this node when its output is linked
         multiplier = nodes.new("ShaderNodeMath")
         multiplier.name = ALPHA_MULTIPLIER
         multiplier.operation = "MULTIPLY"
         multiplier.location = (-300, -150)
         multiplier.inputs[1].default_value = alpha
-        links.new(texture.outputs["Alpha"], multiplier.inputs[0])
         links.new(multiplier.outputs[0], bsdf.inputs["Alpha"])
-        render_state.apply_sampler(blender_material, textures.uv_texture(material, sfile))
     else:
         bsdf.inputs["Alpha"].default_value = alpha
 
     if bpy.app.version < (4, 3, 0):
         blender_material.shadow_method = "CLIP"
-    if not render_state.apply_render_state(blender_material, material):
-        # Studio Eleven without render state support: preview only
-        blender_material.blend_method = "BLEND"
-        blender_material.alpha_threshold = 0.5
-        blender_material.show_transparent_back = True
-        # Unity _Cull: 0 = off, 1 = front, 2 = back
-        blender_material.use_backface_culling = material_floats(material).get("_Cull", 0.0) == 2.0
+    render_state.apply_render_state(blender_material, material)
+    render_state.refresh_preview(blender_material)
     blender_material["unity_material"] = material.get("m_Name", "")
     return blender_material

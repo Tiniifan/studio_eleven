@@ -36,6 +36,7 @@ The addon imports the following content from Unity bundles and `.assets` files:
    - **Platform**: `3DS` to adapt the cameras and the frame rate to the 3DS screen
    - **Split Camera**: one camera per shot of the move
    - **Use 3DS Bodies and Ball**: replaces the Unity players and ball by the 3DS ones, with the same animation
+   - **Reduce 512 Textures** (on by default): every texture 512 pixels wide or high is halved on both sides (512x512 becomes 256x256, 512x256 becomes 256x128), lighter for the 3DS
    - **Waza Name**: the name of the 3DS move (for example `whs0001`), so the exported files get the names used by the game
 3. A window lists the players, the ball, the effects and the cameras found in the files. Uncheck what you don't want, then click **OK**
 4. Export the scene with Studio Eleven: **File** → **Export** → **.xc**
