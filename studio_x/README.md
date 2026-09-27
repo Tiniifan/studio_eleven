@@ -3,7 +3,7 @@
 ## 💡 About
 Studio X is a Blender addon designed to import Unity files (models, textures, animations, and cameras) and prepare them for export with [Studio Eleven](https://github.com/Tiniifan/studio_eleven). 
 
-While it primarily targets **Inazuma Eleven Victory Cross**, it may also be able to open Unity assets from other games, though this is not officially supported or guaranteed.
+While it primarily targets **Inazuma Eleven Cross**, it may also be able to open Unity assets from other games, though this is not officially supported or guaranteed.
 
 ## ⚠️ Compatibility
 - **Requires:** the Studio Eleven addon, installed and enabled
