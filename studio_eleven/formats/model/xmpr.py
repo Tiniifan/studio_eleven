@@ -131,8 +131,8 @@ def write_geometrie(indices, vertices, uvs, normals, colors, weights, tints = No
         for n in normals[indice]:
             out += bytearray(struct.pack("f", n))
         for vt in range(2):
-            out += bytearray(struct.pack("f", uvs[indice][0]))
-            out += bytearray(struct.pack("f", 1 - uvs[indice][1] ))
+            out += bytearray(struct.pack("f", uvs[indice][vt][0]))
+            out += bytearray(struct.pack("f", 1 - uvs[indice][vt][1] ))
             
         weight = weights[indice]
         keys = list(weight.keys())

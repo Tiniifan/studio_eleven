@@ -107,17 +107,15 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
         if tint_layer is not None:
             tint_colors = tint_layer.data
 
-    # Get UVs
-    has_uv_layers = False
-    uv_data = None
+    # Get UVs, the index of the layer is the index of its texproj (the .txp are written in the same order)
+    uv_datas = []
     if hasattr(mesh.data, 'uv_layers') and mesh.data.uv_layers:
-        if mesh.data.uv_layers.active:
-            has_uv_layers = True
-            uv_data = mesh.data.uv_layers.active.data
-        elif len(mesh.data.uv_layers) > 0:
-            # Take first UV layer if none is active
-            has_uv_layers = True
-            uv_data = mesh.data.uv_layers[0].data
+        for uv_layer in mesh.data.uv_layers[:2]:
+            uv_datas.append(uv_layer.data)
+
+    # A mesh with a single UV layer uses it for both UV sets
+    if len(uv_datas) == 1:
+        uv_datas.append(uv_datas[0])
 
     vertex_to_unique_indices = {}
     
@@ -142,14 +140,18 @@ def get_mesh_info_and_weights(mesh, bone_names=None):
                 # Blender 4.0 and previous: use vertex normal
                 n = tuple(round(coord, 3) for coord in mesh.data.vertices[vertex_index].normal)
             
-            # Get UV
-            if has_uv_layers and uv_data:
+            # Get UVs
+            uv = []
+            for uv_data in uv_datas:
                 try:
-                    uv = tuple(round(coord, 3) for coord in uv_data[loop_index].uv)
+                    uv.append(tuple(round(coord, 3) for coord in uv_data[loop_index].uv))
                 except (IndexError, AttributeError):
-                    uv = (0.0, 0.0)
-            else:
-                uv = (0.0, 0.0)
+                    uv.append((0.0, 0.0))
+
+            while len(uv) < 2:
+                uv.append((0.0, 0.0))
+
+            uv = tuple(uv)
                 
             # Get Color
             if vertex_colors:
