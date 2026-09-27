@@ -1,12 +1,13 @@
 # Studio Eleven
 
 ## 💡 About
-Studio Eleven is an open-source Blender addon designed to import and export Level-5 file formats from Nintendo 3DS games. Written in Python, this project welcomes contributions from the community.
+Studio Eleven is an open-source Blender addon designed to import and export Level-5 file formats from Nintendo 3DS games.
 
 ## ⚠️ Compatibility
 - **Minimum Blender version:** 2.8
-- **Maximum Blender version:** 3.4
-- **Important:** The addon may not function properly or be completely broken on Blender versions beyond 3.4
+- **Maximum Blender version:** 4.3
+- **Recommended Blender version:** 3.4
+- **Important:** The addon was only fully tested on Blender 3.4, so issues may occur on higher versions.
 
 ## 📂 Supported File Formats
 The addon supports the following Level-5 file types:
@@ -17,6 +18,7 @@ The addon supports the following Level-5 file types:
 - **XIMA** - UV animation files
 - **XMTM** - Material animation files
 - **XCMA** - Camera files
+- **ATR, CMB, LUT, MTR, XCSL** - Material files
 
 ## 🎮 Supported Games
 The addon includes export templates for these popular Level-5 titles:
@@ -25,14 +27,17 @@ The addon includes export templates for these popular Level-5 titles:
 - Inazuma Eleven Go (IEGOCS/IEGOGALAXY)
 
 ### Yo-Kai Watch Series
-- Yo-Kai Watch 1 (YKW1)
-- Yo-Kai Watch 2 (YKW2)
-- Yo-Kai Watch 3 (YKW3)
-- Yo-Kai Watch Blasters (YKWB)
-- Yo-Kai Watch Blasters 2 (YKWB2)
+- Yo-kai Watch 1 (YKW1)
+- Yo-kai Watch 2 (YKW2)
+- Yo-kai Watch 3 (YKW3)
+- Yo-kai Watch Blasters (YKWB)
+- Yo-kai Watch Blasters 2 (YKWB2)
 
 ### Professor Layton Series
 - Professor Layton vs. Phoenix Wright
+
+### Snack World Series
+- The Snack World: Trejarers
 
 ## 🛠️ Installation
 
