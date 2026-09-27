@@ -1025,7 +1025,7 @@ def make_xpck_files(operator, context, engine, mode, meshes = [], armature = Non
     # Make images
     imgcs = []
     for texture_name, texture_data in textures.items():
-        rgba, width, height = get_image_pixels(bpy.data.images.get(texture_name))
+        rgba, width, height = get_image_pixels(bpy.data.images.get(texture_data['image']))
         format_name = texture_data['format']
 
         if context.scene.level5_best_pixel_format:
@@ -1344,6 +1344,31 @@ def same_texture_settings(first, other):
             return False
 
     return True
+
+def get_texture_name(textures, texture, best_pixel_format):
+    """Name of the exported texture of an image, an image used with other settings is exported again under another name."""
+    sampler = properties_to_sampler(texture)
+    texture_name = texture.name
+    index = 1
+
+    while texture_name in textures:
+        other = textures[texture_name]
+
+        # The best pixel format is computed from the image, the format of the slot doesn't matter
+        same_format = best_pixel_format or other['format'] == texture.format
+
+        if other['image'] == texture.name and other['sampler'] == sampler and same_format:
+            return texture_name
+
+        texture_name = f"{texture.name}_{index}"
+        index += 1
+
+        # The name must not be the one of another image of the blend
+        while texture_name in bpy.data.images:
+            texture_name = f"{texture.name}_{index}"
+            index += 1
+
+    return texture_name
 
 class TexprojPropertyGroup(bpy.types.PropertyGroup):
     checked: bpy.props.BoolProperty(default=False, description="Texproj name")
@@ -1691,7 +1716,7 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         same_texture.append(texture_prop.name)
                     elif not same_texture_settings(first_items[texture_prop.name], texture_prop):
                         box.label(text=f"{texture_prop.name} has other settings in {texture_prop.material_name}, "
-                                       f"the ones of {first_items[texture_prop.name].material_name} are exported", icon='ERROR')
+                                       f"it is exported a second time with them", icon='INFO')
 
     def draw_settings_armature(self, context, layout):
         if self.export_option == 'SCENE':
@@ -2022,14 +2047,17 @@ class ExportXC(bpy.types.Operator, ExportHelper):
                         linked_materials.add(mesh_prop.material_name)
 
                         for slot_index, texture in enumerate(linked_textures):
-                            if texture.name not in textures:
-                                textures[texture.name] = {}
-                                textures[texture.name]['format'] = texture.format
-                                textures[texture.name]['sampler'] = properties_to_sampler(texture)
-                                textures[texture.name]['linked_material'] = []
+                            texture_name = get_texture_name(textures, texture, bpy.context.scene.level5_best_pixel_format)
+
+                            if texture_name not in textures:
+                                textures[texture_name] = {}
+                                textures[texture_name]['image'] = texture.name
+                                textures[texture_name]['format'] = texture.format
+                                textures[texture_name]['sampler'] = properties_to_sampler(texture)
+                                textures[texture_name]['linked_material'] = []
 
                             texture_mode = res.TEXTURE_MODES[texture.texture_mode]
-                            textures[texture.name]['linked_material'].append((mesh_prop.material_name, slot_index, texture_mode))
+                            textures[texture_name]['linked_material'].append((mesh_prop.material_name, slot_index, texture_mode))
 
                     meshes.append(mesh_prop)
 
