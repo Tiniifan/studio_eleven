@@ -604,9 +604,6 @@ def build_archive(context, content, session):
                 level5_camera = create_camera(frame, camera_name, camera['values'])
                 set_camera_settings(level5_camera, camera, content["name"])
 
-                # Switch to this camera when the timeline reaches it
-                marker = scene.timeline_markers.new(level5_camera.camera_obj.name, frame=frame)
-                marker.camera = level5_camera.camera_obj
                 session["cameras"].append(level5_camera.camera_obj.name)
 
                 frame += get_last_frame(camera['values'])
@@ -664,22 +661,7 @@ def apply_animation_group(context, group, armature, track_types):
     for animation in group["animations"]:
         action = create_animation(animation, armature, action=action, track_types=track_types, material_actions=material_actions)
 
-    # Split animations
-    if 'bone' in track_types:
-        for split_animation in group["splits"]['armature']:
-            new_animation = bpy.data.actions.new(name=group["name"] + '_' + split_animation['name'])
-
-            # Specify the start and end of the new animation
-            start_frame = split_animation['frame_start']
-            end_frame = split_animation['frame_end']
-
-            # Copy the keyframes of the existing action into the new action
-            for fcurve in action.fcurves:
-                new_fcurve = new_animation.fcurves.new(data_path=fcurve.data_path, index=fcurve.array_index)
-                for keyframe in fcurve.keyframe_points:
-                    if start_frame <= keyframe.co.x <= end_frame:
-                        new_keyframe = new_fcurve.keyframe_points.insert(keyframe.co.x - start_frame, keyframe.co.y)
-                        new_keyframe.interpolation = keyframe.interpolation
+    # The splits are shown on the timeline, they don't get their own action
 
     # Remember which datablocks use the new actions
     assignments = [(armature, action)]
@@ -767,6 +749,8 @@ def apply_animation_imports(context, session, choices):
             id_data.animation_data.action = action
 
         bpy.data.objects[armature_name].level5_archive.animation_index = first_animation_indexes[armature_name]
+
+        setup_timeline(bpy.data.objects[armature_name])
 
     if max_frame > 0:
         scene.frame_end = max_frame
@@ -1067,6 +1051,13 @@ def make_xpck_files(operator, context, engine, mode, meshes = [], armature = Non
         anim_version = "V1"
 
     scene = context.scene
+
+    # The strips of the timeline (solo, second tracks) would play under the exported actions
+    stop_solo(scene)
+
+    if armature is not None and animations:
+        clear_timeline_strips(armature)
+
     frame_current = scene.frame_current
 
     for animation in animations:
@@ -1098,6 +1089,9 @@ def make_xpck_files(operator, context, engine, mode, meshes = [], armature = Non
                         mtminfs.append(minf.write_minf1(animation_data['name'], split_animation.name, split_animation.speed, split_animation.frame_start, split_animation.frame_end))
         finally:
             set_actions(previous_assignments)
+
+    if armature is not None and animations:
+        apply_track_actions(armature)
 
     if animations:
         scene.frame_set(frame_current)
@@ -1780,6 +1774,13 @@ class ExportXC(bpy.types.Operator, ExportHelper):
 
         # Group for manual item addition/removal
         items_box = animation_box.box()
+
+        # The mtn, imm and mtm of an animation have the same splits, they are edited on its first type
+        source_type = get_source_type(archive_animation)
+        if source_type is not None and source_type != animation_type:
+            items_box.label(text="Same splits as the " + ANIMATION_TYPE_NAMES[source_type] + " animation", icon='LINKED')
+            items_box = items_box.column()
+            items_box.enabled = False
 
         # List of items with name, frame start, and frame end
         for index, item in enumerate(animation.splits):

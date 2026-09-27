@@ -71,12 +71,18 @@ def register():
     # Studio Eleven Tools Panel
     register_panel_tools()
 
+    # Splits of the animations in the timeline
+    register_timeline_splits()
+
     # Auto Collision Generator
     register_auto_collision()
 
 def unregister():
     # Auto Collision Generator
     unregister_auto_collision()
+
+    # Splits of the animations in the timeline
+    unregister_timeline_splits()
 
     # Studio Eleven Tools Panel
     unregister_panel_tools()

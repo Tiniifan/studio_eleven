@@ -4,3 +4,4 @@ from .material_lighting import *
 from .mesh_properties import *
 from .panel_tools import *
 from .settings import *
+from .timeline_splits import *

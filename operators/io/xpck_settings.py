@@ -7,6 +7,18 @@ from bpy.props import StringProperty, BoolProperty, FloatProperty, FloatVectorPr
 
 ANIMATION_TYPES = ['armature', 'uv', 'material']
 
+ANIMATION_TYPE_NAMES = {
+    'armature': "Armature",
+    'uv': "UV",
+    'material': "Material",
+}
+
+SPLIT_PROPERTIES = ["name", "speed", "frame_start", "frame_end", "private_index"]
+
+TRACK_NAME = "[Studio Eleven] Second Track"
+
+SOLO_TRACK_NAME = "[Studio Eleven] Solo"
+
 ##########################################
 # Register class
 ##########################################
@@ -17,11 +29,15 @@ class Level5CheckItem(bpy.types.PropertyGroup):
     name: StringProperty()
     enabled: BoolProperty(name="Enabled", default=True)
 
+def update_split(self, context):
+    if self.id_data.type == 'ARMATURE':
+        sync_armature_splits(self.id_data)
+
 class Level5SplitAnimation(bpy.types.PropertyGroup):
-    name: StringProperty()
-    speed: FloatProperty(default=1.0)
-    frame_start: IntProperty(default=1)
-    frame_end: IntProperty(default=250)
+    name: StringProperty(name="Name", update=update_split)
+    speed: FloatProperty(name="Speed", default=1.0, update=update_split)
+    frame_start: IntProperty(name="Start Frame", default=1, update=update_split)
+    frame_end: IntProperty(name="End Frame", default=250, update=update_split)
     private_index: IntProperty()
 
 class Level5AnimationSettings(bpy.types.PropertyGroup):
@@ -116,6 +132,21 @@ class Level5Outline(bpy.types.PropertyGroup):
     private_index: IntProperty()
     meshes: CollectionProperty(type=Level5OutlineMesh)
 
+# A second track of the timeline plays another animation with the main one, it is only played, never edited
+class Level5TimelineTrack(bpy.types.PropertyGroup):
+    animation_name: StringProperty(
+        name="Animation",
+        default="",
+        description="Animation this track plays"
+    )
+    split_index: IntProperty(default=0)
+
+class Level5TimelineSolo(bpy.types.PropertyGroup):
+    armature_name: StringProperty()
+    use_preview_range: BoolProperty()
+    frame_preview_start: IntProperty()
+    frame_preview_end: IntProperty()
+
 class Level5ArchiveSettings(bpy.types.PropertyGroup):
     archive_name: StringProperty(
         name="Archive Name",
@@ -143,6 +174,10 @@ class Level5ArchiveSettings(bpy.types.PropertyGroup):
 
     animations: CollectionProperty(type=Level5Animation)
     animation_index: IntProperty(default=0)
+
+    # The main track of the timeline plays the active animation
+    timeline_split_index: IntProperty(default=0)
+    timeline_tracks: CollectionProperty(type=Level5TimelineTrack)
 
     # One animation per type before the animation list, sync_archive_settings moves them to animations
     armature_animation: PointerProperty(type=Level5AnimationSettings)
@@ -505,6 +540,320 @@ def get_archive_animation(object_name, animation_index):
 
     return animations[animation_index]
 
+def add_default_animation(armature):
+    """Animation made from the action the armature plays, used by the export menu and the timeline."""
+    action = get_default_action(armature)
+    name = "animation"
+
+    if action is not None:
+        name = action.name
+
+    # add_animation replaces an animation with the same name
+    names = get_names(armature.level5_archive.animations)
+    base_name = name
+    index = 1
+
+    while name in names:
+        name = f"{base_name}.{str(index).rjust(3, '0')}"
+        index += 1
+
+    animation = add_animation(armature.level5_archive, name, action, get_material_actions(armature))
+    animation.armature_animation.include = action is not None
+    animation.material_animation.include = len(animation.material_actions) > 0
+
+    if action is not None:
+        for fcurve in action.fcurves:
+            if fcurve.data_path.startswith('modifiers["'):
+                animation.uv_animation.include = True
+
+    return animation
+
+##########################################
+# Timeline Function
+##########################################
+
+def get_track_count(armature):
+    """The main track and the second tracks."""
+    return 1 + len(armature.level5_archive.timeline_tracks)
+
+def get_track_animation(armature, track_index):
+    """Animation a track of the timeline plays, the main track (0) plays the active animation."""
+    settings = armature.level5_archive
+
+    if track_index == 0:
+        return settings.get_active_animation()
+
+    animation_name = settings.timeline_tracks[track_index - 1].animation_name
+
+    for animation in settings.animations:
+        if animation.name == animation_name:
+            return animation
+
+    return None
+
+def get_track_split_index(armature, track_index):
+    settings = armature.level5_archive
+
+    if track_index == 0:
+        return settings.timeline_split_index
+
+    return settings.timeline_tracks[track_index - 1].split_index
+
+def set_track_split_index(armature, track_index, index):
+    settings = armature.level5_archive
+
+    if track_index == 0:
+        settings.timeline_split_index = index
+    else:
+        settings.timeline_tracks[track_index - 1].split_index = index
+
+def get_source_type(animation):
+    """The mtn, imm and mtm of an animation have the same splits, they are edited on the first type it has."""
+    for animation_type in ANIMATION_TYPES:
+        if animation.get_animation(animation_type).include:
+            return animation_type
+
+    return None
+
+def get_track_splits(armature, track_index, animation_type=None):
+    """Splits of a type of the track animation, None when the animation doesn't have this type."""
+    animation = get_track_animation(armature, track_index)
+    if animation is None:
+        return None
+
+    if animation_type is None:
+        animation_type = get_source_type(animation)
+
+        if animation_type is None:
+            return None
+
+    animation_settings = animation.get_animation(animation_type)
+    if not animation_settings.include:
+        return None
+
+    return animation_settings.splits
+
+def get_track_split(armature, track_index):
+    splits = get_track_splits(armature, track_index)
+    if splits is None:
+        return None
+
+    index = get_track_split_index(armature, track_index)
+    if 0 <= index < len(splits):
+        return splits[index]
+
+    return None
+
+def copy_splits(source, target):
+    """Only the values that differ are written, the update of a split syncs the animation again."""
+    while len(target) > len(source):
+        target.remove(len(target) - 1)
+
+    while len(target) < len(source):
+        target.add()
+
+    for i in range(len(source)):
+        for property_name in SPLIT_PROPERTIES:
+            value = getattr(source[i], property_name)
+
+            if getattr(target[i], property_name) != value:
+                setattr(target[i], property_name, value)
+
+def sync_animation_splits(animation):
+    """The other types of the animation get the splits of its first type."""
+    source_type = get_source_type(animation)
+    if source_type is None:
+        return
+
+    source = animation.get_animation(source_type).splits
+
+    for animation_type in ANIMATION_TYPES:
+        animation_settings = animation.get_animation(animation_type)
+
+        if animation_type != source_type and animation_settings.include:
+            copy_splits(source, animation_settings.splits)
+
+def sync_armature_splits(armature):
+    for animation in armature.level5_archive.animations:
+        sync_animation_splits(animation)
+
+def setup_timeline(armature):
+    """Timeline after an import: the main track plays an animation with bones when there is one."""
+    settings = armature.level5_archive
+    reference = settings.get_active_animation()
+
+    settings.timeline_split_index = 0
+
+    if reference is not None and not reference.armature_animation.include:
+        for i, animation in enumerate(settings.animations):
+            if animation.armature_animation.include:
+                settings.animation_index = i
+                break
+
+    sync_armature_splits(armature)
+    apply_track_actions(armature)
+
+def get_timeline_ids(armature):
+    """Datablocks the timeline can put a strip on: the armature, its meshes and their materials."""
+    ids = [armature]
+
+    for mesh in get_armature_meshes(armature):
+        ids.append(mesh)
+
+        for material in mesh.data.materials:
+            if material and material not in ids:
+                ids.append(material)
+
+    return ids
+
+def clear_timeline_strips(armature):
+    for id_data in get_timeline_ids(armature):
+        if id_data.animation_data is None:
+            continue
+
+        tracks = id_data.animation_data.nla_tracks
+        timeline_tracks = [track for track in tracks if track.name in [TRACK_NAME, SOLO_TRACK_NAME]]
+
+        for track in timeline_tracks:
+            tracks.remove(track)
+
+def add_timeline_strip(id_data, action, track_name, frame_start, action_start, action_end):
+    if id_data.animation_data is None:
+        id_data.animation_data_create()
+
+    track = id_data.animation_data.nla_tracks.new()
+    track.name = track_name
+
+    strip = track.strips.new(action.name, int(frame_start), action)
+    strip.use_sync_length = False
+
+    if action_end <= action_start:
+        action_end = action_start + 1
+
+    # The action range can't start after its end, the start is set before and after the end
+    strip.action_frame_start = min(action_start, strip.action_frame_end)
+    strip.action_frame_end = action_end
+    strip.action_frame_start = action_start
+
+    # The game stops the shorter animation, it keeps its last frame while the others play
+    strip.extrapolation = 'HOLD'
+
+def apply_track_actions(armature):
+    """The main track plays its actions, the second tracks play theirs in NLA strips under it."""
+    clear_timeline_strips(armature)
+
+    main_animation = get_track_animation(armature, 0)
+    if main_animation is not None:
+        set_actions(get_animation_assignments(armature, main_animation))
+
+    for track_index in range(1, get_track_count(armature)):
+        animation = get_track_animation(armature, track_index)
+        if animation is None:
+            continue
+
+        for id_data, action in get_animation_assignments(armature, animation):
+            if action is None:
+                continue
+
+            action_start = int(action.frame_range[0])
+            action_end = int(round(action.frame_range[1]))
+            add_timeline_strip(id_data, action, TRACK_NAME, action_start, action_start, action_end)
+
+def get_solo_reference(armature):
+    """Split the solo starts from: the one of the main track, or of the first track that has one."""
+    for track_index in range(get_track_count(armature)):
+        split = get_track_split(armature, track_index)
+
+        if split is not None:
+            return split
+
+    return None
+
+def get_solo_offset(scene, armature, track_index):
+    """Frames a track is moved by during the solo, its active split starts with the one of the reference."""
+    if scene.level5_timeline_solo.armature_name != armature.name:
+        return 0
+
+    reference = get_solo_reference(armature)
+    split = get_track_split(armature, track_index)
+
+    if reference is None or split is None:
+        return 0
+
+    return reference.frame_start - split.frame_start
+
+def start_solo(scene, armature, jump=True):
+    """Play the active split of each track together, like the game does, return False when no track has a split."""
+    reference = get_solo_reference(armature)
+    if reference is None:
+        return False
+
+    solo = scene.level5_timeline_solo
+
+    if solo.armature_name != armature.name:
+        stop_solo(scene)
+
+        solo.use_preview_range = scene.use_preview_range
+        solo.frame_preview_start = scene.frame_preview_start
+        solo.frame_preview_end = scene.frame_preview_end
+
+    clear_timeline_strips(armature)
+
+    frame_start = reference.frame_start
+    frame_end = frame_start + 1
+
+    # The main track is added last, it plays over the second tracks like out of the solo
+    for track_index in reversed(range(get_track_count(armature))):
+        split = get_track_split(armature, track_index)
+        if split is None:
+            continue
+
+        frame_end = max(frame_end, frame_start + split.frame_end - split.frame_start)
+
+        for id_data, action in get_animation_assignments(armature, get_track_animation(armature, track_index)):
+            if action is None:
+                continue
+
+            # The action of the datablock would play over the strips
+            if track_index == 0 and id_data.animation_data is not None:
+                id_data.animation_data.action = None
+
+            add_timeline_strip(id_data, action, SOLO_TRACK_NAME, frame_start, split.frame_start, split.frame_end)
+
+    solo.armature_name = armature.name
+
+    scene.use_preview_range = True
+    scene.frame_preview_start = frame_start
+    scene.frame_preview_end = frame_end
+
+    if jump:
+        scene.frame_set(frame_start)
+    else:
+        scene.frame_set(scene.frame_current)
+
+    return True
+
+def refresh_solo(scene, armature):
+    if scene.level5_timeline_solo.armature_name == armature.name:
+        if not start_solo(scene, armature, jump=False):
+            stop_solo(scene)
+
+def stop_solo(scene):
+    solo = scene.level5_timeline_solo
+    if solo.armature_name == "":
+        return
+
+    armature = bpy.data.objects.get(solo.armature_name)
+    if armature is not None:
+        apply_track_actions(armature)
+
+    scene.use_preview_range = solo.use_preview_range
+    scene.frame_preview_start = solo.frame_preview_start
+    scene.frame_preview_end = solo.frame_preview_end
+
+    solo.armature_name = ""
+    scene.frame_set(scene.frame_current)
+
 class LEVEL5_UL_animations(bpy.types.UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
@@ -528,24 +877,7 @@ class ExportXC_AddAnimation(bpy.types.Operator):
         if armature is None or armature.type != 'ARMATURE':
             return {'CANCELLED'}
 
-        action = get_default_action(armature)
-        name = "animation"
-
-        if action is not None:
-            name = action.name
-
-        # add_animation replaces an animation with the same name
-        names = get_names(armature.level5_archive.animations)
-        base_name = name
-        index = 1
-
-        while name in names:
-            name = f"{base_name}.{str(index).rjust(3, '0')}"
-            index += 1
-
-        animation = add_animation(armature.level5_archive, name, action, get_material_actions(armature))
-        animation.armature_animation.include = action is not None
-        animation.material_animation.include = len(animation.material_actions) > 0
+        add_default_animation(armature)
 
         return {'FINISHED'}
 
@@ -584,7 +916,13 @@ class ExportXC_PlayAnimation(bpy.types.Operator):
         if animation is None:
             return {'CANCELLED'}
 
-        set_actions(get_animation_assignments(armature, animation))
+        # The animation goes on the main track of the timeline, the second tracks keep playing theirs
+        if context.scene.level5_timeline_solo.armature_name == armature.name:
+            stop_solo(context.scene)
+
+        armature.level5_archive.animation_index = self.index
+        armature.level5_archive.timeline_split_index = 0
+        apply_track_actions(armature)
 
         frame_count = get_animation_frame_count(animation)
 
@@ -623,6 +961,9 @@ class ExportXC_AddAnimationItem(bpy.types.Operator):
         new_item.speed = 1
         new_item.frame_start = 1
         new_item.frame_end = 250
+
+        sync_armature_splits(bpy.data.objects[self.object_name])
+
         return {'FINISHED'}
 
 class ExportXC_RemoveAnimationItem(bpy.types.Operator):
@@ -641,6 +982,9 @@ class ExportXC_RemoveAnimationItem(bpy.types.Operator):
             return {'CANCELLED'}
 
         animation.get_animation(self.animation_type).splits.remove(self.index)
+
+        sync_armature_splits(bpy.data.objects[self.object_name])
+
         return {'FINISHED'}
 
 class ExportXC_AddOutlineItem(bpy.types.Operator):
@@ -701,6 +1045,8 @@ classes = (
     Level5Animation,
     Level5OutlineMesh,
     Level5Outline,
+    Level5TimelineTrack,
+    Level5TimelineSolo,
     Level5ArchiveSettings,
     Level5CameraSettings,
     LEVEL5_UL_animations,
@@ -719,8 +1065,10 @@ def register_settings():
 
     bpy.types.Object.level5_archive = PointerProperty(type=Level5ArchiveSettings)
     bpy.types.Object.level5_camera = PointerProperty(type=Level5CameraSettings)
+    bpy.types.Scene.level5_timeline_solo = PointerProperty(type=Level5TimelineSolo)
 
 def unregister_settings():
+    del bpy.types.Scene.level5_timeline_solo
     del bpy.types.Object.level5_camera
     del bpy.types.Object.level5_archive
 

@@ -154,12 +154,18 @@ FADE_DATA_PATH = f'node_tree.nodes["{FADE_NODE}"].outputs[0].default_value'
 def fade_input_of(material):
     """Name of the node holding the animated transparency of a material, None when it is not animated."""
     animation = material.animation_data if material is not None else None
-    if animation is None or animation.action is None:
+    if animation is None:
         return None
 
-    for fcurve in animation.action.fcurves:
-        if fcurve.data_path == FADE_DATA_PATH:
-            return FADE_NODE
+    # The solo of the timeline plays the action in a NLA strip
+    actions = [animation.action] if animation.action is not None else []
+    for track in animation.nla_tracks:
+        actions.extend(strip.action for strip in track.strips if strip.action is not None)
+
+    for action in actions:
+        for fcurve in action.fcurves:
+            if fcurve.data_path == FADE_DATA_PATH:
+                return FADE_NODE
 
     return None
 

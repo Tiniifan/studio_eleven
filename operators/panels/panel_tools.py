@@ -10,7 +10,6 @@ from bpy.props import IntProperty, StringProperty
 
 from ...utils.mesh_faces_utils import MeshFaceUtils
 from ...rendering import project as rendering_project
-from ..io.xpck_settings import set_animation_settings, add_animation
 
 class ConvertSingleBindToVertexGroup(bpy.types.Operator):
     bl_idname = "object.convert_single_bind_to_vertex_group"
@@ -92,137 +91,6 @@ class ChangeAllDrawPriority(bpy.types.Operator):
 
         self.report({'INFO'}, f"The draw priority of Berry Bush has been transferred to Studio Eleven")
         return {'FINISHED'}
-
-class AnimationItemsReader(bpy.types.Operator):
-    bl_idname = "object.animation_items_reader"
-    bl_label = "Animation Items Reader"
-    bl_description = "Reads animation configuration from a .txt file."
-    
-    filepath: StringProperty(subtype="FILE_PATH", name="Filepath", description="Path to the .txt file")
-    filter_glob: StringProperty(
-        default="*.txt",
-        options={'HIDDEN'},
-        description="File filter for .txt files"
-    )
-
-    def process_animation_data(self, data):
-        """
-        Processes the raw text data and formats it into a structured dictionary.
-
-        :param data: The raw animation data as a string.
-        :return: A dictionary with the formatted animation data.
-        """
-        animations = {}
-
-        # Split the data by AnimationType section
-        sections = data.split("[AnimationType: ")
-        for section in sections[1:]:  # Skip the first empty section
-            lines = section.strip().splitlines()
-
-            # Extract the animation type (Armature, UV, Material)
-            animation_type = lines[0].strip("]")  
-            name = None
-            splits = {}
-
-            # Extract the name and splits
-            for line in lines[1:]:
-                my_line = line
-                line = line.strip(' ')
-                if line.startswith("Name:"):
-                    name = line.split(":", 1)[1].strip()
-                elif line.startswith("Splits:"):
-                    continue  # Skip the Splits header line
-                elif line.startswith("- Name:"):
-                    # Extract split info
-                    split_name = line.split(":", 1)[1].strip()
-                    speed = None
-                    start_frame = None
-                    end_frame = None
-                    for split_line in lines[lines.index(my_line) + 1:]:
-                        if split_line.strip().startswith("Speed:"):
-                            speed = float(split_line.split(":", 1)[1].strip())
-                        elif split_line.strip().startswith("StartFrame:"):
-                            start_frame = int(split_line.split(":", 1)[1].strip())
-                        elif split_line.strip().startswith("EndFrame:"):
-                            end_frame = int(split_line.split(":", 1)[1].strip())
-                        
-                        # Check if the next split begins
-                        if split_line.strip().startswith("- Name:"):
-                            break
-                    splits[split_name] = [speed, start_frame, end_frame]
-
-            # Add the animation to the dictionary
-            if name:
-                if animation_type not in animations:
-                    animations[animation_type] = {}
-                animations[animation_type][name] = splits
-
-        # Return the formatted data
-        return {"Animations": animations}
-
-    def execute(self, context):
-        # The configuration is saved on the armature used by the xpck export
-        armature = context.active_object
-        if armature is None or armature.type != 'ARMATURE':
-            self.report({'ERROR'}, "Select the armature which receives the animation config")
-            return {'CANCELLED'}
-
-        try:
-            # Read the content of the file
-            with open(self.filepath, 'r') as file:
-                data = file.read()
-
-            self.report({'INFO'}, f"Successfully loaded animation data from {self.filepath}")
-
-            # Process the data and format it into a dictionary
-            formatted_data = self.process_animation_data(data)
-
-            animation_types = {
-                "Armature": "armature",
-                "UV": "uv",
-                "Material": "material",
-            }
-
-            settings = armature.level5_archive
-
-            # The config fills the active animation of the archive
-            archive_animation = settings.get_active_animation()
-            if archive_animation is None:
-                action = None
-                if armature.animation_data:
-                    action = armature.animation_data.action
-
-                archive_animation = add_animation(settings, "animation", action)
-
-            # Iterate over the formatted data to set the appropriate fields
-            for animation_key, animation_data in formatted_data["Animations"].items():
-                # Based on the animation_key (Armature, UV, Material)
-                if animation_key not in animation_types:
-                    continue  # Skip if the animation type is not recognized
-
-                animation_name = list(animation_data.keys())[0]
-                splits = []
-
-                for split_name, animation_split_value in animation_data[animation_name].items():
-                    splits.append({
-                        'name': split_name,
-                        'speed': float(animation_split_value[0]),
-                        'frame_start': int(animation_split_value[1]),
-                        'frame_end': int(animation_split_value[2]),
-                    })
-
-                archive_animation.name = animation_name
-                set_animation_settings(archive_animation.get_animation(animation_types[animation_key]), animation_name, splits)
-
-            return {'FINISHED'}
-
-        except Exception as e:
-            self.report({'ERROR'}, f"Error reading file: {e}")
-            return {'CANCELLED'}
-
-    def invoke(self, context, event):
-        context.window_manager.fileselect_add(self)
-        return {'RUNNING_MODAL'}
 
 class AdaptMaterialName(bpy.types.Operator):
     bl_idname = "object.adapt_material_name"
@@ -428,10 +296,6 @@ class VIEW3D_PT_my_custom_panel(bpy.types.Panel):
         box.operator("object.remove_duplicate_face_model", text="Remove Duplicate Face")
 
         box = layout.box()
-        box.label(text="Animation")
-        box.operator("object.animation_items_reader", text="Load Animation Config")
-        
-        box = layout.box()
 
         if rendering_project.is_studio_render_enabled():
             box.label(text="Game Engine")
@@ -468,7 +332,6 @@ def register_panel_tools():
     
     bpy.utils.register_class(ConvertSingleBindToVertexGroup)
     bpy.utils.register_class(ChangeAllDrawPriority)
-    bpy.utils.register_class(AnimationItemsReader)
     bpy.utils.register_class(AdaptMaterialName)
     bpy.utils.register_class(CalculateDrawPriority)
     bpy.utils.register_class(DuplicateFaceModel)
@@ -479,7 +342,6 @@ def register_panel_tools():
 def unregister_panel_tools():
     bpy.utils.unregister_class(ConvertSingleBindToVertexGroup)
     bpy.utils.unregister_class(ChangeAllDrawPriority)
-    bpy.utils.unregister_class(AnimationItemsReader)
     bpy.utils.unregister_class(AdaptMaterialName)
     bpy.utils.unregister_class(CalculateDrawPriority)
     bpy.utils.unregister_class(DuplicateFaceModel)
