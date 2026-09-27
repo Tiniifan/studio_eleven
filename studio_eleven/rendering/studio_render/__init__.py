@@ -4,7 +4,7 @@ The gpu module is only touched from inside the draw calls, so importing and regi
 works in background mode.
 """
 
-from . import combiner, draw, engine, lighting, material, resources, shaders, state
+from . import billboard, combiner, draw, engine, lighting, material, resources, shaders, state
 
 ENGINE_ID = engine.ENGINE_ID
 

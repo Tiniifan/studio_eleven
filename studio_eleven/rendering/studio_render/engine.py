@@ -12,7 +12,7 @@ from mathutils import Vector
 from bpy.props import BoolProperty, FloatVectorProperty, IntProperty, PointerProperty
 
 from ..engines import get_engine
-from . import draw, lighting, material, resources, shaders, state
+from . import billboard, draw, lighting, material, resources, shaders, state
 
 STATUS = "viewport and offscreen paths need a GPU, they are never exercised by the validation script"
 
@@ -354,6 +354,10 @@ class StudioRenderEngine(bpy.types.RenderEngine):
         # Instances and their objects are only valid inside the loop that yields them, so the pass collects plain data.
         groups = {}
 
+        # The billboards of the game face the camera of the view
+        camera_world = view_matrix.inverted()
+        turned = {}
+
         for instance in depsgraph.object_instances:
             obj = instance.object
             if obj.type != 'MESH':
@@ -378,9 +382,18 @@ class StudioRenderEngine(bpy.types.RenderEngine):
                 if bound.fade_input is not None:
                     fades[index] = material.fade_of(slot_material, bound.fade_input)
 
+            matrix = instance.matrix_world.copy()
+            parent = obj.parent
+            if parent is not None and parent.type == 'ARMATURE' and obj.parent_type == 'BONE':
+                if parent.name not in turned:
+                    turned[parent.name] = billboard.turned_bones(parent, camera_world)
+
+                matrix = billboard.turn_mesh(parent, obj.parent_bone, mesh.level5_properties.draw_priority,
+                                             camera_world, matrix, turned[parent.name])
+
             key = obj.parent.name if obj.parent else name
             groups.setdefault(key, []).append(
-                DrawJob(geometry, instance.matrix_world.copy(), bounds, outlines.get(name), fades,
+                DrawJob(geometry, matrix, bounds, outlines.get(name), fades,
                         mesh.level5_properties.draw_priority & 0xFF))
 
         eye = view_matrix.inverted().translation
