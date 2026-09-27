@@ -1,9 +1,9 @@
 # Studio X
 
 ## 💡 About
-Studio X is a Blender addon that imports Unity files (models, textures, animations and cameras) and makes them ready to be exported with [Studio Eleven](https://github.com/Tiniifan/studio_eleven) to the Level-5 Nintendo 3DS games.
+Studio X is a Blender addon designed to import Unity files (models, textures, animations, and cameras) and prepare them for export with [Studio Eleven](https://github.com/Tiniifan/studio_eleven). 
 
-It was made to bring the special moves of **Inazuma Eleven Cross** to **Inazuma Eleven Go** on 3DS.
+While it primarily targets **Inazuma Eleven Victory Cross**, it may also be able to open Unity assets from other games, though this is not officially supported or guaranteed.
 
 ## ⚠️ Compatibility
 - **Requires:** the Studio Eleven addon, installed and enabled
@@ -52,9 +52,6 @@ This project was made possible thanks to the following projects:
 - **[AssetStudioMod](https://github.com/aelurum/AssetStudioMod)** - Unity animations and meshes
 - **[AssetRipper](https://github.com/AssetRipper/AssetRipper)** - Unity animations and materials
 - **[UABEANext](https://github.com/nesrak1/UABEANext)** - Unity file analysis
-- **[texture2ddecoder](https://github.com/K0lb3/texture2ddecoder)** - Texture decoding
-- **[etcpak](https://github.com/K0lb3/etcpak)** - Texture decoding
-- **[Studio Eleven](https://github.com/Tiniifan/studio_eleven)** - Level-5 file formats
 
 ## 📄 License
 
