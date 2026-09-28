@@ -11,5 +11,6 @@
   "custom_width": 16.0,
   "custom_height": 9.0,
   "use_3ds_models": true,
+  "reduce_textures": true,
   "render_engine": "STUDIO_RENDER"
 }

@@ -14,12 +14,14 @@ bl_info = {
     "support": "COMMUNITY",
 }
 
-from .blender import operators
+from .blender import operators, panel
 
 
 def register():
+    panel.register()
     operators.register()
 
 
 def unregister():
     operators.unregister()
+    panel.unregister()

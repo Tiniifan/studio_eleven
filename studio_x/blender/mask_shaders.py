@@ -25,8 +25,10 @@ its own UV set, texproj and UV animation (whs0087 scrolls its *_t1m1_texproj1 ap
     body: slot 0 = the colour texture (C0) on its channel with its tiling and scroll,
           slot 1 = the alpha of the thresholds, baked over one tile of the mask that scrolls the most,
                    on that mask's channel with its scroll;
-    foam: a copy of the mesh (#FIX_IMG), white where the thresholds give the white border colours
-          (C1 / C2 = the white ev..._01 in Ocean Birth), on the mask UVs.
+    foam: a copy of the mesh (#FIX_IMG) drawn over the body where the thresholds give the border colours
+          C1 / C2, on the mask UVs, with their mean colour: white foam in Ocean Birth (ev..._01), the orange
+          and red bands around the yellow core of Flame Dance (flat 16x16 textures). Seeing only C0, Flame
+          Dance's aura was a pale yellow ball. No copy when the thresholds never reach C1 / C2.
 The other mask cannot scroll too: when it is the shape (mask 0), its value at each vertex goes into the
 tint alpha; when the shape is the one that scrolls, the foam mask is taken at its mean.
 _ColorBorderMax2 (the appearance / dissolve of the layer) scales the animated transparency. Not kept:
@@ -48,7 +50,7 @@ import math
 import bpy
 import numpy as np
 
-from . import materials
+from . import flipbook, materials, render_state
 from .textures import find_texture
 
 SHADER_T3THRESHOLDF = 2057163477493348147
@@ -61,6 +63,8 @@ KINDS = {
             "shape_mask": "_MaskTex0", "shape_component": 3},
     "threshold": {"colours": ("_ColorTex", "_SecondColorTex", "_ThirdColorTex"), "foam_mask": "_SecondMaskTex",
                   "shape_mask": "_MaskTex", "shape_component": 0},
+    # Threshold with _Use_ThresholdGradation: same masks and thresholds, the colour read in _GradationTex
+    "grd": {"colours": (), "foam_mask": "_SecondMaskTex", "shape_mask": "_MaskTex", "shape_component": 0},
 }
 # UV channel property of each texture (T3ThresholdF numbers its colour channels differently)
 CHANNEL_PROPERTIES = {"_ColorTex0": "_ColorTex0Index", "_ColorTex1": "_Color1TexIndex", "_ColorTex2": "_Color2TexIndex"}
@@ -80,6 +84,11 @@ def shader_kind(material):
         return "t3f"
     if path_id == SHADER_THRESHOLD and floats.get("_ColorTexNum") == 3 and floats.get("_MaskTexNum") == 2:
         return "threshold"
+    if (path_id == SHADER_THRESHOLD and floats.get("_Use_ThresholdGradation", 0.0) >= 0.5
+            and floats.get("_MaskTexNum") == 2):
+        assigned = {name for name, env in material["m_SavedProperties"]["m_TexEnvs"] if env["m_Texture"]["m_PathID"]}
+        if {"_GradationTex", "_MaskTex", "_SecondMaskTex"} <= assigned:
+            return "grd"
     # The Flow variants (Ocean Birth's final beams) keep the colour x mask bake: without their _FlowTex
     # distortion the two textures on their own units drew long smooth streaks instead of ragged foam
     if (path_id == SHADER_BASIC and floats.get("_ColorTexNum") == 1 and floats.get("_MaskTexNum") == 1
@@ -140,6 +149,48 @@ def _texproj_scroll(series, rest, prop):
     return moves
 
 
+def _reference_tiling(series, rest, prop, visible_threshold=0.05, degenerate=0.05):
+    """Values like rest, with the tiling a texproj is laid out on.
+
+    The material's own tiling can be 0 when the clips animate it (Flame Dance's fire stream: _ColorTex_ST.x
+    0 at rest, 0.46 -> 1.41 while the stream grows on a clamped texture). Laid out on it (clamped to 1e-4)
+    the UVs reached 10000 and only ever read the transparent edge of the texture: the stream never showed.
+    The reference is the median tiling while the layer is visible, ignoring near 0 values; the rest of the
+    motion is keyed as UVScale = tiling / reference (_key_scale).
+    """
+    shown = [v for v in series if 1.0 - v.floats.get("_Transparency", 0.0) > visible_threshold] or series
+    base = list(rest.st.get(prop, [1.0, 1.0, 0.0, 0.0]))
+    tiling = []
+    for axis in range(2):
+        values = np.array([v.st.get(prop, base)[axis] for v in shown])
+        values = values[np.abs(values) >= degenerate]
+        if len(values):
+            tiling.append(float(np.median(values)))
+        else:
+            tiling.append(base[axis] if abs(base[axis]) >= degenerate else 1.0)
+    reference = Values.__new__(Values)
+    reference.floats, reference.colors = rest.floats, rest.colors
+    reference.st = dict(rest.st)
+    reference.st[prop] = tiling + base[2:]
+    return reference
+
+
+def _key_scale(action, name, frames, series, reference, prop, write_curve):
+    """UVScale keys (tiling / reference tiling) when the clips animate the tiling of a texproj."""
+    ref = reference.tiling(prop)
+    scales = np.array([[_safe(s) for s in v.st.get(prop, [1.0, 1.0])[:2]] for v in series]) / ref
+    scales = np.sign(scales) * np.maximum(np.abs(scales), 1e-3)
+    base = 'modifiers["%s"].scale' % name
+    for index in range(2):
+        curve = action.fcurves.find(base, index=index)
+        if curve is not None:
+            action.fcurves.remove(curve)
+    # The 3DS files hold no UVScale track when the tiling never changes
+    if np.abs(scales - 1.0).max() > 1e-4:
+        write_curve(action, base, 0, frames, list(scales[:, 0]), 1e-5)
+        write_curve(action, base, 1, frames, list(scales[:, 1]), 1e-5)
+
+
 def _safe(value):
     return float(np.copysign(max(abs(value), 1e-4), value))
 
@@ -180,9 +231,10 @@ def _thresholds(kind, values, m1, kterm):
     return s0, s1, alpha
 
 
-def _whiteness(pixels):
-    """How much a colour texture is the plain white of the foam (1) rather than a coloured one (0)."""
-    return 1.0 if pixels is None else float(_saturate((pixels[..., :3].mean() - 0.6) / 0.3))
+def _band_colour(pixels):
+    """Mean colour of a border colour texture (C1 / C2): white foam in Ocean Birth, the orange and red
+    bands around the yellow core of Flame Dance's fire. An unassigned texture is white."""
+    return np.ones(3) if pixels is None else pixels[..., :3].reshape(-1, 3).mean(0)
 
 
 def _texel_index(coordinate, size, wrap):
@@ -335,12 +387,18 @@ def convert(model, record, per_clip, sampler, action, material_actions, write_cu
     series = [Values(unity_material, per_clip[id(clip)][1], time + 1e-5) for clip, time in sampler.samples]
     rest = Values(unity_material, {}, 0.0)
     if kind == "t1m1":
-        _convert_t1m1(record, action, sampler.frames, write_curve, cache, texture, channel, series, rest)
+        _convert_t1m1(record, action, sampler.frames, write_curve, cache, texture, channel, series, rest, unity_material)
         return []
     spec = KINDS[kind]
     visibility = np.array([(1.0 - v.floats.get("_Transparency", 0.0)) * v.threshold(kind) for v in series])
     if visibility.max() <= 0:
         return []
+    key = "%s_%s" % (unity_material.get("m_Name", "threshold"), record.node.name)
+    if kind == "t3f" and flipbook.has_flat_colours([texture(prop)[1] for prop in KINDS[kind]["colours"]]):
+        # Flat colours: the whole look is in the masks, baked exactly frame by frame (flipbook.py)
+        if flipbook.convert(record, _owned_material(record), unity_material, action, sampler.frames, series,
+                            visibility, texture, uvs, cache, key, write_curve):
+            return []
     peak = series[int(np.argmax(visibility))]
     k_peak = max(peak.threshold(kind), 1e-3)
     factors = [min(max(v.threshold(kind) / k_peak, 0.0), 1.0) for v in series]
@@ -377,14 +435,27 @@ def convert(model, record, per_clip, sampler, action, material_actions, write_cu
         shown_k = vertex_k[vertex_k > 0.05]
         kterm = float(np.percentile(shown_k, 75)) if len(shown_k) else k_peak
     s0, s1, alpha = _thresholds(kind, peak, m1, kterm)
-    alpha = np.broadcast_to(alpha, size[::-1])
+    shape = size[::-1]
+    alpha = np.broadcast_to(alpha, shape)
+    if kind == "grd":
+        _convert_gradation(record, action, sampler.frames, write_curve, cache, texture, channel, series, rest, driver,
+                           driver_wrap, np.broadcast_to(s0, shape), np.broadcast_to(s1, shape), alpha, key, peak)
+        if vertex_k is not None:
+            _scale_tint_alpha(record.object, _saturate(vertex_k / max(kterm, 1e-3)))
+        _scale_transparency(record.blender_materials[0], material_actions, sampler.frames, factors, write_curve)
+        return []
     colour_textures = [texture(prop) for prop in spec["colours"]]
-    foam = (1 - s1) * _whiteness(colour_textures[2][1]) + s1 * (1 - s0) * _whiteness(colour_textures[1][1])
-    foam = np.broadcast_to(foam, size[::-1])
-    ones = np.ones(size[::-1])
-    key = "%s_%s" % (unity_material.get("m_Name", "threshold"), record.node.name)
+    # Weights of the three colours: C2 outside s1, C1 between the thresholds, C0 (the body) inside s0
+    weight2 = np.broadcast_to(1 - s1, shape)
+    weight1 = np.broadcast_to(s1 * (1 - s0), shape)
+    band_weight = weight1 + weight2
+    colour1, colour2 = _band_colour(colour_textures[1][1]), _band_colour(colour_textures[2][1])
+    band_rgb = (weight1[..., None] * colour1 + weight2[..., None] * colour2) / np.maximum(band_weight, 1e-6)[..., None]
+    # Texels without border colour keep C1: filtered next to a band they must not darken it
+    band_rgb = np.where(band_weight[..., None] > 1e-6, band_rgb, colour1)
+    band_alpha = _saturate(alpha * band_weight)
+    ones = np.ones(shape)
     mask_image = cache.image("mask_" + key, np.stack([alpha, alpha, alpha, ones], -1))
-    foam_image = cache.image("foam_" + key, np.stack([ones, ones, ones, _saturate(alpha * foam)], -1))
 
     # --- body: colour texture on texproj0, threshold mask on texproj1
     obj = record.object
@@ -415,8 +486,14 @@ def convert(model, record, per_clip, sampler, action, material_actions, write_cu
     _set_slots(material, [(colour_image, colour_wrap, "ETC1" if opaque else "RGBA4"), (mask_image, driver_wrap, "L8")])
     obj.data.level5_properties.render_default = BODY_RENDER_DEFAULT
     body_action = _scale_transparency(material, material_actions, sampler.frames, factors, write_curve)
+    record.mask_converted = True
+    if band_alpha.max() < 0.5 / 255.0:
+        # The thresholds never reach the border colours: a foam copy would draw nothing
+        return []
 
-    # --- foam: a copy of the mesh drawn with the white border colours
+    # --- foam: a copy of the mesh drawn with the border colours (C1 / C2)
+    white = bool(band_rgb[band_alpha > 0].min() > 0.99) if (band_alpha > 0).any() else True
+    foam_image = cache.image("foam_" + key, np.dstack([np.clip(band_rgb, 0.0, 1.0), band_alpha]))
     foam_obj = obj.copy()
     foam_obj.data = obj.data.copy()
     foam_obj.name = obj.name + "_foam"
@@ -436,8 +513,8 @@ def convert(model, record, per_clip, sampler, action, material_actions, write_cu
     foam_obj.animation_data.action = action
     _key_scroll(action, foam_uv_name, sampler.frames, mask_scroll, write_curve)
     record.foam = foam_obj
-    record.mask_converted = True
-    _set_slots(foam_material, [(foam_image, driver_wrap, "A8")])
+    # White foam only needs its alpha (A8 reads as white)
+    _set_slots(foam_material, [(foam_image, driver_wrap, "A8" if white else "RGBA8")])
     foam_obj.data.level5_properties.render_default = FOAM_RENDER_DEFAULT
     created = []
     if body_action is not None:
@@ -449,8 +526,13 @@ def convert(model, record, per_clip, sampler, action, material_actions, write_cu
     return created
 
 
-def _convert_t1m1(record, action, frames, write_curve, cache, texture, channel, series, rest):
-    """Basic with one mask: the colour texture and the mask on two texture units, each with its own UVs."""
+def _convert_t1m1(record, action, frames, write_curve, cache, texture, channel, series, rest, unity_material):
+    """Basic with one mask: the colour texture and the mask on two texture units, each with its own UVs.
+
+    The colour texture carries the (1 + _Luminance) of the shader (render_state.luminance_colour) and, for
+    _SrcBlend SrcColor, the remapped alpha of render_state.src_colour_alpha. Each texproj is laid out on
+    its reference tiling and keys UVScale when the clips animate the tiling (see _reference_tiling).
+    """
     obj = record.object
     material = _owned_material(record)
     colour_uv_name = material.name + "_texproj0"
@@ -460,18 +542,62 @@ def _convert_t1m1(record, action, frames, write_curve, cache, texture, channel, 
     _rename_texproj(obj, record.uv_layer, colour_uv_name)
     record.uv_layer = colour_uv_name
     for uv_name, prop in ((colour_uv_name, "_ColorTex"), (mask_uv_name, "_MaskTex")):
-        _set_loop_uvs(obj, uv_name, _texproj_uv(channel(rest, prop), rest, prop))
+        reference = _reference_tiling(series, rest, prop)
+        _set_loop_uvs(obj, uv_name, _texproj_uv(channel(rest, prop), reference, prop))
         _uv_warp(obj, uv_name)
-        _key_scroll(action, uv_name, frames, _texproj_scroll(series, rest, prop), write_curve)
+        _key_scroll(action, uv_name, frames, _texproj_scroll(series, reference, prop), write_curve)
+        _key_scale(action, uv_name, frames, series, reference, prop, write_curve)
 
     colour_name, colour_pixels, colour_wrap = texture("_ColorTex")
     mask_name, mask_pixels, mask_wrap = texture("_MaskTex")
     opaque = float(colour_pixels[..., 3].min()) > 0.99
+    luminance = dict(unity_material["m_SavedProperties"]["m_Floats"]).get("_Luminance", 0.0)
+    if luminance:
+        colour_name = "%s_L%03d" % (colour_name, round(luminance * 100))
+        colour_pixels = render_state.luminance_colour(unity_material, colour_pixels)
+    if render_state.uses_src_colour(unity_material):
+        colour_name, colour_pixels = colour_name + "_srccolour", render_state.src_colour_alpha(colour_pixels)
+        opaque = False
     red = mask_pixels[..., 0]
     grey = np.stack([red, red, red, np.ones_like(red)], -1)
     _set_slots(material, [(cache.image(colour_name, colour_pixels), colour_wrap, "ETC1" if opaque else "RGBA4"),
                           (cache.image("mask_" + mask_name, grey), mask_wrap, "L8")])
     obj.data.level5_properties.render_default = BODY_RENDER_DEFAULT
+    record.mask_converted = True
+
+
+def _convert_gradation(record, action, frames, write_curve, cache, texture, channel, series, rest, driver, driver_wrap,
+                       s0, s1, alpha, key, peak):
+    """Threshold with a gradation: one texture baked over a tile of the mask that scrolls (#FIX_IMG).
+
+    Fragment program of Soccer/Effect/Threshold with _Use_ThresholdGradation: the gradation is read at
+    t1 x (0.5 + 0.5 t0) (edge 0, core 1), its alpha multiplies the threshold alpha. The former bake
+    thresholded _MaskTex alone, a nearly flat texture in Flame Dance (the shape is in _SecondMaskTex):
+    the rising fire wave became a flat orange sheet.
+    """
+    from .textures import _sample
+
+    obj = record.object
+    material = _owned_material(record)
+    uv_name = material.name + "_texproj0"
+    for curve in [c for c in action.fcurves if '"%s"' % record.uv_layer in c.data_path]:
+        action.fcurves.remove(curve)
+    _rename_texproj(obj, record.uv_layer, uv_name)
+    record.uv_layer = uv_name
+    _set_loop_uvs(obj, uv_name, _texproj_uv(channel(rest, driver), rest, driver))
+    _uv_warp(obj, uv_name)
+    _key_scroll(action, uv_name, frames, _texproj_scroll(series, rest, driver), write_curve)
+
+    _, gradation, _ = texture("_GradationTex")
+    coordinate = s1 * (0.5 + 0.5 * s0)
+    middle = np.full_like(coordinate, 0.5)
+    if peak.floats.get("_GradationX", 0.0) >= 0.5:
+        colours = _sample(gradation, coordinate, middle, wrap=False)
+    else:
+        colours = _sample(gradation, middle, coordinate, wrap=False)
+    pixels = np.dstack([colours[..., :3], alpha * colours[..., 3]])
+    _set_slots(material, [(cache.image("grd_" + key, np.clip(pixels, 0.0, 1.0)), driver_wrap, "RGBA8")])
+    obj.data.level5_properties.render_default = FOAM_RENDER_DEFAULT
     record.mask_converted = True
 
 

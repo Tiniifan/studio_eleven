@@ -322,7 +322,7 @@ def import_replacement(context, entry, kind, sources, options, report):
 
     role = role_of(entry)
     number = index_of(entry)
-    archives = [eleven.model_archive_name(options.waza_name, role, number, body) for body in kinds]
+    archives = [eleven.model_archive_name(options.waza_name, role, number, body, options.swap_sides) for body in kinds]
 
     targets = [build_default_armature(context, k, n) for k, n in zip(kinds, names)]
     first_actions = {}
@@ -342,6 +342,8 @@ def import_replacement(context, entry, kind, sources, options, report):
             if index == 0:
                 first_actions[armature.name] = action
                 eleven.store_armature_animation(armature, action, splits, {"armature"}, archive)
+                if kind == BODY:
+                    eleven.store_side(armature, options.waza_name, role, number, kind_name, options.swap_sides)
     for armature, _ in targets:
         action = first_actions.get(armature.name)
         if action is not None:

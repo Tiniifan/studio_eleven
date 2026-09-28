@@ -35,13 +35,16 @@ The addon imports the following content from Unity bundles and `.assets` files:
 2. Choose the options in the side panel, for example:
    - **Platform**: `3DS` to adapt the cameras and the frame rate to the 3DS screen
    - **Split Camera**: one camera per shot of the move
+   - **Camera Zoom**: how much larger everything is on screen. No single framing suits every move in game: `1` for Flame Dance, about `0.7` for Ocean Birth
    - **Use 3DS Bodies and Ball**: replaces the Unity players and ball by the 3DS ones, with the same animation
    - **Reduce 512 Textures** (on by default): every texture 512 pixels wide or high is halved on both sides (512x512 becomes 256x256, 512x256 becomes 256x128), lighter for the 3DS
    - **Waza Name**: the name of the 3DS move (for example `whs0001`), so the exported files get the names used by the game
+   - **Defence Move (Swap Sides)**: for a defence move (Flame Dance), the Unity "Ally" players are the defenders (`_ad1`...) and the "Opponent" ones the attackers (`_aa1`...), otherwise the game plays each animation on the wrong player
 3. A window lists the players, the ball, the effects and the cameras found in the files. Uncheck what you don't want, then click **OK**
-4. Export the scene with Studio Eleven: **File** → **Export** → **.xc**
+4. If needed, change the **Camera Zoom** or **Swap Ally / Opponent** in the **Studio X** tab of the 3D view sidebar (`N`): the scene is updated as if it had been imported with these values
+5. Export the scene with Studio Eleven: **File** → **Export** → **.xc**
 
-Your options are remembered for the next import.
+Your options are remembered for the next import, except the waza name, the camera zoom and the side swap, which depend on the move.
 
 To reduce the number of faces of the imported models, use the **Studio Optimizer** addon.
 

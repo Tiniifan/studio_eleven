@@ -95,7 +95,8 @@ def _bind_pose_rests(entry, worlds, scale):
     return rests
 
 
-def build_armature(context, entry, environment, options, cache, report):
+def build_armature(context, entry, environment, options, cache, report, with_renderers=True):
+    """with_renderers False: bones only (the ball aura model, whose renderer is the ball the ball model draws)."""
     scale = options.scale
     root = entry.node
     nodes = list(root.walk())
@@ -155,7 +156,7 @@ def build_armature(context, entry, environment, options, cache, report):
         pose_bone.scale = bone_scale
 
     material_cache = {}
-    for node in nodes:
+    for node in nodes if with_renderers else ():
         for renderer_type in ("MeshRenderer", "SkinnedMeshRenderer"):
             info = node.get_component(renderer_type)
             if info is not None:

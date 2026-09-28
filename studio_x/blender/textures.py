@@ -16,6 +16,7 @@ import math
 import bpy
 import numpy as np
 
+from . import render_state
 from ..unity.textures import decode_texture2d
 
 # Main color texture property names, by priority
@@ -115,6 +116,15 @@ def find_texture(material, sfile, names):
                 if info is not None:
                     return prop, info, env
     return None, None, None
+
+
+def texture_pixels(material, sfile, cache, prop):
+    """(pixels bottom first, Unity V wrap mode) of an assigned texture, or None."""
+    _, info, _ = find_texture(material, sfile, (prop,))
+    decoded = cache.array(info) if info is not None else None
+    if decoded is None:
+        return None
+    return decoded[1], info.read().get("m_TextureSettings", {}).get("m_WrapV", 0)
 
 
 def is_gradation(material):
@@ -299,6 +309,13 @@ def build_main_image(material, sfile, cache, adapt):
             mix = _resample_into(specular[1], color_env, width, height, color_env)[:, :, :1] * SPECULAR_MIX
             rgb[:] = rgb * (1.0 - mix) + mix
         suffixes.append("merged")
+
+    if render_state.is_basic(material) and _floats(material).get("_Luminance", 0.0):
+        result = render_state.luminance_colour(material, result)
+        suffixes.append("L%03d" % round(_floats(material).get("_Luminance", 0.0) * 100))
+    if render_state.uses_src_colour(material):
+        result = render_state.src_colour_alpha(result)
+        suffixes.append("srccolour")
 
     if not suffixes:
         return cache.image(name, pixels)

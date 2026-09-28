@@ -11,16 +11,62 @@ ANIMATION_TYPES = ("armature", "uv", "material")
 # players, <waza>_bl<number>.xc for the ball, <waza>_ef<number>.xc for the effect models and <waza>_cam.xv
 # for the cameras. whs0001_aa1.xc is the first ally on a normal body, whs0001_td2.xc the second opponent on a
 # tall body. The animation of an archive has its name without the extension.
+# The side letter is the attacker (a) or the defender (d): in a defence move (Flame Dance) the Unity "Ally"
+# defends, so the sides are swapped, else the game plays each animation on the other player.
 BODY_CODES = {"normal": "a", "fat": "b", "small": "s", "tall": "t"}
 SIDE_CODES = {"ally": "a", "opponent": "d"}
+SWAPPED_SIDES = {"ally": "opponent", "opponent": "ally"}
 
 
-def model_archive_name(waza, role, index, body=None):
-    """Archive name of the index-th (0 based) ally, opponent or ball of a move, None without a waza name."""
+def model_archive_name(waza, role, index, body=None, swap_sides=False):
+    """Archive name of the index-th (0 based) ally, opponent or ball of a move, None without a waza name.
+
+    swap_sides: defence move, the allies become the defenders (_ad1...) and the opponents the attackers."""
     if not waza:
         return None
+    if swap_sides:
+        role = SWAPPED_SIDES.get(role, role)
     code = "bl" if role == "ball" else BODY_CODES[body] + SIDE_CODES[role]
     return "%s_%s%d.xc" % (waza, code, index + 1)
+
+
+# Custom properties of a 3DS body armature: what names its archive, so the sides can be swapped after import
+ROLE_PROPERTY = "studio_x_role"
+INDEX_PROPERTY = "studio_x_index"
+BODY_PROPERTY = "studio_x_body"
+WAZA_PROPERTY = "studio_x_waza"
+SWAP_PROPERTY = "studio_x_swap"
+
+
+def store_side(armature, waza, role, index, body, swap_sides):
+    armature[WAZA_PROPERTY] = waza or ""
+    armature[ROLE_PROPERTY] = role
+    armature[INDEX_PROPERTY] = index
+    armature[BODY_PROPERTY] = body
+    armature[SWAP_PROPERTY] = bool(swap_sides)
+
+
+def has_side(armature):
+    return ROLE_PROPERTY in armature.keys()
+
+
+def set_sides(armature, swap_sides):
+    """Give a player armature the archive and animation names of the other side (attacker <-> defender)."""
+    archive = model_archive_name(armature[WAZA_PROPERTY], armature[ROLE_PROPERTY], armature[INDEX_PROPERTY],
+                                 armature[BODY_PROPERTY], swap_sides)
+    armature[SWAP_PROPERTY] = bool(swap_sides)
+    if archive is None:
+        return
+    settings = armature.level5_archive
+    old, new = animation_name(settings.archive_name), animation_name(archive)
+    settings.archive_name = archive
+    for animation in settings.animations:
+        if animation.name == old:
+            animation.name = new
+        for animation_type in ANIMATION_TYPES:
+            type_settings = animation.get_animation(animation_type)
+            if type_settings.name == old:
+                type_settings.name = new
 
 
 def effect_archive_name(waza, index):

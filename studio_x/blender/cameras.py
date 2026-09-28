@@ -12,11 +12,15 @@ Measured against the 3DS cameras of whs0001 and who0003:
       animated to keep Blender's preview at the right field of view;
     - the .cmr2 roll value equals minus the Unity roll angle in radians. Studio Eleven imports and exports
       it unchanged in rotation_euler.z, so the camera stores it as is;
-    - the Unity moves come from Inazuma Eleven Cross, a portrait (9:16) mobile game: its cameras keep the
-      3DS field of view but stand further back so the players fit the narrow screen. On ShippuuDash the
-      camera-to-player distance is 1.27 to 1.35 times the 3DS one (cut 1). This matches a subject framed
-      in a 3:4 box: the distance needed to fit it grows as max(1, (3/4) / aspect), i.e. 4/3 at 9:16 and
-      1 for any aspect of 3:4 or wider. The camera is moved toward its target by that ratio;
+    - the field of view of a move spans the long side of the screen. Inazuma Eleven Cross (portrait 9:16)
+      uses it as the vertical FOV; Inazuma Eleven Victory Road (16:9) plays the same camera clips with it as
+      the horizontal FOV (Ocean Birth against its Victory Road version: players 1.8 to 1.9 times larger than
+      the same camera with a vertical FOV, 1.78 expected). A landscape screen, the 3DS one included, gets
+      that horizontal FOV and a narrower vertical one; the camera keeps its position. That framing fits
+      Flame Dance in the 3DS game but Ocean Birth wants about 0.7 times its size (its subjects stand 30 to 180
+      units away, Flame Dance's 7 to 22): no geometric rule gives both, so the Camera Zoom option (and the Studio
+      X panel after the import) scales tan(FOV / 2);
+    - every focal key is exported (lens keyed on the camera object's action, see _write_lens);
     - each split camera is named after its split ("01", "02"...): the game looks cameras up by that hash;
     - speed 0.5 plays 30 fps keys on the 60 Hz game loop;
     - camera keys match Unity time f / 30 without the +1/60 used for bones (roll error 0.0005 rad).
@@ -32,20 +36,14 @@ from ..unity import animation
 
 # Offset applied by studio_eleven/operators/fileio_xcma.py between the lens and the focal_length track
 ELEVEN_LENS_OFFSET = 33.0
-# Screen of the game the Unity moves come from (Inazuma Eleven Cross, portrait) and the width / height
-# of the box its cameras frame (fitted on ShippuuDash against who0003, see the module docstring)
-SOURCE_ASPECT = 9.0 / 16.0
-SUBJECT_ASPECT = 3.0 / 4.0
 
 
-def framing_distance(aspect):
-    """Relative camera distance fitting the framed subject on a screen of that width / height ratio."""
-    return max(1.0, SUBJECT_ASPECT / aspect)
-
-
-def screen_distance_factor(aspect):
-    """Ratio applied to the camera-target distance to keep the Unity framing on another screen format."""
-    return framing_distance(aspect) / framing_distance(SOURCE_ASPECT)
+def screen_vertical_fov(fov_degrees, aspect):
+    """Vertical FOV (degrees) showing a move's FOV along the long side of a width / height screen."""
+    if aspect <= 1.0:
+        return fov_degrees
+    half = math.radians(max(1.0, min(179.0, fov_degrees))) * 0.5
+    return math.degrees(2.0 * math.atan(math.tan(half) / aspect))
 
 
 def _lens_field_of_view(node):
@@ -63,6 +61,52 @@ def _lens_field_of_view(node):
 def vertical_fov_to_eleven(fov_degrees):
     """Unity vertical FOV (degrees) -> value of the .cmr2 focal_length track (vertical FOV, radians)."""
     return math.radians(max(1.0, min(179.0, fov_degrees)))
+
+
+# Custom properties of a camera: its focal values before the zoom, their frames and the zoom it shows
+FOCALS_PROPERTY = "studio_x_focals"
+FRAMES_PROPERTY = "studio_x_frames"
+ZOOM_PROPERTY = "studio_x_zoom"
+MAX_FOCAL = math.radians(179.0)
+
+
+def zoomed_focal(focal_value, zoom):
+    """Focal value (vertical FOV, radians) making everything zoom times larger on screen.
+
+    No single rule frames every move like the game wants: Flame Dance was validated with the long side rule
+    as is, Ocean Birth about 0.7 times as large (its subjects stand much further from the camera), so the
+    zoom is left to the user."""
+    return min(2.0 * math.atan(math.tan(focal_value * 0.5) / max(zoom, 1e-3)), MAX_FOCAL)
+
+
+def is_studio_x_camera(camera):
+    return FOCALS_PROPERTY in camera.keys()
+
+
+def apply_zoom(camera, zoom):
+    """Rewrite the lens of a camera made by studio_x for another zoom, exactly as an import with that zoom."""
+    focals = [zoomed_focal(value, zoom) for value in camera[FOCALS_PROPERTY]]
+    frames = list(camera[FRAMES_PROPERTY])
+    lenses = [eleven_lens(value) for value in focals]
+    sensors = [preview_sensor_height(value) for value in focals]
+    camera.data.lens = lenses[0]
+    camera.data.sensor_height = sensors[0]
+    action = camera.animation_data.action if camera.animation_data else None
+    if action is not None:
+        for curve in [c for c in action.fcurves if c.data_path in ("data.lens", "data.sensor_height")]:
+            action.fcurves.remove(curve)
+        if len(frames) > 1:
+            _write_lens(action, frames, lenses, sensors)
+    camera[ZOOM_PROPERTY] = zoom
+
+
+def _write_lens(action, frames, lenses, sensors):
+    # The lens is keyed in the camera object's action ("data.lens"): Studio Eleven's cmr2 export only reads
+    # that action, and wrote the focal of the first and last keys alone from the camera data's own action.
+    # The game then drew a straight line between them (Ocean Birth's first shot widens from 0.52 to 0.67 rad
+    # and narrows back to 0.37: far too close in the middle of the shot)
+    animations.write_curve(action, "data.lens", 0, frames, lenses, 1e-4)
+    animations.write_curve(action, "data.sensor_height", 0, frames, sensors, 1e-3)
 
 
 def eleven_lens(focal_value):
@@ -174,17 +218,14 @@ def _build_camera(context, entry, name, frames, samples, options):
     target = camera_eleven.target_obj
     camera.data.sensor_fit = "VERTICAL"
 
-    locations, targets, lenses, sensors, rolls = [], [], [], [], []
+    locations, targets, lenses, sensors, rolls, focals = [], [], [], [], [], []
     distance = options.camera_target_distance * options.scale
-    # Moving the camera toward the target keeps the field of view (and the .cmr2 focal) of the move
-    dolly = distance * (1.0 - options.camera_distance_factor)
     for clip, time in samples:
         origin, forward, fov, roll = sampler.pose(clip, time)
-        focal_value = vertical_fov_to_eleven(fov)
-        origin = origin + forward * dolly
-        distance_left = distance - dolly
+        focals.append(vertical_fov_to_eleven(screen_vertical_fov(fov, options.screen_aspect)))
+        focal_value = zoomed_focal(focals[-1], options.camera_zoom)
         locations.append(origin)
-        targets.append(origin + forward * distance_left)
+        targets.append(origin + forward * distance)
         lenses.append(eleven_lens(focal_value))
         sensors.append(preview_sensor_height(focal_value))
         # Already in radians, stored as is like studio_eleven/operators/fileio_xcma.py create_camera()
@@ -195,6 +236,10 @@ def _build_camera(context, entry, name, frames, samples, options):
     camera.data.lens = lenses[0]
     camera.data.sensor_height = sensors[0]
     camera.rotation_euler = (0.0, 0.0, rolls[0])
+    # What the Studio X panel needs to change the zoom later (apply_zoom)
+    camera[FOCALS_PROPERTY] = focals
+    camera[FRAMES_PROPERTY] = list(frames)
+    camera[ZOOM_PROPERTY] = options.camera_zoom
     if samples[0][0] is None:
         return camera_eleven
 
@@ -206,10 +251,5 @@ def _build_camera(context, entry, name, frames, samples, options):
             animations.write_curve(action, "location", index, frames, [v[index] for v in values], 1e-4 * options.scale)
         if obj is camera:
             animations.write_curve(action, "rotation_euler", 2, frames, rolls, 1e-6)
-
-    camera.data.animation_data_create()
-    lens_action = bpy.data.actions.new("%s.lens" % name)
-    camera.data.animation_data.action = lens_action
-    animations.write_curve(lens_action, "lens", 0, frames, lenses, 1e-4)
-    animations.write_curve(lens_action, "sensor_height", 0, frames, sensors, 1e-3)
+            _write_lens(action, frames, lenses, sensors)
     return camera_eleven

@@ -12,7 +12,7 @@ import bpy
 from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ImportHelper
 
-from . import animations, cameras, eleven, models, retarget
+from . import animations, ball_aura, cameras, eleven, models, panel, retarget
 from .textures import TextureCache
 from ..unity import Environment
 from ..unity.catalog import KIND_CAMERA, build_catalog
@@ -98,12 +98,14 @@ class ImportOptions:
         self.adapt_textures = operator.adapt_textures
         self.camera_target_distance = operator.camera_target_distance
         self.split_camera = operator.split_camera
-        self.camera_distance_factor = cameras.screen_distance_factor(screen_aspect(operator))
+        self.camera_zoom = getattr(operator, "camera_zoom", 1.0)
+        self.screen_aspect = screen_aspect(operator)
         # The 3DS bodies and the move names only exist on the 3DS platform
         is_3ds = operator.platform == "3DS"
         self.use_3ds_models = is_3ds and operator.use_3ds_models
         self.reduce_textures = is_3ds and getattr(operator, "reduce_textures", True)
         self.waza_name = operator.waza_name.strip() if is_3ds else ""
+        self.swap_sides = is_3ds and getattr(operator, "swap_sides", False)
 
 
 # Import options kept between Blender sessions (everything but the waza name)
@@ -221,11 +223,15 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
         description="Unity frames (1/60 s) added when sampling cameras. 0 matches the 3DS camera timing")
     camera_target_distance: FloatProperty(
         name="Camera Target Distance", default=2.5, min=0.01, update=_option_changed,
-        description="Distance (Unity units) of the CameraEleven target in front of the camera. On a screen wider "
-                    "than the Unity one, the camera moves toward this target to keep the framing")
+        description="Distance (Unity units) of the CameraEleven target in front of the camera")
     split_camera: BoolProperty(
         name="Split Camera", default=True, update=_option_changed,
         description="Create one Studio Eleven camera per timeline clip instead of a single merged camera")
+    camera_zoom: FloatProperty(
+        name="Camera Zoom", default=1.0, min=0.1, max=5.0, step=5, precision=2, options={"SKIP_SAVE"},
+        description="How much larger everything is on screen than with the imported field of view. No single "
+                    "framing suits every move in game (Flame Dance: 1, Ocean Birth: about 0.7); the Studio X "
+                    "side panel changes it after the import")
 
     platform: EnumProperty(
         name="Platform",
@@ -255,6 +261,11 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
                     "archive and animation names of the move: <waza>_aa1.xc for the first ally on a normal "
                     "body, _ba1/_sa1/_ta1 for the other bodies, _ad1... for the opponents, _bl1.xc for the "
                     "ball and _cam.xv for the cameras")
+    swap_sides: BoolProperty(
+        name="Defence Move (Swap Sides)", default=False, options={"SKIP_SAVE"},
+        description="The 3DS archive names say who attacks (_aa1...) and who defends (_ad1...). In a defence "
+                    "move the Unity \"Ally\" defends: its animations go to the defender archives and the "
+                    "\"Opponent\" ones to the attacker archives, else the game plays them on the wrong player")
     render_engine: EnumProperty(
         name="Render Engine",
         items=render_engine_items, update=_option_changed,
@@ -290,6 +301,7 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
         box.prop(self, "camera_frame_offset")
         box.prop(self, "camera_target_distance")
         box.prop(self, "split_camera")
+        box.prop(self, "camera_zoom")
 
         layout.prop(self, "adapt_textures")
 
@@ -314,6 +326,7 @@ class STUDIOX_OT_import(bpy.types.Operator, ImportHelper):
             box.prop(self, "use_3ds_models")
             box.prop(self, "reduce_textures")
             box.prop(self, "waza_name")
+            box.prop(self, "swap_sides")
 
     def execute(self, context):
         if ImportOptions(self).fps <= 0:
@@ -391,7 +404,13 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
         cache = TextureCache(environment, self.report, reduce_512=options.reduce_textures)
         last_frame = 0
         imported = 0
-        effects = 0
+        # Effect models ("ev...") are the <waza>_ef1.xc, _ef2.xc... archives of the move, in import order; the
+        # ball aura (ball_aura.py) is an effect model too, numbered after them so theirs do not change
+        selected = [entries[item.key] for item in self.models if item.selected and item.key in entries]
+        effect_entries = [e for e in selected if e.kind != KIND_CAMERA and e.name.startswith("ev")]
+        effect_entries += [e for e in selected if e.kind != KIND_CAMERA and not e.name.startswith("ev")
+                           and ball_aura.has_aura(e)]
+        effect_numbers = {e.key: index for index, e in enumerate(effect_entries)}
 
         for item in self.models:
             entry = entries.get(item.key)
@@ -407,12 +426,11 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
                 for source in sources or [None]:
                     cameras.build_cameras(context, entry, source, options)
             else:
-                # Effect models ("ev...") are the <waza>_ef1.xc, _ef2.xc... archives of the move
                 archive = None
-                if entry.name.startswith("ev"):
-                    archive = eleven.effect_archive_name(options.waza_name, effects)
-                    effects += 1
-                self._import_model(context, entry, environment, sources, options, cache, archive)
+                if entry.key in effect_numbers:
+                    archive = eleven.effect_archive_name(options.waza_name, effect_numbers[entry.key])
+                self._import_model(context, entry, environment, sources, options, cache, archive,
+                                   _session["catalog"])
 
             # The scene range follows the main animation (the timeline when there is one)
             if sources:
@@ -427,9 +445,10 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
             context.scene.frame_start = 0
             context.scene.frame_end = last_frame
         context.scene.frame_set(0)
+        panel.store_import_options(context.scene, options)
         return {"FINISHED"}
 
-    def _import_model(self, context, entry, environment, sources, options, cache, archive=None):
+    def _import_model(self, context, entry, environment, sources, options, cache, archive=None, catalog=()):
         kind = retarget.replacement(entry) if options.use_3ds_models else None
         if kind is not None:
             retarget.import_replacement(context, entry, kind, sources, options, self.report)
@@ -437,7 +456,12 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
         # A ball kept as the Unity model still animates the ball archive of the move (<waza>_bl1.xc)
         if archive is None and retarget.role_of(entry) == "ball":
             archive = eleven.model_archive_name(options.waza_name, "ball", retarget.index_of(entry))
-        result = models.build_armature(context, entry, environment, options, cache, self.report)
+        # The renderer of an aura model is the ball itself, which the ball model already draws
+        aura = ball_aura.has_aura(entry)
+        result = models.build_armature(context, entry, environment, options, cache, self.report, not aura)
+        self._import_sources(context, entry, sources, options, result, archive, aura, catalog, cache)
+
+    def _import_sources(self, context, entry, sources, options, result, archive, aura=False, catalog=(), cache=None):
         first_assignments = []
         for index, source in enumerate(sources):
             # Timelines drive several models: the model name keeps the animation names unique
@@ -448,6 +472,8 @@ class STUDIOX_OT_choose_content(bpy.types.Operator):
             result.armature.animation_data.action = action
             animations.bake_bones(action, result, sampler, options)
             created = [(result.armature, action)] + animations.bake_renderers(result, sampler, action, options)
+            if index == 0 and aura:
+                created += ball_aura.build(context, result, entry, catalog, sampler, action, options, cache)
             if len(sources) > 1:
                 for _, created_action in created:
                     created_action.use_fake_user = True

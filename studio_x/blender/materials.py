@@ -63,7 +63,9 @@ def add_transparency_animation(blender_material):
     return alpha_data_path(blender_material)
 
 
-def build_material(name, material, sfile, cache, adapt_textures):
+def build_material(name, material, sfile, cache, adapt_textures, image=None, sampler_texture=None):
+    """image / sampler_texture: a texture made by studio_x itself (the ball aura) and the Unity-like
+    texture settings of its sampler, instead of the material's own texture."""
     from studio_eleven.operators.panels import material_textures
 
     blender_material = bpy.data.materials.new(name=name)
@@ -81,8 +83,7 @@ def build_material(name, material, sfile, cache, adapt_textures):
         bsdf.name = PRINCIPLED
     links.new(bsdf.outputs["BSDF"], output.inputs["Surface"])
 
-    image = None
-    if cache is not None:
+    if image is None and cache is not None:
         image = textures.build_main_image(material, sfile, cache, adapt_textures)
 
     alpha = base_alpha(material)
@@ -94,7 +95,7 @@ def build_material(name, material, sfile, cache, adapt_textures):
             slot = blender_material.level5_textures.slots.add()
             slot.image = image
             slot.show_expanded = False
-            render_state.apply_sampler(slot, textures.uv_texture(material, sfile))
+            render_state.apply_sampler(slot, sampler_texture or textures.uv_texture(material, sfile))
     finally:
         material_textures.resume_updates()
 
@@ -111,7 +112,8 @@ def build_material(name, material, sfile, cache, adapt_textures):
 
     if bpy.app.version < (4, 3, 0):
         blender_material.shadow_method = "CLIP"
-    render_state.apply_render_state(blender_material, material)
+    rim_mask = textures.texture_pixels(material, sfile, cache, "_MaskRimTex") if cache is not None else None
+    render_state.apply_render_state(blender_material, material, render_state.rim_hides_back_faces(material, rim_mask))
     render_state.refresh_preview(blender_material)
     blender_material["unity_material"] = material.get("m_Name", "")
     return blender_material
