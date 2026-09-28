@@ -8,7 +8,7 @@ bl_info = {
     "author": "Tinifan",
     "version": (1, 3, 0),
     "blender": (2, 80, 2),
-    "location": "File > Import > Studio X",
+    "location": "File > Import > Studio X, 3D View > Sidebar > Studio X",
     "warning": "Requires the Studio Eleven addon",
     "doc_url": "",
     "support": "COMMUNITY",
