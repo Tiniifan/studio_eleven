@@ -30,6 +30,20 @@ ALL_ENGINES = DEFAULT_ENGINES + GAME_ENGINES
 
 _BY_ID = {engine.id: engine for engine in ALL_ENGINES}
 
+# Scene ambient of StudioRender per engine: the Yo-kai Watch and Snack World materials take their colour from the ambient
+# (ambient 1, diffuse 0) and the sky/default.xk of the game lights them with a scene ambient of 1.
+# The other engines keep 0.2, a StudioRender choice their renders are tuned on
+ENGINE_SCENE_AMBIENT = {
+    "YW1": 1.0,
+    "YW2": 1.0,
+    "YW3": 1.0,
+    "YWB1": 1.0,
+    "YWB2": 1.0,
+    "SW": 1.0,
+}
+
+DEFAULT_SCENE_AMBIENT = 0.2
+
 
 def get_engine(engine_id):
     return _BY_ID.get(engine_id) or DEFAULT_ENGINE_V2
@@ -37,6 +51,11 @@ def get_engine(engine_id):
 
 def is_default_engine(engine_id):
     return engine_id in (engine.id for engine in DEFAULT_ENGINES)
+
+
+def get_scene_ambient(engine_id):
+    """Scene ambient StudioRender lights the meshes of an engine with."""
+    return ENGINE_SCENE_AMBIENT.get(engine_id, DEFAULT_SCENE_AMBIENT)
 
 
 def default_engine_for(engine_id):

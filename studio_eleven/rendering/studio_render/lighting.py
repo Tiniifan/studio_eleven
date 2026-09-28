@@ -1,17 +1,10 @@
-"""Fragment lighting of the fixed pipeline, ported from gls/FRG001.frag.
-
-STATUS: the LUT sampling, the table rows, the input selectors, the eight config layouts and the
-primary / secondary colour math are transcribed from that shipped GLSL (confirmed). The material
-values and the LUTs come from the .mtr of each material. What is left out: distance attenuation and the
-spot LUT (the game builds them per light from data the addon does not read), shadow, bump mapping (no
-shipped material uses the shadow or bump fields).
-"""
-
 import math
 
 import mathutils
 
-STATUS = "math and table rows confirmed against gls/FRG001.frag and the game state code, values from the .mtr"
+##########################################
+# CONST
+##########################################
 
 LUT_ENTRY_COUNT = 256
 LUT_TEXTURE_WIDTH = 512
@@ -19,34 +12,47 @@ LUT_TEXTURE_HEIGHT = 32
 MAX_LIGHTS = 8
 
 # Table row of each LUT: the getLutInSelect calls of FRG001, and the hardware ids the game uploads the material LUTs to
-# (device slots 0..5 = D0 D1 FR RB RG RR, IEGO sub_53EA98 / CS the same)
 LUT_TABLES = ("D0", "D1", "FR", "RB", "RG", "RR")
 LUT_TABLE_INDEX = {name: index for index, name in enumerate(LUT_TABLES)}
 
 # Input of a LUT, in the order of the getLutInSelect ternary
 LUT_INPUTS = ("NH", "VH", "NV", "LN", "SP", "CP")
 
+# Reflection tables each config reads: 0, 1, 2 and 6 copy RR to RG and RB, 3 reads none
+REFLECTION_TABLES = {
+    0: ("RR",),
+    1: ("RR",),
+    2: ("RR",),
+    3: (),
+    6: ("RR",),
+}
+
+ALL_REFLECTION_TABLES = ("RR", "RG", "RB")
+
 ##########################################
-# LUT sampling
+# LUT Function
 ##########################################
+
+def fetch_lut(values, deltas, index, fraction):
+    index = min(max(int(index), 0), LUT_ENTRY_COUNT - 1)
+
+    return values[index] + deltas[index] * fraction
+
 
 def sample_lut(values, deltas, value, absolute):
     """Reference port of getLut, the texture fetch of the shipped shader clamps out of range indices."""
-    def fetch(index, fraction):
-        index = min(max(int(index), 0), LUT_ENTRY_COUNT - 1)
-        return values[index] + deltas[index] * fraction
-
     if absolute:
         value = abs(value)
         index = min(math.floor(value * 256.0), 255.0)
-        return fetch(index, value * 256.0 - index)
+        return fetch_lut(values, deltas, index, value * 256.0 - index)
 
     if value < 0.0:
         floored = math.floor(value * 127.0)
-        return fetch(255.0 + floored, value * 128.0 - floored)
+        return fetch_lut(values, deltas, 255.0 + floored, value * 128.0 - floored)
 
     index = min(math.floor(value * 128.0), 127.0)
-    return fetch(index, value * 128.0 - index)
+
+    return fetch_lut(values, deltas, index, value * 128.0 - index)
 
 
 def sample(table, value, absolute):
@@ -76,36 +82,35 @@ def lut_texture_rows(material):
     return rows
 
 ##########################################
-# Scene lights
+# Scene Lights
 ##########################################
 
-class LightSource:
+def new_light():
     """One DMP_LIGHT_SOURCE, the vectors are in eye space like the varyings the vertex stage writes."""
-
-    def __init__(self):
-        self.position = (0.0, 0.0, 1.0, 0.0)
-        self.ambient = (0.0, 0.0, 0.0, 1.0)
-        self.diffuse = (1.0, 1.0, 1.0, 1.0)
-        self.specular0 = (0.0, 0.0, 0.0, 1.0)
-        self.specular1 = (0.0, 0.0, 0.0, 1.0)
-        self.two_side_diffuse = False
+    return {
+        "position": (0.0, 0.0, 1.0, 0.0),
+        "ambient": (0.0, 0.0, 0.0, 1.0),
+        "diffuse": (1.0, 1.0, 1.0, 1.0),
+        "specular0": (0.0, 0.0, 0.0, 1.0),
+        "specular1": (0.0, 0.0, 0.0, 1.0),
+        "two_side_diffuse": False,
+    }
 
 
 def default_light():
     """StudioRender choice: a white light coming from the upper left of the viewer, for scenes without any light."""
-    light = LightSource()
+    light = new_light()
     length = math.sqrt(0.3 * 0.3 + 0.5 * 0.5 + 1.0)
-    light.position = (-0.3 / length, 0.5 / length, 1.0 / length, 0.0)
-    light.specular0 = light.specular1 = (1.0, 1.0, 1.0, 1.0)
+
+    light["position"] = (-0.3 / length, 0.5 / length, 1.0 / length, 0.0)
+    light["specular0"] = (1.0, 1.0, 1.0, 1.0)
+    light["specular1"] = (1.0, 1.0, 1.0, 1.0)
+
     return light
 
 
 def collect_lights(depsgraph, view_matrix, limit=MAX_LIGHTS):
-    """Blender lights mapped on DMP light sources: SUN is directional, every other type is a point light.
-
-    StudioRender choice, the game builds its light sources from script data the addon does not read:
-    colour * energy feeds the diffuse and the specular, the ambient of a light source stays black.
-    """
+    """Blender lights mapped on DMP light sources (StudioRender choice: SUN is directional, the others are point lights)."""
     lights = []
 
     for instance in depsgraph.object_instances:
@@ -118,192 +123,249 @@ def collect_lights(depsgraph, view_matrix, limit=MAX_LIGHTS):
 
         data = obj.data
         matrix = view_matrix @ instance.matrix_world
-        light = LightSource()
+        light = new_light()
 
         if data.type == 'SUN':
             direction = matrix.to_3x3() @ mathutils.Vector((0.0, 0.0, 1.0))
-            light.position = (direction.x, direction.y, direction.z, 0.0)
+            light["position"] = (direction.x, direction.y, direction.z, 0.0)
             energy = data.energy
         else:
             location = matrix.translation
-            light.position = (location.x, location.y, location.z, 1.0)
+            light["position"] = (location.x, location.y, location.z, 1.0)
             energy = data.energy / (4.0 * math.pi)
 
+        # The game builds its lights from data the addon does not read, the ambient of a light stays black
         color = tuple(channel * energy for channel in data.color)
-        light.diffuse = color + (1.0,)
-        light.specular0 = color + (1.0,)
-        light.specular1 = color + (1.0,)
+        light["diffuse"] = color + (1.0,)
+        light["specular0"] = color + (1.0,)
+        light["specular1"] = color + (1.0,)
+
         lights.append(light)
 
-    if not lights and limit > 0:
+    if len(lights) == 0 and limit > 0:
         lights.append(default_light())
 
     return lights
 
 ##########################################
-# Fragment material and light environment
+# Light Environment
 ##########################################
 
-class LightEnvironment:
+def new_environment():
     """DMP_LIGHT_ENV plus DMP_MATERIAL, the fields the ported shader reads."""
+    return {
+        "enabled": False,
+        "config": 0,
+        "scene_ambient": (0.0, 0.0, 0.0),
+        "emission": (0.0, 0.0, 0.0, 1.0),
+        "ambient": (1.0, 1.0, 1.0, 1.0),
+        "diffuse": (1.0, 1.0, 1.0, 1.0),
+        "specular0": (0.0, 0.0, 0.0, 1.0),
+        "specular1": (0.0, 0.0, 0.0, 1.0),
+        "lut_enabled_d0": False,
+        "lut_enabled_d1": False,
+        "lut_enabled_refl": False,
+        "lut_input": {name: 0 for name in LUT_TABLES},
+        "lut_abs": {name: True for name in LUT_TABLES},
+        "lut_scale": {name: 1.0 for name in LUT_TABLES},
+        "fresnel_selector": 0,
+        "clamp_highlights": False,
+        "two_side_diffuse": False,
+    }
 
-    def __init__(self):
-        self.enabled = False
-        self.config = 0
-        self.scene_ambient = (0.0, 0.0, 0.0)
-        self.emission = (0.0, 0.0, 0.0, 1.0)
-        self.ambient = (1.0, 1.0, 1.0, 1.0)
-        self.diffuse = (1.0, 1.0, 1.0, 1.0)
-        self.specular0 = (0.0, 0.0, 0.0, 1.0)
-        self.specular1 = (0.0, 0.0, 0.0, 1.0)
-        self.lut_enabled_d0 = False
-        self.lut_enabled_d1 = False
-        self.lut_enabled_refl = False
-        self.lut_input = {name: 0 for name in LUT_TABLES}
-        self.lut_abs = {name: True for name in LUT_TABLES}
-        self.lut_scale = {name: 1.0 for name in LUT_TABLES}
-        self.fresnel_selector = 0
-        self.clamp_highlights = False
-        self.two_side_diffuse = False
 
-def environment_of(material):
-    """The light environment of an .mtr material (formats/mtr.py Material).
+def has_reflection_tables(material):
+    """The reflection tables the config of the material reads are all embedded in it."""
+    names = REFLECTION_TABLES.get(material.config, ALL_REFLECTION_TABLES)
 
-    A table that is enabled without a LUT in the file would read the previous contents of the hardware
-    table, StudioRender leaves it out instead. FR only matters through the Fresnel selector.
-    """
-    environment = LightEnvironment()
-    environment.enabled = True
-    environment.config = material.config
-    environment.emission = tuple(material.emission) + (1.0,)
-    environment.ambient = tuple(material.ambient) + (1.0,)
-    environment.diffuse = tuple(material.diffuse) + (1.0,)
-    environment.specular0 = tuple(material.specular0) + (1.0,)
-    environment.specular1 = tuple(material.specular1) + (1.0,)
+    for name in names:
+        if material.tables[name].lut is None:
+            return False
 
+    return True
+
+
+def environment_of(material, scene_ambient=(0.0, 0.0, 0.0)):
+    """The light environment of an .mtr material (formats/mtr.py Material), a table enabled without its LUT is left out."""
+    environment = new_environment()
     tables = material.tables
-    environment.lut_enabled_d0 = material.lut_enabled_d0 and tables["D0"].lut is not None
-    environment.lut_enabled_d1 = material.lut_enabled_d1 and tables["D1"].lut is not None
-    environment.lut_enabled_refl = material.lut_enabled_refl and all(tables[name].lut is not None for name in ("RR", "RG", "RB"))
+
+    environment["enabled"] = True
+    environment["config"] = material.config
+    environment["scene_ambient"] = tuple(scene_ambient)
+    environment["emission"] = tuple(material.emission) + (1.0,)
+    environment["ambient"] = tuple(material.ambient) + (1.0,)
+    environment["diffuse"] = tuple(material.diffuse) + (1.0,)
+    environment["specular0"] = tuple(material.specular0) + (1.0,)
+    environment["specular1"] = tuple(material.specular1) + (1.0,)
+
+    # The hardware would read the previous contents of a table the file does not hold
+    environment["lut_enabled_d0"] = material.lut_enabled_d0 and tables["D0"].lut is not None
+    environment["lut_enabled_d1"] = material.lut_enabled_d1 and tables["D1"].lut is not None
+    environment["lut_enabled_refl"] = material.lut_enabled_refl and has_reflection_tables(material)
 
     for name in LUT_TABLES:
-        environment.lut_input[name] = min(tables[name].input_select, len(LUT_INPUTS) - 1)
-        environment.lut_abs[name] = tables[name].abs_input
-        # The two undefined scale indices are not used by any shipped material
-        environment.lut_scale[name] = tables[name].scale_value or 1.0
+        environment["lut_input"][name] = min(tables[name].input_select, len(LUT_INPUTS) - 1)
+        environment["lut_abs"][name] = tables[name].abs_input
 
-    environment.fresnel_selector = material.fresnel_selector
-    environment.clamp_highlights = material.clamp_highlights
+        # The two undefined scale indices are not used by any shipped material
+        environment["lut_scale"][name] = tables[name].scale_value or 1.0
+
+    environment["fresnel_selector"] = material.fresnel_selector
+    environment["clamp_highlights"] = material.clamp_highlights
 
     return environment
 
 ##########################################
-# Reference evaluator
+# Reference Evaluator
 ##########################################
 
-def _dot(a, b):
+def dot(a, b):
     return sum(x * y for x, y in zip(a, b))
 
 
-def _normalize(vector):
-    length = math.sqrt(_dot(vector, vector))
-    return tuple(value / length for value in vector) if length > 0.0 else (0.0, 0.0, 0.0)
+def normalize(vector):
+    length = math.sqrt(dot(vector, vector))
+
+    if length <= 0.0:
+        return (0.0, 0.0, 0.0)
+
+    return tuple(value / length for value in vector)
 
 
-def _apply_config(config, values):
-    """The eight dmp_LightEnv.config layouts of FRG001, in the order the shader writes them."""
-    rr, rg, rb, d0, d1, fr, sp = values
+def apply_config(config, values):
+    """The eight dmp_LightEnv.config layouts of FRG001, values holds rr, rg, rb, d0, d1, fr, sp."""
+    values = dict(values)
 
     if config == 0:
-        rg, rb, d1, fr = rr, rr, 1.0, 1.0
+        values["rg"] = values["rr"]
+        values["rb"] = values["rr"]
+        values["d1"] = 1.0
+        values["fr"] = 1.0
     elif config == 1:
-        rg, rb, d0, d1, sp = rr, rr, 1.0, 1.0, sp
+        values["rg"] = values["rr"]
+        values["rb"] = values["rr"]
+        values["d0"] = 1.0
+        values["d1"] = 1.0
     elif config == 2:
-        rg, rb, fr, sp = rr, rr, 1.0, 1.0
+        values["rg"] = values["rr"]
+        values["rb"] = values["rr"]
+        values["fr"] = 1.0
+        values["sp"] = 1.0
     elif config == 3:
-        rr, rg, rb, sp = 1.0, 1.0, 1.0, 1.0
+        values["rr"] = 1.0
+        values["rg"] = 1.0
+        values["rb"] = 1.0
+        values["sp"] = 1.0
     elif config == 4:
-        fr = 1.0
+        values["fr"] = 1.0
     elif config == 5:
-        d1 = 1.0
+        values["d1"] = 1.0
     elif config == 6:
-        rg, rb = rr, rr
+        values["rg"] = values["rr"]
+        values["rb"] = values["rr"]
 
-    return rr, rg, rb, d0, d1, fr, sp
+    return values
+
+
+def lut_of(environment, tables, name, inputs):
+    table = tables.get(name)
+
+    if table is None:
+        return 1.0
+
+    value = inputs[environment["lut_input"][name]]
+
+    return environment["lut_scale"][name] * sample(table, value, environment["lut_abs"][name])
 
 
 def evaluate_lighting(environment, lights, tables, normal, eye_position):
     """Reference port of the FRG001 lighting block, returns (clr_1st, clr_2nd) as 4 float tuples."""
-    if not environment.enabled:
+    if not environment["enabled"]:
         return (1.0, 1.0, 1.0, 1.0), (0.0, 0.0, 0.0, 1.0)
 
-    normal = _normalize(normal)
-    view = _normalize(tuple(-value for value in eye_position))
-    normal_view = _dot(normal, view)
+    normal = normalize(normal)
+    view = normalize(tuple(-value for value in eye_position))
+    normal_view = dot(normal, view)
 
     primary = [0.0, 0.0, 0.0]
     secondary = [0.0, 0.0, 0.0]
     fresnel = 0.0
 
-    def lut(name, inputs):
-        table = tables.get(name)
-        if table is None:
-            return 1.0
-        return environment.lut_scale[name] * sample(table, inputs[environment.lut_input[name]],
-                                                    environment.lut_abs[name])
-
     for light in lights:
-        if light.position[3] == 0.0:
-            direction = _normalize(light.position[0:3])
+        position = light["position"]
+
+        if position[3] == 0.0:
+            direction = normalize(position[0:3])
         else:
-            direction = _normalize(tuple(light.position[index] - eye_position[index] for index in range(3)))
+            direction = normalize(tuple(position[index] - eye_position[index] for index in range(3)))
 
-        half = _normalize(tuple(view[index] + direction[index] for index in range(3)))
-        inputs = (_dot(normal, half), _dot(view, half), normal_view, _dot(direction, normal), 0.0, 0.0)
+        half = normalize(tuple(view[index] + direction[index] for index in range(3)))
+        inputs = (dot(normal, half), dot(view, half), normal_view, dot(direction, normal), 0.0, 0.0)
 
-        reflection = [1.0, 1.0, 1.0]
-        d0 = d1 = 1.0
-        spot = 1.0
-        fr = lut("FR", inputs)
+        values = {"rr": 1.0, "rg": 1.0, "rb": 1.0, "d0": 1.0, "d1": 1.0, "sp": 1.0}
+        values["fr"] = lut_of(environment, tables, "FR", inputs)
 
-        if environment.lut_enabled_refl:
-            reflection = [lut("RR", inputs), lut("RG", inputs), lut("RB", inputs)]
-        if environment.lut_enabled_d0:
-            d0 = lut("D0", inputs)
-        if environment.lut_enabled_d1:
-            d1 = lut("D1", inputs)
+        if environment["lut_enabled_refl"]:
+            values["rr"] = lut_of(environment, tables, "RR", inputs)
+            values["rg"] = lut_of(environment, tables, "RG", inputs)
+            values["rb"] = lut_of(environment, tables, "RB", inputs)
 
-        reflection[0], reflection[1], reflection[2], d0, d1, fr, spot = _apply_config(
-            environment.config, (reflection[0], reflection[1], reflection[2], d0, d1, fr, spot))
+        if environment["lut_enabled_d0"]:
+            values["d0"] = lut_of(environment, tables, "D0", inputs)
 
-        if not environment.lut_enabled_refl:
-            reflection = list(environment.specular1[0:3])
+        if environment["lut_enabled_d1"]:
+            values["d1"] = lut_of(environment, tables, "D1", inputs)
 
-        light_dot = abs(inputs[3]) if light.two_side_diffuse else max(0.0, inputs[3])
+        values = apply_config(environment["config"], values)
+
+        if environment["lut_enabled_refl"]:
+            reflection = (values["rr"], values["rg"], values["rb"])
+        else:
+            reflection = environment["specular1"][0:3]
+
+        if light["two_side_diffuse"]:
+            light_dot = abs(inputs[3])
+        else:
+            light_dot = max(0.0, inputs[3])
+
         for index in range(3):
-            diffuse = environment.diffuse[index] * light.diffuse[index]
-            ambient = environment.ambient[index] * light.ambient[index]
-            primary[index] += spot * (diffuse * light_dot + ambient)
+            diffuse = environment["diffuse"][index] * light["diffuse"][index]
+            ambient = environment["ambient"][index] * light["ambient"][index]
+            primary[index] += values["sp"] * (diffuse * light_dot + ambient)
 
-        highlight = 0.0 if environment.clamp_highlights and inputs[3] < 0.0 else 1.0
+        highlight = 1.0
+        if environment["clamp_highlights"] and inputs[3] < 0.0:
+            highlight = 0.0
+
         for index in range(3):
-            specular0 = light.specular0[index] * environment.specular0[index] * d0
-            specular1 = light.specular1[index] * reflection[index] * d1
-            secondary[index] += highlight * spot * (specular0 + specular1)
+            specular0 = light["specular0"][index] * environment["specular0"][index] * values["d0"]
+            specular1 = light["specular1"][index] * reflection[index] * values["d1"]
+            secondary[index] += highlight * values["sp"] * (specular0 + specular1)
 
-        fresnel = fr
+        fresnel = values["fr"]
 
-    first = [min(1.0, environment.emission[index] + environment.scene_ambient[index] * environment.ambient[index]
-                 + primary[index]) for index in range(3)]
+    first = []
+    for index in range(3):
+        ambient = environment["scene_ambient"][index] * environment["ambient"][index]
+        first.append(min(1.0, environment["emission"][index] + ambient + primary[index]))
+
     second = [min(1.0, value) for value in secondary]
 
-    first.append(fresnel if environment.fresnel_selector in (1, 3) else 1.0)
-    second.append(fresnel if environment.fresnel_selector in (2, 3) else 1.0)
+    if environment["fresnel_selector"] in (1, 3):
+        first.append(fresnel)
+    else:
+        first.append(1.0)
+
+    if environment["fresnel_selector"] in (2, 3):
+        second.append(fresnel)
+    else:
+        second.append(1.0)
 
     return tuple(first), tuple(second)
 
 ##########################################
-# GLSL generator
+# GLSL Function
 ##########################################
 
 LUT_SAMPLER_GLSL = """
@@ -351,20 +413,22 @@ void studio_config(int config, inout float rr, inout float rg, inout float rb,
 
 
 def lighting_uniforms(light_count):
-    lines = ["uniform sampler2D unf_frg_txt_lut;",
-             "uniform int unf_lgt_config;",
-             "uniform vec3 unf_lgt_scene_ambient;",
-             "uniform vec4 unf_mat_emission;",
-             "uniform vec4 unf_mat_ambient;",
-             "uniform vec4 unf_mat_diffuse;",
-             "uniform vec4 unf_mat_specular0;",
-             "uniform vec4 unf_mat_specular1;",
-             "uniform int unf_lgt_fresnel_selector;",
-             "uniform bool unf_lgt_clamp_highlights;",
-             "uniform bool unf_lgt_two_side_diffuse;",
-             "uniform bool unf_lgt_enabled_d0;",
-             "uniform bool unf_lgt_enabled_d1;",
-             "uniform bool unf_lgt_enabled_refl;"]
+    lines = [
+        "uniform sampler2D unf_frg_txt_lut;",
+        "uniform int unf_lgt_config;",
+        "uniform vec3 unf_lgt_scene_ambient;",
+        "uniform vec4 unf_mat_emission;",
+        "uniform vec4 unf_mat_ambient;",
+        "uniform vec4 unf_mat_diffuse;",
+        "uniform vec4 unf_mat_specular0;",
+        "uniform vec4 unf_mat_specular1;",
+        "uniform int unf_lgt_fresnel_selector;",
+        "uniform bool unf_lgt_clamp_highlights;",
+        "uniform bool unf_lgt_two_side_diffuse;",
+        "uniform bool unf_lgt_enabled_d0;",
+        "uniform bool unf_lgt_enabled_d1;",
+        "uniform bool unf_lgt_enabled_refl;",
+    ]
 
     for table in LUT_TABLES:
         lines.append(f"uniform int unf_lut_input_{table};")
@@ -379,7 +443,7 @@ def lighting_uniforms(light_count):
     return "\n".join(lines)
 
 
-def _light_block(index):
+def light_block(index):
     return f"""
     {{
         vec3 L = (unf_lgt_position_{index}.w == 0.0) ? normalize(unf_lgt_position_{index}.xyz)
@@ -418,7 +482,7 @@ def _light_block(index):
 
 def lighting_glsl(light_count):
     """Emits studio_lighting(), which fills the two fragment colours the combiner can read."""
-    blocks = "".join(_light_block(index) for index in range(light_count))
+    blocks = "".join(light_block(index) for index in range(light_count))
 
     return f"""{LUT_SAMPLER_GLSL}{CONFIG_GLSL}
 void studio_lighting(vec3 normal, vec3 eye_position, out vec4 clr_1st, out vec4 clr_2nd) {{
